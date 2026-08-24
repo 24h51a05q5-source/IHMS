@@ -1,0 +1,25 @@
+{
+  "name": "ihms-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend",
+    "mobile"
+  ],
+  "scripts": {
+    "dev:backend": "npm --workspace=backend run start:dev",
+    "dev:frontend": "npm --workspace=frontend run dev",
+    "dev:mobile": "npm --workspace=mobile run start",
+    "build:backend": "npm --workspace=backend run build",
+    "build:frontend": "npm --workspace=frontend run build",
+    "build:mobile": "npm --workspace=mobile run build",
+    "test:backend": "npm --workspace=backend test",
+    "test:e2e": "npm --workspace=backend run test:e2e",
+    "seed": "npm --workspace=backend run seed",
+    "cluster:backend": "node backend/cluster.js",
+    "loadbalancer": "node loadbalancer/proxy.js",
+    "db:backup": "npm --workspace=backend run db:backup",
+    "db:restore": "npm --workspace=backend run db:restore"
+  }
+}

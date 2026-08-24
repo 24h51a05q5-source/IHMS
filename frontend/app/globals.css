@@ -1,0 +1,516 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ========================================================================= */
+    /* SHG-SECURE PIXEL-PERFECT COLOR PALETTE & 3D LAYERED DESIGN SYSTEM         */
+    /* Reference: https://shg-secure.onrender.com/                               */
+    /* ========================================================================= */
+    
+    /* Main Backgrounds (Warm Beige & Off-White Palette) */
+    --page-bg: #F3F1EC;
+    --bg-primary: #F3F1EC;
+    --bg-secondary: #EBE8E0;
+    --bg-card: #FFFFFF; /* Pure White Cards */
+    --bg-card-hover: #FFFFFF;
+    --peach-light: #F5F3ED;
+    --soft-peach: #ECE9E1;
+
+    /* Typography Hierarchy - Bold High-Contrast Black System */
+    --text-primary: #111827;
+    --text-heading: #000000;
+    --text-body: #111827;
+    --text-secondary: #475569;
+    --text-muted: #64748B;
+    --text-date: #64748B;
+    --text-light-muted: #94A3B8;
+
+    /* Typography outside cards on main backgrounds */
+    --page-heading: #111827;
+    --page-subheading: #475569;
+
+    /* Brand & Accents (SHG-SECURE Warm Coral-Orange: #E87545 / #D66434) */
+    --primary: #E87545;
+    --primary-foreground: #FFFFFF;
+    --accent-primary: #F27645;
+    --accent-orange: #E87545;
+    --primary-dark: #D66434;
+    --accent: #E87545;
+    --accent-foreground: #FFFFFF;
+    --primary-accent: #E87545;
+    --surface-secondary: #ECE9E1;
+    --border: #E4E0D7;
+    --border-color: #E4E0D7;
+    --border-subtle: #E4E0D7;
+    --border-strong: #CBD5E1;
+
+    /* Base Layout Mappings for Shadcn/Tailwind */
+    --background: 40 18% 94%;    /* #F3F1EC */
+    --foreground: 221 38% 11%;    /* #111827 */
+    --card: 0 0% 100%;            /* #FFFFFF */
+    --card-foreground: 221 38% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 221 38% 11%;
+
+    /* Sidebar Theme (SHG-SECURE: Layer 1 Warm Beige #ECE9E1) */
+    --sidebar-bg: #ECE9E1;
+    --sidebar-border: #DDD8CC;
+    --sidebar-text: #111827;
+    --sidebar-text-secondary: #475569;
+    --sidebar-icon: #111827;
+    --sidebar-active-bg: #FAFAF7;
+    --sidebar-active-text: #E87545;
+    --sidebar-hover-bg: #E4E0D7;
+    --sidebar-hover-text: #111827;
+    --sidebar-hover-icon: #E87545;
+
+    /* Header & Navigation Bar (SHG-SECURE: #ECE9E1 matches sidebar) */
+    --header-bg: #ECE9E1;
+    --header-border: #DDD8CC;
+
+    /* Buttons */
+    --btn-primary-bg: #E87545;
+    --btn-primary-text: #FFFFFF;
+    --btn-primary-hover: #D66434;
+    --btn-secondary-bg: #FFFFFF;
+    --btn-secondary-text: #111827;
+    --btn-secondary-border: #CBD5E1;
+    --btn-secondary-hover: #F1F5F9;
+    --btn-secondary-hover-text: #111827;
+
+    /* Secondary & Muted */
+    --secondary: 40 18% 94%;
+    --secondary-foreground: 221 38% 11%;
+    --muted: 40 18% 94%;
+    --muted-foreground: 215 25% 35%;
+
+    /* Destructive */
+    --destructive: 0 74% 47%;     /* #C62828 */
+    --destructive-foreground: 0 0% 100%;
+
+    /* Tables (SHG-SECURE) */
+    --table-header-bg: #F8FAFC;
+    --table-header-text: #000000;
+    --table-row-bg: #FFFFFF;
+    --table-row-text: #111827;
+    --table-row-hover: #ECE9E1;
+
+    /* Meaningful Semantic Status Colors (SHG-SECURE) */
+    --success: #087A45;
+    --success-bg: #E8F5ED;
+    --success-text: #087A45;
+    --success-border: #B4E2C7;
+
+    --warning: #C94F18;
+    --warning-bg: #FEF3C7;
+    --warning-text: #C94F18;
+    --warning-border: #FDE68A;
+
+    --danger: #C62828;
+    --danger-bg: #FEE2E2;
+    --danger-text: #C62828;
+    --danger-border: #FECACA;
+
+    --info: #2563EB;
+    --info-bg: #EFF6FF;
+    --info-text: #2563EB;
+    --info-border: #BFDBFE;
+
+    /* Form Controls */
+    --input: #E5E7EB;
+    --ring: #E87545;
+
+    /* Modern 2D Flat Design Tokens */
+    --card-shadow: none;
+    --card-hover-shadow: none;
+
+    --radius: 12px;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    perspective: none !important;
+    transform-style: flat !important;
+    -webkit-perspective: none !important;
+    -webkit-transform-style: flat !important;
+  }
+  body {
+    background-color: #F3F1EC;
+    color: #111827;
+    font-weight: 600;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01";
+    letter-spacing: -0.01em;
+    min-height: 100vh;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    background-color: #F3F1EC;
+  }
+}
+
+/* ========================================================================= */
+/* ENFORCED GLOBAL TYPOGRAPHY HIERARCHY                                      */
+/* ========================================================================= */
+
+/* 1. All general visible text */
+body,
+button,
+input,
+select,
+textarea,
+p,
+span,
+label,
+a,
+li,
+td {
+  font-weight: 600;
+}
+
+/* 2. Menu items, labels, subtitles and normal UI text */
+.sidebar,
+.sidebar *,
+.dashboard *,
+.card *,
+.panel *,
+.stat-card *,
+.chart-card *,
+.main-content * {
+  font-weight: 600;
+}
+
+/* 3. Section headings and card titles */
+h2,
+h3,
+h4,
+.card-title,
+.section-title,
+.menu-heading,
+th {
+  font-weight: 750 !important;
+}
+
+/* 4. Main headings and important values */
+h1,
+.page-title,
+.welcome-title,
+.stat-value,
+.metric-value,
+.dashboard-number {
+  font-weight: 800 !important;
+}
+
+/* 5. Statistic Card Titles */
+.stat-card-title,
+.metric-title,
+.card-label {
+  color: #000000 !important;
+  font-weight: 800 !important;
+}
+
+/* 6. Table Header Titles */
+th,
+table th,
+thead th,
+.table th,
+.table-header,
+.table-header-cell,
+.table thead th {
+  color: #000000 !important;
+  font-weight: 800 !important;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .printable-receipt, .printable-receipt * {
+    visibility: visible;
+  }
+  .printable-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+    background: white !important;
+  }
+}
+
+/* Prevent horizontal scroll */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* Custom Animations */
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ========================================================================= */
+/* MOBILE DRAWER & NAVIGATION                                                */
+/* ========================================================================= */
+.mobile-menu-button {
+  display: none;
+  position: relative;
+  transform: none !important;
+  box-shadow: none !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  border: 1px solid #D0D5DD;
+  border-radius: 8px;
+}
+
+@media (max-width: 1023px) {
+
+  .mobile-menu-button {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    color: #111827;
+    background: #FFFFFF;
+    border: 1px solid #D0D5DD;
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    box-shadow: none !important;
+    transform: none !important;
+    flex-shrink: 0;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .mobile-menu-button:hover,
+  .mobile-menu-button:active {
+    background: #FFFFFF;
+    border-color: #E87545;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .sidebar-mobile-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100dvh;
+    height: 100vh;
+    width: min(300px, 85vw);
+    z-index: 10002;
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    background: #ECE9E1;
+    border-right: 1px solid #DDD8CC;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-mobile-drawer.mobile-open {
+    transform: translateX(0) !important;
+  }
+
+  .mobile-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.40);
+    z-index: 10000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .mobile-sidebar-overlay.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}
+
+/* ========================================================================= */
+/* MODERN 2D FLAT SURFACES & CONTAINERS                                      */
+/* ========================================================================= */
+
+/* Sidebar Panel */
+.shg-sidebar-panel {
+  background: #ECE9E1;
+  border-right: 1px solid #DDD8CC;
+  box-shadow: none;
+}
+
+/* Active Nav Item */
+.shg-nav-active {
+  background: #FAFAF7;
+  color: #E87545 !important;
+  font-weight: 700 !important;
+  border-radius: 10px;
+  border-left: 4px solid #E87545;
+  border-top: 1px solid #E4E0D7;
+  border-right: 1px solid #E4E0D7;
+  border-bottom: 1px solid #E4E0D7;
+  box-shadow: none;
+}
+
+.shg-nav-item {
+  color: #111827;
+  font-weight: 600;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.shg-nav-item:hover {
+  background: #E4E0D7;
+  color: #111827;
+}
+
+.shg-profile-card {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  box-shadow: none;
+}
+
+/* Main Flat Workspace Container */
+.ihms-workspace-card {
+  background: #FFFFFF;
+  border-radius: 16px;
+  border: 1px solid #CBD5E1;
+  box-shadow: none;
+}
+
+@media (max-width: 640px) {
+  .ihms-workspace-card {
+    border-radius: 12px;
+    box-shadow: none;
+  }
+}
+
+/* Flat Cards & Boxes */
+.shg-card,
+.ihms-card {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  border-radius: 12px;
+  box-shadow: none;
+  transition: border-color 0.15s ease;
+}
+
+.shg-card:hover,
+.ihms-card:hover {
+  border-color: #E87545;
+  box-shadow: none;
+}
+
+/* Nested Subsections (Toolbars, Subpanels, Table Headers) */
+.ihms-nested-section {
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  border-radius: 10px;
+}
+
+/* Inputs & Form Controls */
+.ihms-input-item {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  box-shadow: none;
+  color: #111827;
+}
+
+.ihms-input-item:focus-within,
+.ihms-input-item:focus {
+  border-color: #E87545;
+  box-shadow: none;
+}
+
+/* ========================================================================= */
+/* Password Input Field Alignment & Icon Spacing                            */
+/* ========================================================================= */
+.password-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-input input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: 48px !important;
+  padding-right: 48px !important;
+}
+
+.password-lock-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.password-toggle-icon {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ========================================================================= */
+/* Student ID / Registered Email Input Field Icon Alignment & Spacing       */
+/* ========================================================================= */
+.student-id-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.student-id-input input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: 50px !important;
+}
+
+.student-id-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
