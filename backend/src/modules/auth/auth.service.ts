@@ -4,6 +4,7 @@ import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { UserRole } from '../../config/constants';
 import { generateOwnerId, generateHostelOrgId, maskEmail } from '../../common/utils/code-generator';
+import { emailService } from '../../common/utils/email.service';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ihms-super-secret-jwt-key-production-2026';
 const JWT_EXPIRES_IN = '24h';
@@ -791,8 +792,13 @@ export class AuthService {
       ]
     );
 
-    // Development & Secure Audit Logging for Email Delivery Simulation
-    console.log(`[AUTH-OTP] 🔒 PASSWORD_RESET OTP generated for user: ${user.email} (User ID: ${user.id}). OTP Code: ${otpCode}`);
+    // Send email via emailService
+    await emailService.sendOtpEmail({
+      to: user.email,
+      otpCode,
+      studentName: user.name,
+      purpose: 'PASSWORD_RESET',
+    });
 
     return genericResponse;
   }
@@ -843,7 +849,12 @@ export class AuthService {
       ]
     );
 
-    console.log(`[AUTH-OTP] 🔒 RESENT PASSWORD_RESET OTP for user: ${user.email}. OTP Code: ${otpCode}`);
+    await emailService.sendOtpEmail({
+      to: user.email,
+      otpCode,
+      studentName: user.name,
+      purpose: 'PASSWORD_RESET',
+    });
 
     return genericResponse;
   }
@@ -1220,7 +1231,13 @@ export class AuthService {
       [crypto.randomUUID(), student.id, sEmail, student.organization_id, otpHash]
     );
 
-    console.log(`[STUDENT-ACTIVATION-OTP] 🔒 6-digit Activation OTP for Student ${student.full_name} (${sEmail}): ${otpCode}`);
+    // Attempt to send email via SMTP email service
+    await emailService.sendOtpEmail({
+      to: sEmail,
+      otpCode,
+      studentName: student.full_name,
+      purpose: 'ACTIVATION',
+    });
 
     return {
       success: true,

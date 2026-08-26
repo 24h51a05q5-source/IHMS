@@ -6,6 +6,7 @@ import { BedStatus, PaymentMethod, PaymentPlan, StudentStatus, UserRole } from '
 import { feeService } from '../fees/fee.service';
 import { emitRealTimeEvent } from '../../events/events.gateway';
 import { cache } from '../../common/utils/cache';
+import { emailService } from '../../common/utils/email.service';
 
 export class StudentService {
   async admitStudent(orgId: string, branchId: string, data: any): Promise<any> {
@@ -275,7 +276,16 @@ export class StudentService {
         );
       });
 
-      console.log(`[STUDENT-PORTAL-APPROVAL] 🔒 Owner approved portal access & generated 6-digit OTP for Student ${sFullName} (${sEmail}): ${otpCode}`);
+      try {
+        await emailService.sendOtpEmail({
+          to: sEmail,
+          otpCode,
+          studentName: sFullName,
+          purpose: 'ACTIVATION',
+        });
+      } catch (emailErr) {
+        console.warn(`[STUDENT-PORTAL-APPROVAL] ⚠️ Email send error during portal access approval:`, emailErr);
+      }
 
       // Mask email for display
       const [local, domain] = sEmail.split('@');
