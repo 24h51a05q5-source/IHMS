@@ -1,3 +1,4 @@
+import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
 import { AppError } from '../filters/http-exception.filter';
 
@@ -9,12 +10,35 @@ export interface SendOtpEmailOptions {
 }
 
 class EmailService {
+  private getResendClient(): { resend: Resend | null; apiKey: string; from: string } {
+    const apiKey = (
+      process.env.RESEND_API_KEY ||
+      process.env.RESEND_KEY ||
+      ''
+    ).trim();
+
+    const defaultFrom = 'IHMS Hostel Portal <onboarding@resend.dev>';
+    let from = (
+      process.env.EMAIL_FROM ||
+      process.env.SENDER_EMAIL ||
+      process.env.RESEND_FROM ||
+      ''
+    ).trim();
+
+    if (!from || !from.includes('@')) {
+      from = defaultFrom;
+    }
+
+    const resend = apiKey ? new Resend(apiKey) : null;
+    return { resend, apiKey, from };
+  }
+
   private getSmtpConfig() {
     const host = (
       process.env.SMTP_HOST ||
       process.env.EMAIL_HOST ||
       process.env.MAIL_HOST ||
-      'smtp.gmail.com'
+      ''
     ).trim();
 
     const port = Number(
@@ -41,7 +65,6 @@ class EmailService {
       ''
     ).trim();
 
-    // Normalize Gmail App Passwords (remove spaces if user copied "abcd efgh ijkl mnop")
     const isGmail = host.includes('gmail') || user.endsWith('@gmail.com');
     const pass = isGmail ? rawPass.replace(/\s+/g, '') : rawPass;
 
@@ -49,7 +72,7 @@ class EmailService {
       process.env.EMAIL_FROM ||
       process.env.SENDER_EMAIL ||
       process.env.SMTP_FROM ||
-      (user ? `"IHMS Hostel Portal" <${user}>` : '"IHMS Hostel Management" <noreply@ihms.com>')
+      (user ? `"IHMS Hostel Portal" <${user}>` : 'IHMS Hostel Portal <onboarding@resend.dev>')
     ).trim();
 
     return { host, port, user, pass, from, isGmail };
@@ -65,46 +88,14 @@ class EmailService {
 
     const isProduction = process.env.NODE_ENV === 'production';
 
-    // Log 1: OTP generated
+    // Log 1: OTP generated (omit raw OTP code in production logs)
     if (isProduction) {
       console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail}`);
     } else {
       console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail} [Dev Code: ${otpCode}]`);
     }
 
-    const { host, port, user, pass, from, isGmail } = this.getSmtpConfig();
-
-    // Check if SMTP credentials are provided
-    if (!user || !pass) {
-      const errorMsg = 'SMTP credentials not configured. Please set SMTP_USER and SMTP_PASS (or EMAIL_USER and EMAIL_PASS) environment variables.';
-      console.error(`[EMAIL-SERVICE] ❌ ${errorMsg}`);
-      
-      // In development mode, if explicit mock flag is enabled, fall back gracefully
-      if (!isProduction && process.env.ALLOW_MOCK_EMAIL === 'true') {
-        console.warn(`[EMAIL-SERVICE] ⚠️ ALLOW_MOCK_EMAIL is active. Mocking successful email send for ${recipientEmail}.`);
-        return { success: true, messageId: `mock-msg-${Date.now()}` };
-      }
-
-      throw new AppError('Email service is currently unavailable. Please check backend SMTP configuration.', 500);
-    }
-
-    // Log 2: Attempting to send email & Recipient email address
-    console.log(`[EMAIL-SERVICE] 📧 Attempting to send ${purpose} OTP email to recipient: "${recipientEmail}" via ${host}:${port} (Sender: ${from})...`);
-
-    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
-      tls: {
-        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'false' ? false : true,
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 10000,
-      socketTimeout: 20000,
-    });
+    const { resend, apiKey, from: resendFrom } = this.getResendClient();
 
     const subject = purpose === 'PASSWORD_RESET'
       ? `IHMS Hostel Portal — Password Reset Verification Code (${otpCode})`
@@ -113,7 +104,7 @@ class EmailService {
     const nameDisplay = studentName || 'Student';
 
     const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; rounded-radius: 10px; background-color: #ffffff;">
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
         <div style="background-color: #111827; padding: 16px 20px; border-radius: 8px; text-align: center;">
           <h2 style="color: #ffffff; margin: 0; font-size: 20px;">IHMS Hostel Portal</h2>
           <p style="color: #e87545; margin: 4px 0 0 0; font-size: 13px; font-weight: bold;">Integrated Hostel Management System</p>
@@ -134,7 +125,7 @@ class EmailService {
             If you did not request this verification code, please ignore this email or notify your hostel administration.
           </p>
         </div>
-        <div style="border-t: 1px solid #e5e7eb; padding-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+        <div style="border-top: 1px solid #e5e7eb; padding-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
           <p style="margin: 0;">IHMS ERP System &copy; 2026. All rights reserved.</p>
         </div>
       </div>
@@ -142,33 +133,94 @@ class EmailService {
 
     const textContent = `Hello ${nameDisplay},\n\nYour 6-digit verification code for IHMS Student Portal is: ${otpCode}\n\nThis code is valid for 10 minutes. Please do not share it with anyone.\n\nIHMS Hostel Management System`;
 
-    try {
-      const info = await transporter.sendMail({
-        from,
-        to: recipientEmail,
-        subject,
-        text: textContent,
-        html: htmlContent,
+    // -------------------------------------------------------------
+    // PATH 1: RESEND API (Primary Email Transport)
+    // -------------------------------------------------------------
+    if (resend) {
+      console.log(`[EMAIL-SERVICE] 📧 Attempting to send ${purpose} OTP email to "${recipientEmail}" using Resend API (Sender: ${resendFrom})...`);
+
+      try {
+        const { data, error } = await resend.emails.send({
+          from: resendFrom,
+          to: [recipientEmail],
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
+
+        if (error) {
+          console.error(`[EMAIL-SERVICE] ❌ Resend API delivery error for ${recipientEmail}:`, error);
+          throw new AppError(`Resend email delivery failed: ${error.message}`, 500);
+        }
+
+        const messageId = data?.id || `resend-${Date.now()}`;
+        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Resend to ${recipientEmail}! Message ID: ${messageId}`);
+
+        return {
+          success: true,
+          messageId,
+        };
+      } catch (err: any) {
+        if (err instanceof AppError) throw err;
+        console.error(`[EMAIL-SERVICE] ❌ Unexpected Resend SDK error sending to ${recipientEmail}:`, err);
+        throw new AppError(`Failed to send verification email via Resend: ${err?.message || 'Network error'}`, 500);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PATH 2: NODEMAILER SMTP FALLBACK
+    // -------------------------------------------------------------
+    const smtp = this.getSmtpConfig();
+    if (smtp.user && smtp.pass && smtp.host) {
+      console.log(`[EMAIL-SERVICE] 📧 RESEND_API_KEY not found. Falling back to SMTP transport (${smtp.host}:${smtp.port}, User: ${smtp.user})...`);
+
+      const secure = process.env.SMTP_SECURE === 'true' || smtp.port === 465;
+      const transporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure,
+        auth: { user: smtp.user, pass: smtp.pass },
+        tls: {
+          rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'false' ? false : true,
+        },
+        connectionTimeout: 15000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
       });
 
-      // Log 3: Email sent successfully with message ID
-      console.log(`[EMAIL-SERVICE] ✅ Email sent successfully to ${recipientEmail}! Message ID: ${info.messageId}`);
+      try {
+        const info = await transporter.sendMail({
+          from: smtp.from,
+          to: recipientEmail,
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
 
-      return {
-        success: true,
-        messageId: info.messageId,
-      };
-    } catch (err: any) {
-      // Log 4: Full error if sending fails
-      console.error(`[EMAIL-SERVICE] ❌ Failed to send email to ${recipientEmail}:`, err);
-
-      let detailMsg = err?.message || 'SMTP connection failed';
-      if (isGmail && (detailMsg.includes('Invalid login') || detailMsg.includes('535-5.7.8'))) {
-        detailMsg = 'Gmail SMTP authentication failed. Please ensure you are using a 16-character Gmail App Password (generated from Google Account Security), not your personal Gmail password.';
+        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via SMTP to ${recipientEmail}! Message ID: ${info.messageId}`);
+        return {
+          success: true,
+          messageId: info.messageId,
+        };
+      } catch (err: any) {
+        console.error(`[EMAIL-SERVICE] ❌ Failed to send email via SMTP to ${recipientEmail}:`, err);
+        throw new AppError(`Failed to send verification email via SMTP: ${err?.message || 'SMTP delivery failed'}`, 500);
       }
-
-      throw new AppError(`Failed to send verification email to ${recipientEmail}: ${detailMsg}`, 500);
     }
+
+    // -------------------------------------------------------------
+    // PATH 3: NO EMAIL PROVIDER CONFIGURED
+    // -------------------------------------------------------------
+    const missingMsg = 'Email service is not configured. Please set RESEND_API_KEY (or EMAIL_FROM & RESEND_API_KEY) in Render environment variables.';
+    console.error(`[EMAIL-SERVICE] ❌ ${missingMsg}`);
+
+    // Allow mock fallback only in non-production local development if ALLOW_MOCK_EMAIL=true
+    if (!isProduction && process.env.ALLOW_MOCK_EMAIL === 'true') {
+      console.warn(`[EMAIL-SERVICE] ⚠️ ALLOW_MOCK_EMAIL is active. Mocking successful email send for ${recipientEmail}.`);
+      return { success: true, messageId: `mock-msg-${Date.now()}` };
+    }
+
+    throw new AppError(missingMsg, 500);
   }
 }
 

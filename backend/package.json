@@ -31,6 +31,7 @@
     "pg": "^8.23.0",
     "pg-mem": "^3.0.14",
     "qrcode": "^1.5.3",
+    "resend": "^6.22.1",
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
