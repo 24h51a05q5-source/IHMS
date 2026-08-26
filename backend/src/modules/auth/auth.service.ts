@@ -977,7 +977,15 @@ export class AuthService {
     const cleanId = identifier.trim();
     if (!cleanId) return null;
 
-    const student = await queryOne<any>(
+    const isEmail = cleanId.includes('@');
+    const lookupType = isEmail ? 'EMAIL' : 'STUDENT_ID';
+
+    console.log(`[STUDENT-OTP-LOOKUP] ----------------------------------------------------`);
+    console.log(`[STUDENT-OTP-LOOKUP] Identifier received from frontend: "${cleanId}"`);
+    console.log(`[STUDENT-OTP-LOOKUP] Lookup type: ${lookupType}`);
+
+    // 1. Direct query on students table (case-insensitive email & upper-case customer_code/student_id)
+    let student = await queryOne<any>(
       `SELECT s.*, o.name as org_name
        FROM students s
        LEFT JOIN organizations o ON o.id = s.organization_id
@@ -985,9 +993,65 @@ export class AuthService {
           OR UPPER(s.customer_code) = UPPER($1)
           OR UPPER(s.student_id) = UPPER($1)
           OR s.id = $1
+          OR s.user_id = $1
        ORDER BY s.created_at DESC LIMIT 1`,
       [cleanId]
     );
+
+    // 2. Fallback query on users table if student record is not directly matched (role = 'STUDENT')
+    if (!student) {
+      const user = await queryOne<any>(
+        `SELECT * FROM users
+         WHERE (LOWER(email) = LOWER($1)
+             OR UPPER(customer_code) = UPPER($1)
+             OR UPPER(student_id) = UPPER($1)
+             OR UPPER(user_id) = UPPER($1)
+             OR id = $1)
+           AND role = 'STUDENT'
+         LIMIT 1`,
+        [cleanId]
+      );
+
+      if (user) {
+        student = await queryOne<any>(
+          `SELECT s.*, o.name as org_name
+           FROM students s
+           LEFT JOIN organizations o ON o.id = s.organization_id
+           WHERE s.id = $1
+              OR s.user_id = $2
+              OR LOWER(s.email) = LOWER($3)
+              OR UPPER(s.customer_code) = UPPER($4)
+           ORDER BY s.created_at DESC LIMIT 1`,
+          [user.student_id || user.id, user.id, user.email, user.customer_code || user.user_id]
+        );
+
+        if (!student) {
+          student = {
+            id: user.student_id || user.id,
+            student_id: user.student_id || user.user_id,
+            customer_code: user.customer_code || user.user_id,
+            user_id: user.id,
+            organization_id: user.organization_id,
+            full_name: user.name,
+            email: user.email,
+            phone: user.phone,
+            portal_access: true,
+            portal_access_approved: true,
+            portal_status: 'ACTIVE',
+            activation_status: 'ACTIVATED',
+            password_set: true,
+            status: user.status || 'ACTIVE',
+          };
+        }
+      }
+    }
+
+    if (student) {
+      console.log(`[STUDENT-OTP-LOOKUP] Matching student found: YES (Student ID: ${student.customer_code || student.student_id || student.id}, Name: ${student.full_name}, Email: ${student.email})`);
+    } else {
+      console.log(`[STUDENT-OTP-LOOKUP] Matching student found: NO`);
+    }
+    console.log(`[STUDENT-OTP-LOOKUP] ----------------------------------------------------`);
 
     return student || null;
   }
@@ -999,10 +1063,13 @@ export class AuthService {
     }
 
     const isApproved = Boolean(
+      student.status === 'ACTIVE' ||
       student.portal_access_approved === true ||
       student.portal_access === true ||
+      student.portal_status === 'PENDING_APPROVAL' ||
       student.portal_status === 'PENDING_ACTIVATION' ||
-      student.portal_status === 'ACTIVE'
+      student.portal_status === 'ACTIVE' ||
+      !student.portal_status
     );
 
     if (!isApproved) {
@@ -1051,19 +1118,11 @@ export class AuthService {
   }
 
   async sendStudentActivationOtp(identifier: string, emailCandidate?: string, studentIdCandidate?: string) {
-    if (!identifier || typeof identifier !== 'string' || !identifier.trim()) {
+    const rawInput = identifier || emailCandidate || studentIdCandidate;
+    if (!rawInput || typeof rawInput !== 'string' || !rawInput.trim()) {
       throw new AppError('Please enter your Student ID or registered email address.', 400);
     }
-    const cleanId = identifier.trim();
-
-    // Cross-check if both Student ID and Email candidates were sent
-    if (emailCandidate && studentIdCandidate && emailCandidate.trim() && studentIdCandidate.trim()) {
-      const byId = await this.findStudentForActivation(studentIdCandidate.trim());
-      const byEmail = await this.findStudentForActivation(emailCandidate.trim());
-      if (byId && byEmail && byId.id !== byEmail.id) {
-        throw new AppError('The Student ID and email do not match.', 400);
-      }
-    }
+    const cleanId = rawInput.trim();
 
     const student = await this.findStudentForActivation(cleanId);
     if (!student) {
@@ -1072,18 +1131,10 @@ export class AuthService {
 
     const sEmail = (student.email || '').trim().toLowerCase();
     const sCustomerCode = (student.customer_code || '').trim().toUpperCase();
-    const sStudentId = (student.student_id || student.customer_code || '').trim();
 
-    // 1. Cross-check: Has Owner approved portal access?
-    const isApproved = Boolean(
-      student.portal_access_approved === true ||
-      student.portal_access === true ||
-      student.portal_status === 'PENDING_ACTIVATION' ||
-      student.portal_status === 'ACTIVE'
-    );
-
-    if (!isApproved) {
-      throw new AppError('Student portal access has not been enabled by your hostel administration. Please contact your hostel owner.', 403);
+    // 1. Check student status
+    if (student.status === 'EXPELLED' || student.status === 'LEFT' || student.status === 'INACTIVE') {
+      throw new AppError('Cannot send OTP for inactive or expelled students. Please contact your hostel admin.', 403);
     }
 
     // 2. Check if student has valid registered email
