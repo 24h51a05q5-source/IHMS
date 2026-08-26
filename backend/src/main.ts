@@ -75,7 +75,7 @@ app.use('/api/uploads', express.static(uploadsDir));
 initSocketIO(server);
 
 // Comprehensive Health & Readiness Endpoint for Load Balancers
-app.get('/api/health', async (req: Request, res: Response) => {
+const healthHandler = async (req: Request, res: Response) => {
   const dbPing = await pingDatabase();
   const poolStats = getPoolStats();
   const memory = process.memoryUsage();
@@ -103,51 +103,127 @@ app.get('/api/health', async (req: Request, res: Response) => {
     },
     version: '1.0.0',
   });
-});
+};
 
-// Mount Module Routers
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
+
+// Mount Module Routers (Supports both /... and /api/... endpoints)
+app.use('/auth', authRouter);
 app.use('/api/auth', authRouter);
+
+app.use('/organizations', organizationRouter);
 app.use('/api/organizations', organizationRouter);
+
+app.use('/hostels', hostelRouter);
 app.use('/api/hostels', hostelRouter);
-app.use('/api/branches', hostelRouter); // Alias for Lovable /api/branches
+
+app.use('/branches', hostelRouter);
+app.use('/api/branches', hostelRouter);
+
+app.use('/rooms', roomRouter);
 app.use('/api/rooms', roomRouter);
+
+app.use('/beds', (req, res, next) => {
+  req.url = '/beds' + (req.url === '/' ? '' : req.url);
+  roomRouter(req, res, next);
+});
 app.use('/api/beds', (req, res, next) => {
   req.url = '/beds' + (req.url === '/' ? '' : req.url);
   roomRouter(req, res, next);
 });
+
+app.use('/students', studentRouter);
 app.use('/api/students', studentRouter);
+
+app.use('/student', studentPortalRouter);
 app.use('/api/student', studentPortalRouter);
+
+app.use('/fees', feeRouter);
 app.use('/api/fees', feeRouter);
+
+app.use('/payments', (req, res, next) => {
+  req.url = '/payments' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
 app.use('/api/payments', (req, res, next) => {
   req.url = '/payments' + (req.url === '/' ? '' : req.url);
   feeRouter(req, res, next);
 });
+
+app.use('/finance', financeRouter);
 app.use('/api/finance', financeRouter);
+
+app.use('/dashboard', dashboardRouter);
 app.use('/api/dashboard', dashboardRouter);
-app.use('/api/reports', dashboardRouter); // Alias for Lovable /api/reports/...
+
+app.use('/reports', dashboardRouter);
+app.use('/api/reports', dashboardRouter);
+
+app.use('/mess', messRouter);
 app.use('/api/mess', messRouter);
+
+app.use('/student/mess-menu', (req, res, next) => { req.url = '/student-menu'; messRouter(req, res, next); });
 app.use('/api/student/mess-menu', (req, res, next) => { req.url = '/student-menu'; messRouter(req, res, next); });
+
+app.use('/student/mess', (req, res, next) => { req.url = '/student-menu'; messRouter(req, res, next); });
 app.use('/api/student/mess', (req, res, next) => { req.url = '/student-menu'; messRouter(req, res, next); });
+
+app.use('/inventory', inventoryRouter);
 app.use('/api/inventory', inventoryRouter);
+
+app.use('/attendance', attendanceRouter);
 app.use('/api/attendance', attendanceRouter);
+
+app.use('/leave', (req, res, next) => {
+  req.url = '/leave' + (req.url === '/' ? '' : req.url);
+  attendanceRouter(req, res, next);
+});
 app.use('/api/leave', (req, res, next) => {
   req.url = '/leave' + (req.url === '/' ? '' : req.url);
   attendanceRouter(req, res, next);
 });
+
+app.use('/visitors', visitorRouter);
 app.use('/api/visitors', visitorRouter);
+
+app.use('/complaints', complaintRouter);
 app.use('/api/complaints', complaintRouter);
+
+app.use('/student/complaints', complaintRouter);
 app.use('/api/student/complaints', complaintRouter);
+
+app.use('/announcements', announcementRouter);
 app.use('/api/announcements', announcementRouter);
+
+app.use('/student/announcements', (req, res, next) => {
+  req.url = '/student' + (req.url === '/' ? '' : req.url);
+  announcementRouter(req, res, next);
+});
 app.use('/api/student/announcements', (req, res, next) => {
   req.url = '/student' + (req.url === '/' ? '' : req.url);
   announcementRouter(req, res, next);
+});
+
+app.use('/notifications', (req, res, next) => {
+  req.url = '/notifications' + (req.url === '/' ? '' : req.url);
+  userRouter(req, res, next);
 });
 app.use('/api/notifications', (req, res, next) => {
   req.url = '/notifications' + (req.url === '/' ? '' : req.url);
   userRouter(req, res, next);
 });
+
+app.use('/users', userRouter);
 app.use('/api/users', userRouter);
+
+app.use('/support', supportRouter);
 app.use('/api/support', supportRouter);
+
+app.use('/student/support', (req, res, next) => {
+  req.url = '/tickets' + (req.url === '/' ? '' : req.url);
+  supportRouter(req, res, next);
+});
 app.use('/api/student/support', (req, res, next) => {
   req.url = '/tickets' + (req.url === '/' ? '' : req.url);
   supportRouter(req, res, next);

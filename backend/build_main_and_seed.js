@@ -52,29 +52,58 @@ export async function bootstrap() {
   initSocketIO(server);
 
   // Health check
-  app.get('/api/health', (req, res) => {
+  const healthHandler = (req, res) => {
     res.json({
       status: 'healthy',
       system: 'Integrated Hostel Management System (IHMS) ERP',
       timestamp: new Date().toISOString(),
       version: '1.0.0'
     });
-  });
+  };
+  app.get('/health', healthHandler);
+  app.get('/api/health', healthHandler);
 
   // REST API Routes
+  app.use('/auth', authRouter);
   app.use('/api/auth', authRouter);
+
+  app.use('/organizations', organizationRouter);
   app.use('/api/organizations', organizationRouter);
+
+  app.use('/hostels', hostelRouter);
   app.use('/api/hostels', hostelRouter);
+
+  app.use('/rooms', roomRouter);
   app.use('/api/rooms', roomRouter);
+
+  app.use('/students', studentRouter);
   app.use('/api/students', studentRouter);
+
+  app.use('/fees', feeRouter);
   app.use('/api/fees', feeRouter);
+
+  app.use('/finance', financeRouter);
   app.use('/api/finance', financeRouter);
+
+  app.use('/dashboard', dashboardRouter);
   app.use('/api/dashboard', dashboardRouter);
+
+  app.use('/mess', messRouter);
   app.use('/api/mess', messRouter);
+
+  app.use('/inventory', inventoryRouter);
   app.use('/api/inventory', inventoryRouter);
+
+  app.use('/attendance', attendanceRouter);
   app.use('/api/attendance', attendanceRouter);
+
+  app.use('/visitors', visitorRouter);
   app.use('/api/visitors', visitorRouter);
+
+  app.use('/complaints', complaintRouter);
   app.use('/api/complaints', complaintRouter);
+
+  app.use('/users', userRouter);
   app.use('/api/users', userRouter);
 
   // Global Centralized Error Handler
