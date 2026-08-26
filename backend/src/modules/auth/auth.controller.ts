@@ -218,6 +218,21 @@ router.post('/student/send-otp', async (req: Request, res: Response, next: NextF
   }
 });
 
+router.post('/send-otp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { identifier, email, studentId } = req.body;
+    const target = identifier || email || studentId;
+    const result = await authService.sendStudentActivationOtp(target, email, studentId);
+    res.json({
+      success: true,
+      data: result,
+      ...result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/send-activation-otp', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { identifier, email, studentId } = req.body;

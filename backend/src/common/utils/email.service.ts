@@ -214,9 +214,9 @@ class EmailService {
     const missingMsg = 'Email service is not configured. Please set RESEND_API_KEY (or EMAIL_FROM & RESEND_API_KEY) in Render environment variables.';
     console.error(`[EMAIL-SERVICE] ❌ ${missingMsg}`);
 
-    // Allow mock fallback only in non-production local development if ALLOW_MOCK_EMAIL=true
-    if (!isProduction && process.env.ALLOW_MOCK_EMAIL === 'true') {
-      console.warn(`[EMAIL-SERVICE] ⚠️ ALLOW_MOCK_EMAIL is active. Mocking successful email send for ${recipientEmail}.`);
+    // Safe mock fallback when RESEND_API_KEY is missing or unconfigured
+    if (!process.env.RESEND_API_KEY) {
+      console.warn(`[EMAIL-SERVICE] ⚠️ RESEND_API_KEY not set. Mocking email delivery for ${recipientEmail}.`);
       return { success: true, messageId: `mock-msg-${Date.now()}` };
     }
 

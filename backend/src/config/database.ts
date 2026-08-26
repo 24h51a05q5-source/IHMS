@@ -84,6 +84,15 @@ export async function connectDatabase(): Promise<Pool> {
       returns: DataType.text,
       implementation: () => require('crypto').randomUUID(),
     });
+    db.public.registerFunction({
+      name: 'replace',
+      args: [DataType.text, DataType.text, DataType.text],
+      returns: DataType.text,
+      implementation: (str: string, findStr: string, replaceStr: string) => {
+        if (str === null || str === undefined) return '';
+        return String(str).split(String(findStr)).join(String(replaceStr));
+      },
+    });
     
     const pgAdapter = db.adapters.createPg();
     pool = new pgAdapter.Pool() as unknown as Pool;

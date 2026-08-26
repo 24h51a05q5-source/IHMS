@@ -246,6 +246,17 @@ export async function runSeed() {
     [require('crypto').randomUUID(), s2Id, r1Id, bed2Id, b1Id, orgId]
   );
 
+  // Student 3: Rahul Varma (Unactivated student for OTP setup test STU2026003)
+  const s3Id = require('crypto').randomUUID();
+  await query(
+    `INSERT INTO students (
+      id, student_id, customer_code, organization_id, hostel_id, full_name, email,
+      phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
+      admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status
+    ) VALUES ($1, 'STU2026003', 'STU2026003', $2, $3, 'Rahul Varma', 'stu2026003@ihms.com', '+91 9876543333', 'MALE', 'Osmania University', 'Ramesh Varma', 'Father', '+91 9876500003', 'Banjara Hills, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+    [s3Id, orgId, b1Id]
+  );
+
   console.log('[Seed] Creating Fee Demands, Payments, Receipts, and Ledgers...');
   const dem1Id = require('crypto').randomUUID();
   await query(

@@ -38,8 +38,8 @@ export function errorHandler(
     message = 'Authentication required. Please sign in.';
   } else if (statusCode === 403 && (!err.message || err.message.toLowerCase().includes('forbidden'))) {
     message = 'You do not have permission to access this page.';
-  } else if (statusCode === 404 && (!err.message || err.message.toLowerCase().includes('not found'))) {
-    message = 'Sorry, the requested resource or page does not exist.';
+  } else if (statusCode === 404 && !err.message) {
+    message = 'Requested resource not found.';
   } else if (statusCode === 500) {
     message = 'Something went wrong on our side. Please try again later.';
   }

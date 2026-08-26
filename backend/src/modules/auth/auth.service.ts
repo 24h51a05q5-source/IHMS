@@ -597,7 +597,7 @@ export class AuthService {
         await query(
           `INSERT INTO users (id, user_id, name, email, password_hash, role, phone, organization_id, staff_code, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [require('crypto').randomUUID(), 'OWN-1001', 'Hostel Admin', 'admin@ihms.com', defaultPasswordHash, UserRole.OWNER, '+91 9848011112', orgId, 'OWN-1001', 'ACTIVE']
+          [require('crypto').randomUUID(), 'ADM-1001', 'Hostel Admin', 'admin@ihms.com', defaultPasswordHash, UserRole.OWNER, '+91 9848011112', orgId, 'ADM-1001', 'ACTIVE']
         );
       }
 
@@ -607,6 +607,40 @@ export class AuthService {
           `INSERT INTO users (id, user_id, name, email, password_hash, role, phone, organization_id, staff_code, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [require('crypto').randomUUID(), 'SUP-1001', 'Global Super Admin', 'superadmin@ihms.com', defaultPasswordHash, UserRole.SUPER_ADMIN, '+91 9848000000', orgId, 'SUP-1001', 'ACTIVE']
+        );
+      }
+
+      const hostel = await queryOne<any>('SELECT id FROM hostels WHERE organization_id = $1 LIMIT 1', [orgId]);
+      const hostelId = hostel ? hostel.id : orgId;
+
+      const activeStudentExists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'HYD001-ST000001' OR LOWER(email) = 'student@ihms.com'");
+      if (!activeStudentExists) {
+        const studentUuid = require('crypto').randomUUID();
+        const userUuid = require('crypto').randomUUID();
+        await query(
+          `INSERT INTO users (id, user_id, name, email, password_hash, role, phone, organization_id, customer_code, student_id, status)
+           VALUES ($1, 'HYD001-ST000001', 'Rahul Kumar', 'student@ihms.com', $2, 'STUDENT', '+91 9848099999', $3, 'HYD001-ST000001', $4, 'ACTIVE')`,
+          [userUuid, defaultPasswordHash, orgId, studentUuid]
+        );
+
+        await query(
+          `INSERT INTO students (
+            id, user_id, organization_id, hostel_id, customer_code, student_id, full_name, email,
+            portal_access, portal_access_approved, portal_status, activation_status, password_set, status
+          ) VALUES ($1, $2, $3, $4, 'HYD001-ST000001', 'HYD001-ST000001', 'Rahul Kumar', 'student@ihms.com', true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE')`,
+          [studentUuid, userUuid, orgId, hostelId]
+        );
+      }
+
+      const stu2026003Exists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'STU2026003' OR UPPER(student_id) = 'STU2026003'");
+      if (!stu2026003Exists) {
+        const studentUuid = require('crypto').randomUUID();
+        await query(
+          `INSERT INTO students (
+            id, organization_id, hostel_id, customer_code, student_id, full_name, email,
+            portal_access, portal_access_approved, portal_status, activation_status, password_set, status
+          ) VALUES ($1, $2, $3, 'STU2026003', 'STU2026003', 'Rahul Varma', 'stu2026003@ihms.com', true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+          [studentUuid, orgId, hostelId]
         );
       }
     } catch (err: any) {
@@ -995,7 +1029,9 @@ export class AuthService {
     console.log(`[STUDENT-OTP-LOOKUP] Identifier received from frontend: "${cleanId}"`);
     console.log(`[STUDENT-OTP-LOOKUP] Lookup type: ${lookupType}`);
 
-    // 1. Direct query on students table (case-insensitive email & upper-case customer_code/student_id)
+    const normalizedClean = cleanId.replace(/[\s-]/g, '').toUpperCase();
+
+    // 1. Direct query on students table (case-insensitive email & normalized customer_code/student_id)
     let student = await queryOne<any>(
       `SELECT s.*, o.name as org_name
        FROM students s
@@ -1003,10 +1039,12 @@ export class AuthService {
        WHERE LOWER(s.email) = LOWER($1)
           OR UPPER(s.customer_code) = UPPER($1)
           OR UPPER(s.student_id) = UPPER($1)
+          OR REPLACE(REPLACE(UPPER(COALESCE(s.customer_code, '')), '-', ''), ' ', '') = $2
+          OR REPLACE(REPLACE(UPPER(COALESCE(s.student_id, '')), '-', ''), ' ', '') = $2
           OR s.id = $1
           OR s.user_id = $1
        ORDER BY s.created_at DESC LIMIT 1`,
-      [cleanId]
+      [cleanId, normalizedClean]
     );
 
     // 2. Fallback query on users table if student record is not directly matched (role = 'STUDENT')
@@ -1016,11 +1054,13 @@ export class AuthService {
          WHERE (LOWER(email) = LOWER($1)
              OR UPPER(customer_code) = UPPER($1)
              OR UPPER(student_id) = UPPER($1)
+             OR REPLACE(REPLACE(UPPER(COALESCE(customer_code, '')), '-', ''), ' ', '') = $2
+             OR REPLACE(REPLACE(UPPER(COALESCE(student_id, '')), '-', ''), ' ', '') = $2
              OR UPPER(user_id) = UPPER($1)
              OR id = $1)
            AND role = 'STUDENT'
          LIMIT 1`,
-        [cleanId]
+        [cleanId, normalizedClean]
       );
 
       if (user) {
@@ -1094,36 +1134,57 @@ export class AuthService {
     }
     if (!existingUser) {
       existingUser = await queryOne<any>(
-        'SELECT * FROM users WHERE organization_id = $1 AND (LOWER(email) = LOWER($2) OR UPPER(customer_code) = UPPER($3) OR student_id = $4) LIMIT 1',
-        [student.organization_id, student.email, student.customer_code, student.id]
+        `SELECT * FROM users
+         WHERE (LOWER(email) = LOWER($1)
+             OR UPPER(customer_code) = UPPER($2)
+             OR UPPER(student_id) = UPPER($3)
+             OR UPPER(user_id) = UPPER($3)
+             OR id = $4)
+           AND role = 'STUDENT'
+         ORDER BY created_at DESC LIMIT 1`,
+        [student.email, student.customer_code, student.id, student.user_id || student.id]
       );
     }
 
-    const isActivated = (student.password_set || student.portal_status === 'ACTIVE' || student.activation_status === 'ACTIVATED') && (existingUser && existingUser.status === 'ACTIVE' && existingUser.password_hash);
+    const hasValidPassword = Boolean(existingUser && existingUser.password_hash && existingUser.password_hash.length > 10);
+    const hasPassword = Boolean(hasValidPassword || student.password_set === true);
+    const isStudentFlaggedActive = Boolean(
+      student.portal_status === 'ACTIVE' ||
+      student.activation_status === 'ACTIVATED'
+    );
+    const isActivated = Boolean(hasPassword || isStudentFlaggedActive);
 
     if (isActivated) {
       return {
         success: true,
+        exists: true,
+        hasPassword: true,
+        alreadyActivated: true,
+        requiresActivation: false,
+        requiresPassword: true,
+        requiresOtp: false,
+        nextStep: 'PASSWORD_LOGIN',
+        status: 'ACTIVATED',
         studentId: student.customer_code || student.student_id,
         fullName: student.full_name,
         email: student.email,
-        requiresActivation: false,
-        requiresPassword: true,
-        alreadyActivated: true,
-        status: 'ACTIVATED',
         message: 'Your student portal is already activated. Please sign in using your password.',
       };
     }
 
     return {
       success: true,
+      exists: true,
+      hasPassword: false,
+      alreadyActivated: false,
+      requiresActivation: true,
+      requiresPassword: false,
+      requiresOtp: true,
+      nextStep: 'OTP_ACTIVATION',
+      status: 'ACTIVATION_PENDING',
       studentId: student.customer_code || student.student_id,
       fullName: student.full_name,
       email: student.email,
-      requiresActivation: true,
-      requiresPassword: false,
-      alreadyActivated: false,
-      status: 'ACTIVATION_PENDING',
       message: 'Student account is approved for activation. Please request and verify your OTP.',
     };
   }
@@ -1160,22 +1221,31 @@ export class AuthService {
     }
     if (!linkedUser) {
       linkedUser = await queryOne<any>(
-        'SELECT * FROM users WHERE organization_id = $1 AND (LOWER(email) = LOWER($2) OR UPPER(customer_code) = UPPER($3) OR student_id = $4) LIMIT 1',
-        [student.organization_id, sEmail, sCustomerCode, student.id]
+        `SELECT * FROM users
+         WHERE (LOWER(email) = LOWER($1)
+             OR UPPER(customer_code) = UPPER($2)
+             OR UPPER(student_id) = UPPER($3)
+             OR UPPER(user_id) = UPPER($3)
+             OR id = $4)
+           AND role = 'STUDENT'
+         ORDER BY created_at DESC LIMIT 1`,
+        [sEmail, sCustomerCode, student.id, student.user_id || student.id]
       );
     }
 
-    const isAlreadyActive = Boolean(
-      (student.portal_status === 'ACTIVE' || student.activation_status === 'ACTIVATED' || student.password_set === true) &&
-      linkedUser && linkedUser.password_hash && linkedUser.status === 'ACTIVE'
-    );
+    const hasValidPassword = Boolean(linkedUser && linkedUser.password_hash && linkedUser.password_hash.length > 10);
+    const hasPassword = Boolean(hasValidPassword || student.password_set === true);
+    const isAlreadyActive = Boolean(hasPassword || student.activation_status === 'ACTIVATED' || student.portal_status === 'ACTIVE');
 
     if (isAlreadyActive) {
       return {
         success: true,
+        exists: true,
+        hasPassword: true,
         alreadyActivated: true,
         requiresPassword: true,
         requiresOtp: false,
+        nextStep: 'PASSWORD_LOGIN',
         studentId: student.customer_code || student.student_id,
         fullName: student.full_name,
         email: sEmail,
@@ -1203,8 +1273,11 @@ export class AuthService {
     if (recentOtp) {
       return {
         success: true,
+        exists: true,
+        hasPassword: false,
         alreadyActivated: false,
         requiresOtp: true,
+        nextStep: 'OTP_ACTIVATION',
         maskedEmail,
         email: sEmail,
         studentId: student.customer_code || student.student_id,
@@ -1241,8 +1314,11 @@ export class AuthService {
 
     return {
       success: true,
+      exists: true,
+      hasPassword: false,
       alreadyActivated: false,
       requiresOtp: true,
+      nextStep: 'OTP_ACTIVATION',
       maskedEmail,
       email: sEmail,
       studentId: student.customer_code || student.student_id,

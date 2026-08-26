@@ -13,7 +13,18 @@ export class MessService {
     const actualBranchId = branch.id;
 
     if (!data.weekStartDate || !data.weekEndDate) {
-      throw new AppError('Week start date and end date are required', 400);
+      // Fallback if start/end dates omitted
+      const now = new Date();
+      const dow = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - ((dow + 6) % 7));
+      monday.setHours(0, 0, 0, 0);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const fmtDate = (d: Date) => d.toISOString().split('T')[0];
+
+      data.weekStartDate = data.weekStartDate || fmtDate(monday);
+      data.weekEndDate = data.weekEndDate || fmtDate(sunday);
     }
 
     const existing = await queryOne<any>(
@@ -31,8 +42,9 @@ export class MessService {
     };
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const incomingDays = data.days || data.week || [];
     const sanitizedDays = dayNames.map((dName) => {
-      const dayData = (data.days || []).find((d: any) => d.day?.toLowerCase() === dName.toLowerCase()) || {};
+      const dayData = (incomingDays || []).find((d: any) => d.day?.toLowerCase() === dName.toLowerCase()) || {};
       return {
         day: dName,
         date: dayData.date || '',
@@ -101,18 +113,26 @@ export class MessService {
     const status = data.status || menu.status;
 
     let days = menu.days;
-    if (data.days && Array.isArray(data.days)) {
+    const incomingDays = data.days || data.week;
+
+    if (incomingDays && Array.isArray(incomingDays)) {
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const toStrArray = (arr: any) => {
+        if (!arr) return [];
+        const list = Array.isArray(arr) ? arr : [arr];
+        return list.map((item: any) => (typeof item === 'string' ? item : (item?.name || String(item)))).filter(Boolean);
+      };
+
       days = JSON.stringify(dayNames.map((dName) => {
-        const dayData = data.days.find((d: any) => d.day?.toLowerCase() === dName.toLowerCase()) || {};
+        const dayData = incomingDays.find((d: any) => d.day?.toLowerCase() === dName.toLowerCase()) || {};
         return {
           day: dName,
           date: dayData.date || '',
-          breakfast: Array.isArray(dayData.breakfast) ? dayData.breakfast.filter(Boolean) : [],
-          lunch: Array.isArray(dayData.lunch) ? dayData.lunch.filter(Boolean) : [],
-          snacks: Array.isArray(dayData.snacks) ? dayData.snacks.filter(Boolean) : [],
-          dinner: Array.isArray(dayData.dinner) ? dayData.dinner.filter(Boolean) : [],
-          isSpecial: Boolean(dayData.isSpecial),
+          breakfast: toStrArray(dayData.breakfast),
+          lunch: toStrArray(dayData.lunch),
+          snacks: toStrArray(dayData.snacks),
+          dinner: toStrArray(dayData.dinner),
+          isSpecial: Boolean(dayData.isSpecial || (dayData.breakfast || []).some((x: any) => x?.special)),
         };
       }));
     }
@@ -126,7 +146,11 @@ export class MessService {
       [weekStartDate, weekEndDate, days, status, userId || null, id, orgId]
     );
 
-    emitRealTimeEvent('mess.menu_updated', { menuId: updated.id, branchId: updated.hostel_id, status: updated.status }, { branchId: updated.hostel_id });
+    if (status === 'PUBLISHED') {
+      emitRealTimeEvent('mess.menu_published', { menuId: updated.id, branchId: updated.hostel_id, status: updated.status }, { branchId: updated.hostel_id });
+    } else {
+      emitRealTimeEvent('mess.menu_updated', { menuId: updated.id, branchId: updated.hostel_id, status: updated.status }, { branchId: updated.hostel_id });
+    }
     return this.formatMenu(updated);
   }
 
@@ -214,19 +238,13 @@ export class MessService {
     return stats;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Auto-initialize: fetch existing menu OR create default 7-day menu
-  // Safe to call concurrently — checks for duplicate week_start_date first.
-  // ────────────────────────────────────────────────────────────────────────────
   async getOrInitializeMenu(orgId: string, branchId: string, userId?: string): Promise<any> {
-    // 1. Look for any existing menu for this branch
     const existing = await queryOne<any>(
       'SELECT * FROM mess_menus WHERE organization_id = $1 AND hostel_id = $2 ORDER BY created_at DESC LIMIT 1',
       [orgId, branchId]
     );
     if (existing) return this.formatMenu(existing);
 
-    // 2. Validate the branch exists
     const branch = await queryOne<any>(
       'SELECT id FROM hostels WHERE (id = $1 OR hostel_id = $1 OR branch_code = $1) AND organization_id = $2',
       [branchId, orgId]
@@ -234,16 +252,14 @@ export class MessService {
     if (!branch) throw new AppError('Hostel branch not found', 404);
     const actualBranchId = branch.id;
 
-    // 3. Double-check after branch lookup (race-condition guard)
     const recheck = await queryOne<any>(
       'SELECT * FROM mess_menus WHERE organization_id = $1 AND hostel_id = $2 ORDER BY created_at DESC LIMIT 1',
       [orgId, actualBranchId]
     );
     if (recheck) return this.formatMenu(recheck);
 
-    // 4. Compute current week Monday–Sunday
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0=Sun
+    const dayOfWeek = now.getDay();
     const monday = new Date(now);
     monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
     monday.setHours(0, 0, 0, 0);
@@ -252,62 +268,61 @@ export class MessService {
 
     const fmt = (d: Date) => d.toISOString().split('T')[0];
 
-    // 5. Build standard default 7-day menu
     const defaultDays = [
       {
         day: 'Monday',
-        breakfast: ['Idli Sambar', 'Coconut Chutney', 'Tea/Coffee'],
-        lunch: ['Rice', 'Dal Fry', 'Sabzi', 'Chapati', 'Salad', 'Buttermilk'],
-        snacks: ['Biscuits', 'Tea'],
-        dinner: ['Chapati', 'Paneer Curry', 'Rice', 'Dal', 'Salad'],
+        breakfast: ['Idli & Sambar', 'Coconut Chutney', 'Tea / Coffee'],
+        lunch: ['Steamed Rice', 'Dal Tadka', 'Aloo Gobi', 'Curd'],
+        snacks: ['Samosa (2 pcs)', 'Masala Tea'],
+        dinner: ['Roti (3 pcs)', 'Paneer Butter Masala', 'Jeera Rice', 'Gulab Jamun'],
         isSpecial: false,
       },
       {
         day: 'Tuesday',
-        breakfast: ['Poha', 'Boiled Egg', 'Tea/Coffee'],
-        lunch: ['Rice', 'Sambar', 'Rasam', 'Papad', 'Curd', 'Pickle'],
-        snacks: ['Bread Butter', 'Tea'],
-        dinner: ['Chapati', 'Mix Veg Curry', 'Rice', 'Moong Dal', 'Salad'],
+        breakfast: ['Puri & Bhaji', 'Banana', 'Tea / Coffee'],
+        lunch: ['Rice', 'Sambar', 'Bhindi Fry', 'Rasam', 'Papad'],
+        snacks: ['Biscuits', 'Lemon Tea'],
+        dinner: ['Chapati', 'Mix Veg Curry', 'Dal Fry', 'Kheer'],
         isSpecial: false,
       },
       {
         day: 'Wednesday',
-        breakfast: ['Upma', 'Coconut Chutney', 'Tea/Coffee'],
-        lunch: ['Rice', 'Rajma', 'Chapati', 'Aloo Sabzi', 'Salad', 'Buttermilk'],
-        snacks: ['Samosa', 'Tea'],
-        dinner: ['Chapati', 'Egg Curry', 'Rice', 'Dal Tadka', 'Salad'],
+        breakfast: ['Upma & Chutney', 'Boiled Egg / Banana', 'Tea / Coffee'],
+        lunch: ['Veg Pulao', 'Rajma Masala', 'Boondi Raita', 'Salad'],
+        snacks: ['Pakoda (Veg)', 'Filter Coffee'],
+        dinner: ['Roti', 'Egg Curry / Paneer Curry', 'Steamed Rice', 'Ice Cream'],
         isSpecial: false,
       },
       {
         day: 'Thursday',
-        breakfast: ['Dosa', 'Sambar', 'Chutney', 'Tea/Coffee'],
-        lunch: ['Rice', 'Chole', 'Chapati', 'Gobi Sabzi', 'Salad', 'Curd'],
-        snacks: ['Banana', 'Tea'],
-        dinner: ['Chapati', 'Dal Makhani', 'Rice', 'Aloo Sabzi', 'Salad'],
+        breakfast: ['Poha & Sev', 'Sprouts', 'Tea / Coffee'],
+        lunch: ['Rice', 'Kadhi Pakoda', 'Aloo Methi', 'Curd'],
+        snacks: ['Puffed Rice Chivda', 'Tea'],
+        dinner: ['Chapati', 'Chana Masala', 'Jeera Rice', 'Fruit Custard'],
         isSpecial: false,
       },
       {
         day: 'Friday',
-        breakfast: ['Paratha', 'Pickle', 'Curd', 'Tea/Coffee'],
-        lunch: ['Biryani / Pulao', 'Raita', 'Salad', 'Papad', 'Buttermilk'],
-        snacks: ['Cake Slice', 'Tea'],
-        dinner: ['Chapati', 'Paneer Masala', 'Rice', 'Dal', 'Salad'],
+        breakfast: ['Uttapam & Chutney', 'Sambar', 'Tea / Coffee'],
+        lunch: ['Steamed Rice', 'Tomato Dal', 'Cabbage Poriyal', 'Rasam'],
+        snacks: ['Veg Puff', 'Tea'],
+        dinner: ['Roti', 'Veg Biryani', 'Mirchi Ka Salan', 'Raita', 'Sweet'],
         isSpecial: false,
       },
       {
         day: 'Saturday',
-        breakfast: ['Puri Bhaji', 'Tea/Coffee'],
-        lunch: ['Rice', 'Sambar', 'Rasam', 'Pappad', 'Curd', 'Pickle'],
-        snacks: ['Vadai', 'Tea'],
-        dinner: ['Chapati', 'Chicken Curry / Mushroom Curry', 'Rice', 'Dal', 'Salad'],
+        breakfast: ['Aloo Paratha & Curd', 'Pickle', 'Tea / Coffee'],
+        lunch: ['Rice', 'Dal Makhani', 'Baingan Bharta', 'Curd'],
+        snacks: ['Bread Jam / Toast', 'Coffee'],
+        dinner: ['Poori', 'Chole Masala', 'Jeera Rice', 'Halwa'],
         isSpecial: true,
       },
       {
         day: 'Sunday',
-        breakfast: ['Bread Toast', 'Omelette / Banana', 'Juice / Tea'],
-        lunch: ['Special Rice', 'Chicken Biryani / Veg Dum Biryani', 'Raita', 'Salad', 'Ice Cream'],
-        snacks: ['Pakoda', 'Tea'],
-        dinner: ['Chapati', 'Paneer Butter Masala', 'Rice', 'Dal', 'Halwa'],
+        breakfast: ['Masala Dosa & Chutney', 'Sambar', 'Tea / Coffee'],
+        lunch: ['Special Hyderabadi Dum Biryani (Veg/Chicken)', 'Raita', 'Salad', 'Double Ka Meetha'],
+        snacks: ['Sweet Corn', 'Cold Drink / Tea'],
+        dinner: ['Light Khichdi / Roti', 'Moong Dal', 'Aloo Jeera', 'Curd'],
         isSpecial: true,
       },
     ];
