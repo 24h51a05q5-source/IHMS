@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, Suspense } from 'react';
+import { useEffect, useState, useRef, Suspense, Component, type ErrorInfo, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -185,7 +185,7 @@ function LoginForm() {
 
   const currentOtpString = otpDigits.join('');
 
-  // ── STEP 1: Send OTP ───────────────────────────────────────────────────────
+  // ── STEP 1: Check Status & Send OTP / Show Password ────────────────────────
   const onSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanId = identifier.trim();
@@ -196,14 +196,17 @@ function LoginForm() {
 
     try {
       const res = await authApi.sendStudentOtp(cleanId);
-      if (res.alreadyActivated) {
-        setNotice(res.message || 'Your student portal is already activated. Please sign in using your password.');
+      const isAlreadyActive = Boolean(res?.alreadyActivated || res?.requiresPassword || res?.status === 'ACTIVATED');
+
+      if (isAlreadyActive) {
+        setNotice(res?.message || 'Your account is already activated. Please enter your password to sign in.');
         setStudentStep('SIGN_IN');
         return;
       }
 
-      setMaskedEmail(res.maskedEmail || maskEmail(res.email || ''));
-      setNotice(res.message || `Verification code sent to ${res.maskedEmail || 'your email'}.`);
+      const emailToMask = res?.maskedEmail || maskEmail(res?.email || cleanId);
+      setMaskedEmail(emailToMask);
+      setNotice(res?.message || `Verification code sent to ${emailToMask}.`);
       setOtpDigits(['', '', '', '', '', '']);
       setStudentStep('OTP');
       setCooldown(60);
@@ -211,8 +214,8 @@ function LoginForm() {
         otpInputRefs.current[0]?.focus();
       }, 100);
     } catch (err: any) {
-      const msg = err?.message || '';
-      setError(msg || 'Unable to send OTP. Please try again.');
+      const msg = err?.message || 'Unable to check student account status. Please check your Student ID or email.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -226,8 +229,9 @@ function LoginForm() {
 
     try {
       const res = await authApi.sendStudentOtp(identifier.trim());
-      setMaskedEmail(res.maskedEmail || maskEmail(res.email || ''));
-      setNotice(res.message || 'A new 6-digit verification code has been sent to your registered email.');
+      const emailToMask = res?.maskedEmail || maskEmail(res?.email || identifier.trim());
+      setMaskedEmail(emailToMask);
+      setNotice(res?.message || 'A new 6-digit verification code has been sent to your registered email.');
       setOtpDigits(['', '', '', '', '', '']);
       setCooldown(60);
       otpInputRefs.current[0]?.focus();
@@ -251,12 +255,12 @@ function LoginForm() {
     setLoading(true);
     try {
       const res = await authApi.verifyActivationOtp(identifier.trim(), currentOtpString);
-      setActivationToken(res.activationToken);
-      setNotice('Verification successful! Please create your new password.');
+      setActivationToken(res?.activationToken || (res as any)?.token || '');
+      setNotice(res?.message || 'Verification successful! Please create your new password.');
       setStudentStep('CREATE_PASSWORD');
     } catch (err: any) {
-      const msg = err?.message || '';
-      setError(msg || 'Invalid or expired verification code. Please try again or request a new code.');
+      const msg = err?.message || 'Invalid or expired verification code. Please try again or request a new code.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -291,13 +295,15 @@ function LoginForm() {
     setLoading(true);
     try {
       const res = await authApi.activateStudentAccount(activationToken, newPassword, confirmPassword);
-      if (res?.accessToken || (res as any)?.token) {
-        setTokens(res.accessToken || (res as any).token, res.refreshToken);
+      const token = res?.accessToken || (res as any)?.token;
+      const refreshToken = res?.refreshToken;
+      if (token) {
+        setTokens(token, refreshToken);
       }
       setNotice('Account activated successfully! Redirecting to your dashboard...');
       setTimeout(() => {
         window.location.href = '/student/dashboard';
-      }, 700);
+      }, 500);
     } catch (err: any) {
       setError(err?.message || 'Failed to activate account. Please verify your details.');
     } finally {
@@ -312,6 +318,7 @@ function LoginForm() {
     setLoading(true);
     try {
       await login(identifier.trim(), password, 'STUDENT');
+      router.replace('/student/dashboard');
     } catch (err: any) {
       setError(err?.message || 'Incorrect password. Please try again.');
     } finally {
@@ -363,7 +370,7 @@ function LoginForm() {
 
   const meta = loginType === 'ADMIN'
     ? { title: 'Admin / Staff Sign In', subtitle: 'Access your IHMS admin portal.' }
-    : studentMeta[studentStep];
+    : (studentMeta[studentStep] || { title: 'Student Portal', subtitle: 'Enter your Student ID or registered email to continue.' });
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row bg-[#F3F1EC] text-[#111827] selection:bg-[#E87545] selection:text-white">
@@ -501,7 +508,7 @@ function LoginForm() {
               <form onSubmit={onAdminSignIn} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="adminIdentifier" className="text-xs font-bold text-[#111827]">
-                    Email Address or Staff ID
+                    Email Address, Owner ID or Staff ID
                   </Label>
                   <div className="student-id-input relative flex items-center">
                     <User className="student-id-icon pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
@@ -510,7 +517,7 @@ function LoginForm() {
                       type="text"
                       required
                       autoCapitalize="none"
-                      placeholder="e.g. owner@ihms.com"
+                      placeholder="e.g. IHM-AA-MN-H-0001 or owner@ihms.com"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
                       style={{ paddingLeft: '50px' }}
@@ -580,7 +587,7 @@ function LoginForm() {
                       required
                       autoCapitalize="none"
                       autoFocus
-                      placeholder="e.g. STU20260001 or student@email.com"
+                      placeholder="e.g. IHM-AA-MN-S-0001 or student@email.com"
                       value={identifier}
                       onChange={(e) => {
                         setIdentifier(e.target.value);
@@ -600,12 +607,12 @@ function LoginForm() {
                   {loading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Sending OTP...
+                      Checking Status...
                     </>
                   ) : (
                     <>
-                      <Send className="mr-2 h-4 w-4" />
-                      Send OTP
+                      <ArrowRight className="mr-2 h-4 w-4" />
+                      Continue
                     </>
                   )}
                 </Button>
@@ -917,17 +924,64 @@ function LoginForm() {
   );
 }
 
+class LoginErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('[LoginErrorBoundary] Caught React render error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center p-6 text-center bg-[#F3F1EC]">
+          <div className="w-full max-w-md rounded-xl border border-[#CBD5E1] bg-white p-8 space-y-4 shadow-sm">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FEE2E2] text-[#C62828] border border-[#FECACA]">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="text-xl font-black text-[#111827]">Portal Session Error</h2>
+            <p className="text-xs font-semibold text-[#64748B] leading-relaxed">
+              {this.state.error?.message || 'An unexpected runtime error occurred in the login portal.'}
+            </p>
+            <div className="flex items-center justify-center gap-2.5 pt-2">
+              <Button
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.href = '/login';
+                }}
+                className="gap-2 bg-[#E87545] hover:bg-[#D66434] text-white font-bold text-xs"
+              >
+                <RotateCcw className="h-4 w-4" /> Reset Portal Login
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center bg-[#F5F3EF]">
-          <Loader2 className="h-8 w-8 animate-spin text-[#F47A3D]" />
-        </div>
-      }
-    >
-      <LoginForm />
-    </Suspense>
+    <LoginErrorBoundary>
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center bg-[#F5F3EF]">
+            <Loader2 className="h-8 w-8 animate-spin text-[#F47A3D]" />
+          </div>
+        }
+      >
+        <LoginForm />
+      </Suspense>
+    </LoginErrorBoundary>
   );
 }
 

@@ -56,7 +56,7 @@ describe('Student 4-Digit Activation & First-Time Flow Tests', () => {
         });
 
         testStudentDbId = student.id;
-        testStudentCode = student.customerCode;
+        testStudentCode = student.ihmsId || student.ihms_id || student.customerCode;
 
         // Verify database state: portal_access=false, activation_status='ACCOUNT_CREATED', password_set=false
         const dbStudent = await queryOne<any>('SELECT * FROM students WHERE id = $1', [testStudentDbId]);

@@ -1,0 +1,498 @@
+import { query, queryOne } from '../../config/database';
+import { AppError } from '../../common/filters/http-exception.filter';
+
+export type PaymentConfigStatus =
+  | 'NOT_CONFIGURED'
+  | 'NOT_VERIFIED'
+  | 'VERIFICATION_IN_PROGRESS'
+  | 'VERIFIED'
+  | 'OWNER_CONFIRMED'
+  | 'VERIFICATION_FAILED'
+  | 'ACTIVE';
+
+export interface IHostelPaymentConfigInput {
+  method?: 'UPI' | 'BANK';
+  upiConfig?: {
+    vpaAddress?: string;
+    displayName?: string;
+  };
+  bankConfig?: {
+    beneficiaryName?: string;
+    accountNumber?: string;
+    confirmAccountNumber?: string;
+    ifscCode?: string;
+    bankName?: string;
+  };
+}
+
+export interface IHostelPaymentConfigResponse {
+  id: string;
+  organizationId: string;
+  hostelId: string;
+  ownerId?: string;
+  upiConfig: {
+    vpaAddress: string;
+    displayName: string;
+    status: PaymentConfigStatus;
+    pendingVpaAddress?: string;
+    pendingDisplayName?: string;
+  };
+  bankConfig: {
+    beneficiaryName: string;
+    accountNumber: string;
+    maskedAccountNumber: string;
+    ifscCode: string;
+    bankName: string;
+    status: PaymentConfigStatus;
+    pendingBeneficiaryName?: string;
+    pendingAccountNumber?: string;
+    pendingMaskedAccountNumber?: string;
+    pendingIfscCode?: string;
+    pendingBankName?: string;
+  };
+  verification: {
+    isAutoVerificationAvailable: boolean;
+    verifiedBeneficiaryName?: string;
+    rateLimitCount: number;
+    lastAttemptAt?: string;
+  };
+  auditLog: Array<{
+    timestamp: string;
+    userId: string;
+    event: string;
+    details: string;
+  }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export class HostelPaymentConfigService {
+  /**
+   * Helper to mask account number safely (e.g. ••••••••1234)
+   */
+  public static maskAccountNumber(accountNumber: string): string {
+    if (!accountNumber) return '';
+    const clean = accountNumber.trim();
+    if (clean.length <= 4) return clean;
+    const last4 = clean.slice(-4);
+    return '•'.repeat(Math.max(4, clean.length - 4)) + last4;
+  }
+
+  /**
+   * Validate UPI format (must contain @ and valid characters)
+   */
+  public static validateVpa(vpa: string): boolean {
+    if (!vpa || typeof vpa !== 'string') return false;
+    const clean = vpa.trim();
+    return /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(clean);
+  }
+
+  /**
+   * Validate Indian Financial System Code (IFSC) format
+   */
+  public static validateIfsc(ifsc: string): boolean {
+    if (!ifsc || typeof ifsc !== 'string') return false;
+    const clean = ifsc.trim().toUpperCase();
+    return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(clean);
+  }
+
+  /**
+   * Helper to parse audit logs safely
+   */
+  private parseAuditLog(raw: any): Array<any> {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Check rate limiting (Max 5 verification requests per 15 minutes)
+   */
+  private checkRateLimit(config: any): void {
+    if (!config) return;
+    const count = Number(config.verification_rate_limit_count || 0);
+    const lastAt = config.verification_last_attempt_at ? new Date(config.verification_last_attempt_at).getTime() : 0;
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+
+    if (now - lastAt < fifteenMinutes && count >= 5) {
+      throw new AppError('Rate limit exceeded. Maximum 5 account verification attempts allowed per 15 minutes. Please wait before retrying.', 429);
+    }
+  }
+
+  /**
+   * Get payment configuration for a specific hostel branch
+   */
+  async getByHostelId(orgId: string, hostelId: string): Promise<IHostelPaymentConfigResponse | null> {
+    const config = await queryOne<any>(
+      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+      [orgId, hostelId]
+    );
+
+    if (!config) return null;
+
+    const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
+
+    return {
+      id: config.id,
+      organizationId: config.organization_id,
+      hostelId: config.hostel_id,
+      ownerId: config.owner_id,
+      upiConfig: {
+        vpaAddress: config.upi_vpa || '',
+        displayName: config.upi_display_name || '',
+        status: (config.upi_status as PaymentConfigStatus) || (config.upi_vpa ? 'ACTIVE' : 'NOT_CONFIGURED'),
+        pendingVpaAddress: config.pending_upi_vpa || undefined,
+        pendingDisplayName: config.pending_upi_display_name || undefined,
+      },
+      bankConfig: {
+        beneficiaryName: config.bank_beneficiary_name || '',
+        accountNumber: config.bank_account_number || '',
+        maskedAccountNumber: HostelPaymentConfigService.maskAccountNumber(config.bank_account_number || ''),
+        ifscCode: config.bank_ifsc_code || '',
+        bankName: config.bank_name || '',
+        status: (config.bank_status as PaymentConfigStatus) || (config.bank_account_number ? 'ACTIVE' : 'NOT_CONFIGURED'),
+        pendingBeneficiaryName: config.pending_bank_beneficiary_name || undefined,
+        pendingAccountNumber: config.pending_bank_account_number || undefined,
+        pendingMaskedAccountNumber: HostelPaymentConfigService.maskAccountNumber(config.pending_bank_account_number || ''),
+        pendingIfscCode: config.pending_bank_ifsc_code || undefined,
+        pendingBankName: config.pending_bank_name || undefined,
+      },
+      verification: {
+        isAutoVerificationAvailable: isAutoAvailable,
+        verifiedBeneficiaryName: config.verified_beneficiary_name || undefined,
+        rateLimitCount: Number(config.verification_rate_limit_count || 0),
+        lastAttemptAt: config.verification_last_attempt_at || undefined,
+      },
+      auditLog: this.parseAuditLog(config.audit_log),
+      createdAt: config.created_at,
+      updatedAt: config.updated_at,
+    };
+  }
+
+  /**
+   * Create or update hostel payment configuration (Legacy or Direct Save)
+   */
+  async upsertConfig(
+    orgId: string,
+    hostelId: string,
+    ownerId: string,
+    input: IHostelPaymentConfigInput
+  ): Promise<IHostelPaymentConfigResponse> {
+    return this.initiateVerification(orgId, hostelId, ownerId, input.method || 'UPI', input);
+  }
+
+  /**
+   * STEP 2 & 3: Initiate Owner Self-Verification
+   */
+  async initiateVerification(
+    orgId: string,
+    hostelId: string,
+    ownerId: string,
+    method: 'UPI' | 'BANK',
+    input: IHostelPaymentConfigInput
+  ): Promise<IHostelPaymentConfigResponse> {
+    const hostel = await queryOne<any>(
+      `SELECT id, hostel_name, name FROM hostels WHERE id = $1 AND organization_id = $2`,
+      [hostelId, orgId]
+    );
+    if (!hostel) {
+      throw new AppError('Hostel branch not found in your organization.', 404);
+    }
+
+    let existing = await queryOne<any>(
+      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+      [orgId, hostelId]
+    );
+
+    this.checkRateLimit(existing);
+
+    const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
+    const nowIso = new Date().toISOString();
+    const lastAt = existing?.verification_last_attempt_at ? new Date(existing.verification_last_attempt_at).getTime() : 0;
+    const fifteenMinutes = 15 * 60 * 1000;
+    let newCount = (existing?.verification_rate_limit_count || 0) + 1;
+    if (Date.now() - lastAt > fifteenMinutes) {
+      newCount = 1;
+    }
+
+    let upiStatus: PaymentConfigStatus = existing?.upi_status || 'NOT_CONFIGURED';
+    let bankStatus: PaymentConfigStatus = existing?.bank_status || 'NOT_CONFIGURED';
+    let verifiedBeneficiary: string | undefined = undefined;
+
+    let pendingUpiVpa = existing?.pending_upi_vpa || null;
+    let pendingUpiName = existing?.pending_upi_display_name || null;
+    let pendingBeneficiaryName = existing?.pending_bank_beneficiary_name || null;
+    let pendingAccountNumber = existing?.pending_bank_account_number || null;
+    let pendingIfscCode = existing?.pending_bank_ifsc_code || null;
+    let pendingBankName = existing?.pending_bank_name || null;
+
+    if (method === 'UPI') {
+      const vpa = input.upiConfig?.vpaAddress?.trim() || '';
+      const name = input.upiConfig?.displayName?.trim() || hostel.hostel_name || hostel.name || '';
+      if (!vpa) {
+        throw new AppError('UPI ID / VPA is required.', 400);
+      }
+      if (!HostelPaymentConfigService.validateVpa(vpa)) {
+        throw new AppError(`Invalid UPI ID format "${vpa}". Expected format: hostelname@upi`, 400);
+      }
+
+      pendingUpiVpa = vpa;
+      pendingUpiName = name;
+
+      if (isAutoAvailable) {
+        upiStatus = 'VERIFIED';
+        verifiedBeneficiary = name;
+      } else {
+        upiStatus = 'OWNER_CONFIRMED';
+        verifiedBeneficiary = name;
+      }
+    } else {
+      const beneficiary = input.bankConfig?.beneficiaryName?.trim() || '';
+      const acc = input.bankConfig?.accountNumber?.trim() || '';
+      const confirmAcc = input.bankConfig?.confirmAccountNumber?.trim() || '';
+      const ifsc = input.bankConfig?.ifscCode?.trim().toUpperCase() || '';
+      const bank = input.bankConfig?.bankName?.trim() || '';
+
+      if (!beneficiary) throw new AppError('Beneficiary account holder name is required.', 400);
+      if (!acc) throw new AppError('Bank account number is required.', 400);
+      if (confirmAcc && acc !== confirmAcc) throw new AppError('Account Number and Confirm Account Number do not match.', 400);
+      if (!ifsc) throw new AppError('Bank IFSC Code is required.', 400);
+      if (!HostelPaymentConfigService.validateIfsc(ifsc)) {
+        throw new AppError(`Invalid IFSC Code "${ifsc}". Expected 11 character format (e.g. SBIN0001234).`, 400);
+      }
+      if (acc.length < 8 || acc.length > 20 || !/^\d+$/.test(acc)) {
+        throw new AppError('Bank account number must be between 8 and 20 numeric digits.', 400);
+      }
+
+      pendingBeneficiaryName = beneficiary;
+      pendingAccountNumber = acc;
+      pendingIfscCode = ifsc;
+      pendingBankName = bank;
+
+      if (isAutoAvailable) {
+        bankStatus = 'VERIFIED';
+        verifiedBeneficiary = beneficiary;
+      } else {
+        bankStatus = 'OWNER_CONFIRMED';
+        verifiedBeneficiary = beneficiary;
+      }
+    }
+
+    const audit = this.parseAuditLog(existing?.audit_log);
+    audit.push({
+      timestamp: nowIso,
+      userId: ownerId,
+      event: `VERIFICATION_INITIATED_${method}`,
+      details: method === 'UPI' ? `Target VPA: ${pendingUpiVpa}` : `Target Account: ${HostelPaymentConfigService.maskAccountNumber(pendingAccountNumber || '')}`,
+    });
+
+    let configId = existing?.id;
+    if (!existing) {
+      configId = require('crypto').randomUUID();
+      await query(
+        `INSERT INTO hostel_payment_configs (
+          id, organization_id, hostel_id, owner_id,
+          upi_status, bank_status,
+          pending_upi_vpa, pending_upi_display_name,
+          pending_bank_beneficiary_name, pending_bank_account_number, pending_bank_ifsc_code, pending_bank_name,
+          verified_beneficiary_name, verification_rate_limit_count, verification_last_attempt_at, audit_log
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP, $15)`,
+        [
+          configId,
+          orgId,
+          hostelId,
+          ownerId,
+          upiStatus,
+          bankStatus,
+          pendingUpiVpa,
+          pendingUpiName,
+          pendingBeneficiaryName,
+          pendingAccountNumber,
+          pendingIfscCode,
+          pendingBankName,
+          verifiedBeneficiary,
+          newCount,
+          JSON.stringify(audit),
+        ]
+      );
+    } else {
+      await query(
+        `UPDATE hostel_payment_configs
+         SET upi_status = $1, bank_status = $2,
+             pending_upi_vpa = $3, pending_upi_display_name = $4,
+             pending_bank_beneficiary_name = $5, pending_bank_account_number = $6,
+             pending_bank_ifsc_code = $7, pending_bank_name = $8,
+             verified_beneficiary_name = $9, verification_rate_limit_count = $10,
+             verification_last_attempt_at = CURRENT_TIMESTAMP, audit_log = $11,
+             owner_id = $12, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $13 AND organization_id = $14`,
+        [
+          upiStatus,
+          bankStatus,
+          pendingUpiVpa,
+          pendingUpiName,
+          pendingBeneficiaryName,
+          pendingAccountNumber,
+          pendingIfscCode,
+          pendingBankName,
+          verifiedBeneficiary,
+          newCount,
+          JSON.stringify(audit),
+          ownerId,
+          configId,
+          orgId,
+        ]
+      );
+    }
+
+    const updated = await this.getByHostelId(orgId, hostelId);
+    if (!updated) throw new AppError('Failed to record payment verification.', 500);
+    return updated;
+  }
+
+  /**
+   * STEP 4 & 5: Confirm and Activate Payment Configuration
+   */
+  async confirmAndActivate(
+    orgId: string,
+    hostelId: string,
+    ownerId: string,
+    method: 'UPI' | 'BANK'
+  ): Promise<IHostelPaymentConfigResponse> {
+    const existing = await queryOne<any>(
+      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+      [orgId, hostelId]
+    );
+
+    if (!existing) {
+      throw new AppError('Payment configuration not found for activation.', 404);
+    }
+
+    const nowIso = new Date().toISOString();
+    const audit = this.parseAuditLog(existing.audit_log);
+
+    if (method === 'UPI') {
+      const newVpa = existing.pending_upi_vpa || existing.upi_vpa;
+      const newName = existing.pending_upi_display_name || existing.upi_display_name;
+
+      if (!newVpa) {
+        throw new AppError('No verified pending UPI configuration to activate.', 400);
+      }
+
+      audit.push({
+        timestamp: nowIso,
+        userId: ownerId,
+        event: 'ACTIVATION_CONFIRMED_UPI',
+        details: `Activated UPI: ${newVpa}`,
+      });
+
+      await query(
+        `UPDATE hostel_payment_configs
+         SET upi_vpa = $1, upi_display_name = $2, upi_status = 'ACTIVE',
+             pending_upi_vpa = NULL, pending_upi_display_name = NULL,
+             audit_log = $3, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4 AND organization_id = $5`,
+        [newVpa, newName, JSON.stringify(audit), existing.id, orgId]
+      );
+    } else {
+      const newBeneficiary = existing.pending_bank_beneficiary_name || existing.bank_beneficiary_name;
+      const newAcc = existing.pending_bank_account_number || existing.bank_account_number;
+      const newIfsc = existing.pending_bank_ifsc_code || existing.bank_ifsc_code;
+      const newBank = existing.pending_bank_name || existing.bank_name;
+
+      if (!newAcc || !newIfsc) {
+        throw new AppError('No verified pending Bank configuration to activate.', 400);
+      }
+
+      audit.push({
+        timestamp: nowIso,
+        userId: ownerId,
+        event: 'ACTIVATION_CONFIRMED_BANK',
+        details: `Activated Bank Account: ${HostelPaymentConfigService.maskAccountNumber(newAcc)} (IFSC: ${newIfsc})`,
+      });
+
+      await query(
+        `UPDATE hostel_payment_configs
+         SET bank_beneficiary_name = $1, bank_account_number = $2,
+             bank_ifsc_code = $3, bank_name = $4, bank_status = 'ACTIVE',
+             pending_bank_beneficiary_name = NULL, pending_bank_account_number = NULL,
+             pending_bank_ifsc_code = NULL, pending_bank_name = NULL,
+             audit_log = $5, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $6 AND organization_id = $7`,
+        [newBeneficiary, newAcc, newIfsc, newBank, JSON.stringify(audit), existing.id, orgId]
+      );
+    }
+
+    const updated = await this.getByHostelId(orgId, hostelId);
+    if (!updated) throw new AppError('Failed to activate payment configuration.', 500);
+    return updated;
+  }
+
+  /**
+   * STEP 6: Cancel Pending Replacement Configuration
+   */
+  async cancelPendingChanges(
+    orgId: string,
+    hostelId: string,
+    ownerId: string,
+    method: 'UPI' | 'BANK'
+  ): Promise<IHostelPaymentConfigResponse> {
+    const existing = await queryOne<any>(
+      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+      [orgId, hostelId]
+    );
+
+    if (!existing) {
+      throw new AppError('Payment configuration not found.', 404);
+    }
+
+    const nowIso = new Date().toISOString();
+    const audit = this.parseAuditLog(existing.audit_log);
+
+    if (method === 'UPI') {
+      const revertStatus = existing.upi_vpa ? 'ACTIVE' : 'NOT_CONFIGURED';
+      audit.push({
+        timestamp: nowIso,
+        userId: ownerId,
+        event: 'PENDING_CANCELLED_UPI',
+        details: `Discarded pending UPI edit`,
+      });
+
+      await query(
+        `UPDATE hostel_payment_configs
+         SET upi_status = $1, pending_upi_vpa = NULL, pending_upi_display_name = NULL,
+             audit_log = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3 AND organization_id = $4`,
+        [revertStatus, JSON.stringify(audit), existing.id, orgId]
+      );
+    } else {
+      const revertStatus = existing.bank_account_number ? 'ACTIVE' : 'NOT_CONFIGURED';
+      audit.push({
+        timestamp: nowIso,
+        userId: ownerId,
+        event: 'PENDING_CANCELLED_BANK',
+        details: `Discarded pending Bank edit`,
+      });
+
+      await query(
+        `UPDATE hostel_payment_configs
+         SET bank_status = $1, pending_bank_beneficiary_name = NULL,
+             pending_bank_account_number = NULL, pending_bank_ifsc_code = NULL,
+             pending_bank_name = NULL, audit_log = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3 AND organization_id = $4`,
+        [revertStatus, JSON.stringify(audit), existing.id, orgId]
+      );
+    }
+
+    const updated = await this.getByHostelId(orgId, hostelId);
+    if (!updated) throw new AppError('Failed to cancel pending changes.', 500);
+    return updated;
+  }
+}
+
+export const hostelPaymentConfigService = new HostelPaymentConfigService();

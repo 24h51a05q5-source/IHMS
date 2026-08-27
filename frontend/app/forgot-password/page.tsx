@@ -229,7 +229,7 @@ function ForgotPasswordForm() {
                   required
                   autoCapitalize="none"
                   autoCorrect="off"
-                  placeholder="e.g. owner@ihms.com or STU20260001"
+                  placeholder="e.g. IHM-AA-MN-S-0001 or IHM-AA-MN-H-0001 or email@example.com"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="h-11 rounded-xl border-[#E5E7EB] bg-white pl-10 pr-3.5 text-sm font-semibold text-[#111827] placeholder:text-[#94A3B8] placeholder:font-normal focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20 focus:bg-white transition-all"

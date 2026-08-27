@@ -153,4 +153,73 @@ const handleUpdate = async (req: Request, res: Response, next: NextFunction) => 
 router.patch('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 router.put('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 
+// GET /hostels/:id/payment-config
+router.get('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const config = await hostelPaymentConfigService.getByHostelId(req.user!.organizationId, req.params.id);
+    res.json({ success: true, data: config });
+  } catch (err) { next(err); }
+});
+
+// PUT /hostels/:id/payment-config
+router.put('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const config = await hostelPaymentConfigService.upsertConfig(
+      req.user!.organizationId,
+      req.params.id,
+      (req.user as any).ownerId || req.user!.id,
+      req.body
+    );
+    res.json({ success: true, data: config, message: 'Hostel payment configuration saved successfully.' });
+  } catch (err) { next(err); }
+});
+
+// POST /hostels/:id/payment-config/verify
+router.post('/:id/payment-config/verify', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const method = req.body.method || 'UPI';
+    const config = await hostelPaymentConfigService.initiateVerification(
+      req.user!.organizationId,
+      req.params.id,
+      (req.user as any).ownerId || req.user!.id,
+      method,
+      req.body
+    );
+    res.json({ success: true, data: config, message: 'Account verification initiated successfully.' });
+  } catch (err) { next(err); }
+});
+
+// POST /hostels/:id/payment-config/confirm-activate
+router.post('/:id/payment-config/confirm-activate', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const method = req.body.method || 'UPI';
+    const config = await hostelPaymentConfigService.confirmAndActivate(
+      req.user!.organizationId,
+      req.params.id,
+      (req.user as any).ownerId || req.user!.id,
+      method
+    );
+    res.json({ success: true, data: config, message: 'Payment configuration confirmed and activated.' });
+  } catch (err) { next(err); }
+});
+
+// POST /hostels/:id/payment-config/cancel-pending
+router.post('/:id/payment-config/cancel-pending', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const method = req.body.method || 'UPI';
+    const config = await hostelPaymentConfigService.cancelPendingChanges(
+      req.user!.organizationId,
+      req.params.id,
+      (req.user as any).ownerId || req.user!.id,
+      method
+    );
+    res.json({ success: true, data: config, message: 'Pending changes discarded.' });
+  } catch (err) { next(err); }
+});
+
 export const hostelRouter = router;

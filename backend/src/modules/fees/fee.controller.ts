@@ -410,6 +410,94 @@ router.post('/payments/initiate', async (req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 });
 
+// GET /payments/zero-gateway/details (or /student/payment-initiation)
+const handleGetPaymentDetails = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const isStaff = req.user!.role !== UserRole.STUDENT;
+    const studentId = isStaff && req.query.studentId ? String(req.query.studentId) : (req.user!.studentId || req.user!.id);
+    const amount = req.query.amount ? Number(req.query.amount) : undefined;
+    const result = await zeroGatewayPaymentService.getStudentHostelPaymentInfo(req.user!.organizationId, studentId, amount);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+};
+router.get('/payments/zero-gateway/details', handleGetPaymentDetails);
+router.get('/student/payment-initiation', handleGetPaymentDetails);
+
+// POST /payments/zero-gateway/submit (or /student/submit-payment)
+const handleSubmitPayment = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const isStaff = req.user!.role !== UserRole.STUDENT;
+    const studentId = isStaff && req.body.studentId ? req.body.studentId : (req.user!.studentId || req.user!.id);
+    const result = await zeroGatewayPaymentService.submitZeroGatewayPayment(req.user!.organizationId, {
+      ...req.body,
+      studentId,
+    });
+    res.status(201).json({ success: true, data: result.payment, message: result.message });
+  } catch (err) { next(err); }
+};
+router.post('/payments/zero-gateway/submit', handleSubmitPayment);
+router.post('/student/submit-payment', handleSubmitPayment);
+
+// POST /payments/upload-proof (Secure Image Magic-Number Verified Upload)
+router.post('/payments/upload-proof', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { UploadValidationService } = await import('../../common/utils/upload-validation.service');
+    const imagePayload = req.body.file || req.body.image || req.body.screenshot || req.body.proof;
+    if (!imagePayload) {
+      return res.status(400).json({ success: false, message: 'Image payload is required for proof upload.' });
+    }
+    const relativeUrl = UploadValidationService.saveAndValidatePaymentProof(imagePayload);
+    res.status(201).json({
+      success: true,
+      data: { url: relativeUrl },
+      message: 'Payment proof screenshot uploaded and verified successfully.',
+    });
+  } catch (err) { next(err); }
+});
+
+// GET /payments/pending-verifications (Owner / Accountant Queue)
+router.get('/payments/pending-verifications', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const { hostelId, page = 1, pageSize = 50, search } = req.query;
+    const data = await zeroGatewayPaymentService.getPendingVerifications(
+      req.user!.organizationId,
+      hostelId ? String(hostelId) : undefined,
+      Number(page),
+      Number(pageSize),
+      search ? String(search) : undefined
+    );
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/:id/verify-submission
+router.post('/payments/:id/verify-submission', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const verifierName = req.user!.name || req.user!.email || 'Authorized Staff';
+    const result = await zeroGatewayPaymentService.verifyPaymentSubmission(req.user!.organizationId, req.params.id, verifierName);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// POST /payments/:id/reject-submission
+router.post('/payments/:id/reject-submission', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const rejectedBy = req.user!.name || req.user!.email || 'Authorized Staff';
+    const result = await zeroGatewayPaymentService.rejectPaymentSubmission(
+      req.user!.organizationId,
+      req.params.id,
+      req.body.reason || req.body.rejectionReason,
+      rejectedBy
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // POST /payments/verify
 router.post('/payments/verify', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -430,15 +518,30 @@ router.post('/payments/verify', async (req: Request, res: Response, next: NextFu
   }
 });
 
-// GET /payments/:id/status (Verified server-side status check)
+// POST /payments/dynamic-qr (Initiate dynamic UPI QR payment request)
+router.post('/payments/dynamic-qr', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const isStaff = req.user!.role !== UserRole.STUDENT;
+    const studentId = isStaff && req.body.studentId ? req.body.studentId : (req.user!.studentId || req.user!.id);
+    const amount = req.body.amount ? Number(req.body.amount) : undefined;
+    const installmentId = req.body.installmentId;
+    const result = await zeroGatewayPaymentService.createDynamicQRPayment(
+      req.user!.organizationId,
+      studentId,
+      amount,
+      installmentId
+    );
+    res.status(201).json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
+// GET /payments/:id/status (Verified server-side status check with expiry check)
 router.get('/payments/:id/status', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const payment = await queryOne<any>(
-      'SELECT id, payment_number, amount, currency, status, gateway_order_id, transaction_ref, created_at, updated_at FROM payments WHERE (id = $1 OR payment_number = $1 OR gateway_order_id = $1) AND organization_id = $2',
-      [req.params.id, req.user!.organizationId]
-    );
-    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' });
-    res.json({ success: true, data: payment });
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const statusData = await zeroGatewayPaymentService.checkDynamicPaymentStatus(req.user!.organizationId, req.params.id);
+    res.json({ success: true, data: statusData });
   } catch (err) { next(err); }
 });
 

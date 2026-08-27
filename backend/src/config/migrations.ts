@@ -817,6 +817,58 @@ export async function runMigrations(): Promise<void> {
     `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_url TEXT`,
     `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS attachment_url TEXT`,
     `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS announcement_image TEXT`,
+    `CREATE TABLE IF NOT EXISTS hostel_payment_configs (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      hostel_id TEXT NOT NULL,
+      owner_id TEXT,
+      upi_vpa TEXT,
+      upi_display_name TEXT,
+      upi_status TEXT DEFAULT 'NOT_CONFIGURED',
+      bank_beneficiary_name TEXT,
+      bank_account_number TEXT,
+      bank_ifsc_code TEXT,
+      bank_name TEXT,
+      bank_status TEXT DEFAULT 'NOT_CONFIGURED',
+      pending_upi_vpa TEXT,
+      pending_upi_display_name TEXT,
+      pending_bank_beneficiary_name TEXT,
+      pending_bank_account_number TEXT,
+      pending_bank_ifsc_code TEXT,
+      pending_bank_name TEXT,
+      verified_beneficiary_name TEXT,
+      verification_rate_limit_count INT DEFAULT 0,
+      verification_last_attempt_at TIMESTAMPTZ,
+      audit_log TEXT DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_hostel_pmt_cfg_hostel ON hostel_payment_configs(organization_id, hostel_id)`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS upi_status TEXT DEFAULT 'NOT_CONFIGURED'`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS bank_status TEXT DEFAULT 'NOT_CONFIGURED'`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_upi_vpa TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_upi_display_name TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_bank_beneficiary_name TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_bank_account_number TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_bank_ifsc_code TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS pending_bank_name TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS verified_beneficiary_name TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS verification_rate_limit_count INT DEFAULT 0`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS verification_last_attempt_at TIMESTAMPTZ`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS audit_log TEXT DEFAULT '[]'`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS proof_url TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS rejection_reason TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(12, 2)`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_org_utr ON payments(organization_id, transaction_ref)`,
+    `ALTER TABLE students ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
+    `ALTER TABLE owners ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_students_ihms_id ON students(ihms_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ihms_id ON users(ihms_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_owners_ihms_id ON owners(ihms_id)`,
   ];
 
   for (const stmt of statements) {
@@ -827,5 +879,58 @@ export async function runMigrations(): Promise<void> {
     }
   }
 
-  console.log('[Migrations] ✅ All PostgreSQL tables and indexes are ready.');
+  await backfillIhmsIds();
+
+  console.log('[Migrations] ✅ All PostgreSQL tables, indexes, and IHMS IDs are ready.');
+}
+
+export async function backfillIhmsIds(): Promise<void> {
+  const { query } = require('./database');
+  const { generateIhmsId } = require('../common/utils/code-generator');
+
+  try {
+    // 1. Backfill Students
+    const unmappedStudents = await query(`
+      SELECT s.id, s.organization_id, s.hostel_id, s.branch_id, s.user_id,
+             h.name as hostel_name
+      FROM students s
+      LEFT JOIN hostels h ON s.hostel_id = h.id
+      WHERE s.ihms_id IS NULL OR s.ihms_id = ''
+    `);
+
+    for (const stu of unmappedStudents.rows) {
+      try {
+        const ihmsId = await generateIhmsId('S', stu.hostel_name, 'Main', stu.organization_id || 'GLOBAL');
+        await query(`UPDATE students SET ihms_id = $1 WHERE id = $2`, [ihmsId, stu.id]);
+        if (stu.user_id) {
+          await query(`UPDATE users SET ihms_id = $1 WHERE id = $2 AND (ihms_id IS NULL OR ihms_id = '')`, [ihmsId, stu.user_id]);
+        }
+      } catch (err: any) {
+        console.warn(`[Backfill] Error backfilling student ${stu.id}: ${err.message}`);
+      }
+    }
+
+    // 2. Backfill Hostel Owners / Staff Users
+    const unmappedOwners = await query(`
+      SELECT u.id, u.organization_id, u.hostel_name, u.role,
+             h.name as hostel_name_from_db
+      FROM users u
+      LEFT JOIN hostels h ON u.organization_id = h.organization_id
+      WHERE (u.ihms_id IS NULL OR u.ihms_id = '')
+        AND u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT')
+    `);
+
+    for (const owner of unmappedOwners.rows) {
+      try {
+        const hostelName = owner.hostel_name || owner.hostel_name_from_db || 'AA';
+        const ihmsId = await generateIhmsId('H', hostelName, 'Main', owner.organization_id || 'GLOBAL');
+        await query(`UPDATE users SET ihms_id = $1 WHERE id = $2`, [ihmsId, owner.id]);
+        await query(`UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`, [ihmsId, owner.id]);
+      } catch (err: any) {
+        console.warn(`[Backfill] Error backfilling owner ${owner.id}: ${err.message}`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Backfill] Backfill execution note: ${err.message}`);
+  }
 }

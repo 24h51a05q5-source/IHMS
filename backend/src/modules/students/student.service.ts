@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
-import { generateStudentId, generateTemporaryPassword } from '../../common/utils/code-generator';
+import { generateStudentId, generateTemporaryPassword, generateIhmsId } from '../../common/utils/code-generator';
 import { BedStatus, PaymentMethod, PaymentPlan, StudentStatus, UserRole } from '../../config/constants';
 import { feeService } from '../fees/fee.service';
 import { emitRealTimeEvent } from '../../events/events.gateway';
@@ -65,6 +65,21 @@ export class StudentService {
       throw new AppError(`Room '${room.room_number}' is already fully occupied.`, 400);
     }
 
+    let hostelName = data.hostelName;
+    let branchName = data.branchName;
+    if (actualBranchId) {
+      try {
+        const hostelObj = await queryOne<any>('SELECT name, branch_name FROM hostels WHERE id = $1', [actualBranchId]);
+        if (hostelObj) {
+          if (!hostelName) hostelName = hostelObj.name;
+          if (!branchName) branchName = hostelObj.branch_name || 'Main';
+        }
+      } catch {
+        /* ignore lookup error */
+      }
+    }
+    const ihmsId = await generateIhmsId('S', hostelName, branchName, orgId);
+
     const studentId = await generateStudentId(orgId);
     const customerCode = studentId;
     const studentDbId = require('crypto').randomUUID();
@@ -95,17 +110,18 @@ export class StudentService {
       // 2. Insert student record
       const studentRes = await client.query(
         `INSERT INTO students (
-          id, student_id, customer_code, organization_id, hostel_id, full_name, email,
+          id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
           phone, gender, date_of_birth, blood_group, aadhar_number, college, course,
           guardian_name, guardian_relation, guardian_phone, guardian_email, guardian_address,
           room_id, bed_id, admission_date, portal_access, portal_access_approved, portal_status, status, financial_total_demanded,
           financial_total_paid, financial_outstanding_balance
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $22, 0, $22)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $23, 0, $23)
         RETURNING *`,
         [
           studentDbId,
           studentId,
           customerCode,
+          ihmsId,
           orgId,
           actualBranchId,
           fullName,
@@ -1099,6 +1115,8 @@ export class StudentService {
       _id: s.id,
       studentId: s.student_id,
       customerCode: s.customer_code,
+      ihmsId: s.ihms_id,
+      ihms_id: s.ihms_id,
       name: s.full_name,
       fullName: s.full_name,
       email: s.email,

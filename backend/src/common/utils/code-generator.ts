@@ -159,4 +159,59 @@ export function maskEmail(email: string): string {
   return `${visible}${'*'.repeat(Math.max(4, localPart.length - 2))}@${domain}`;
 }
 
+export function derive2LetterCode(nameOrCode?: string, defaultFallback: string = 'AA'): string {
+  if (!nameOrCode || !nameOrCode.trim()) return defaultFallback.toUpperCase();
+  const cleaned = nameOrCode.trim().toUpperCase().replace(/[^A-Z0-9\s]/g, '');
+  const words = cleaned.split(/\s+/).filter(Boolean);
+
+  if (words.length === 1 && words[0] === 'MAIN') return 'MN';
+  if (words.length >= 2 && words[0] === 'MAIN' && (words[1] === 'BRANCH' || words[1] === 'HOSTEL')) return 'MN';
+
+  if (words.length >= 2) {
+    if (words[0].length === 2 && !['MY', 'ST', 'NO'].includes(words[0])) {
+      return words[0];
+    }
+    const code = (words[0][0] + words[1][0]).toUpperCase();
+    if (code.length === 2) return code;
+  }
+
+  const alphaOnly = cleaned.replace(/\s+/g, '');
+  if (alphaOnly.length >= 2) {
+    return alphaOnly.slice(0, 2);
+  }
+  return (alphaOnly + 'A').slice(0, 2).padEnd(2, 'A');
+}
+
+export async function generateIhmsId(
+  type: 'S' | 'H',
+  hostelNameOrCode?: string,
+  branchNameOrCode?: string,
+  organizationId: string = 'GLOBAL'
+): Promise<string> {
+  const { queryOne } = require('../../config/database');
+
+  const hostelCode = derive2LetterCode(hostelNameOrCode, 'AA');
+  const branchCode = derive2LetterCode(branchNameOrCode, 'MN');
+
+  const seqPrefix = `IHMS_${hostelCode}_${branchCode}_${type}`;
+  let seq = await getNextSequence(organizationId, seqPrefix);
+  let candidate = `IHM-${hostelCode}-${branchCode}-${type}-${String(seq).padStart(4, '0')}`;
+
+  let existing = await queryOne(
+    `SELECT id FROM students WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1)`,
+    [candidate]
+  );
+
+  while (existing) {
+    seq = await getNextSequence(organizationId, seqPrefix);
+    candidate = `IHM-${hostelCode}-${branchCode}-${type}-${String(seq).padStart(4, '0')}`;
+    existing = await queryOne(
+      `SELECT id FROM students WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1)`,
+      [candidate]
+    );
+  }
+
+  return candidate;
+}
+
 

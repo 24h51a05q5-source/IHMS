@@ -20,10 +20,12 @@ import { announcementsApi } from '@/lib/api/announcements.api';
 import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
+import { useLanguage } from '@/lib/i18n/language-context';
 import type { StudentDashboardData, Announcement, ApiError } from '@/lib/types';
 
 export default function StudentDashboardPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [data, setData] = useState<StudentDashboardData | null>(() =>
     getCachedData<StudentDashboardData>('/dashboard/student')
   );

@@ -144,6 +144,7 @@
     background-color: #F3F1EC;
     color: #111827;
     font-weight: 600;
+    font-family: var(--font-inter), 'Noto Sans Telugu', 'Noto Sans Devanagari', 'Segoe UI', Gautami, Mangal, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv11", "ss01";

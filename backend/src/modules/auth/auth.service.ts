@@ -73,6 +73,8 @@ export class AuthService {
         studentId: user.student_id || user.studentId,
         ownerId: user.owner_id || user.ownerId || user.staff_code || user.staffCode,
         customerCode: user.customer_code || user.customerCode,
+        ihmsId: user.ihms_id || user.ihmsId,
+        ihms_id: user.ihms_id || user.ihmsId,
         mustChangePassword: user.must_change_password || user.mustChangePassword || false,
       },
     };
@@ -431,23 +433,10 @@ export class AuthService {
     if (loginType === 'ADMIN') {
       let user = await queryOne<any>(
         `SELECT * FROM users
-         WHERE (LOWER(email) = $1 OR UPPER(user_id) = $2 OR UPPER(staff_code) = $2)
+         WHERE (LOWER(email) = $1 OR UPPER(ihms_id) = $2)
            AND role != 'STUDENT'`,
         [normalizedEmail, normalizedCode]
       );
-
-      if (!user) {
-        const org = await queryOne<any>(
-          'SELECT id FROM organizations WHERE LOWER(email) = $1 OR UPPER(org_code) = $2',
-          [normalizedEmail, normalizedCode]
-        );
-        if (org) {
-          user = await queryOne<any>(
-            "SELECT * FROM users WHERE organization_id = $1 AND role = 'OWNER'",
-            [org.id]
-          );
-        }
-      }
 
       if (!user) {
         throw new AppError('Invalid Admin / Staff credentials.', 401);
@@ -491,10 +480,10 @@ export class AuthService {
       if (!user) {
         user = await queryOne<any>(
           `SELECT * FROM users
-           WHERE (LOWER(email) = $1 OR UPPER(customer_code) = $2 OR student_id = $3)
+           WHERE (LOWER(email) = $1 OR UPPER(ihms_id) = $2)
              AND role = 'STUDENT'
            ORDER BY created_at DESC LIMIT 1`,
-          [(student.email || '').toLowerCase(), (student.customer_code || '').toUpperCase(), student.id]
+          [(student.email || '').toLowerCase(), (student.ihms_id || '').toUpperCase()]
         );
       }
 
@@ -518,7 +507,7 @@ export class AuthService {
     // 3. AUTO / FALLBACK
     const autoStudent = await queryOne<any>(
       `SELECT * FROM students
-       WHERE UPPER(student_id) = $1 OR UPPER(customer_code) = $1 OR LOWER(email) = $2`,
+       WHERE UPPER(ihms_id) = $1 OR LOWER(email) = $2`,
       [normalizedCode, normalizedEmail]
     );
 
@@ -529,9 +518,9 @@ export class AuthService {
 
       let user = await queryOne<any>(
         `SELECT * FROM users
-         WHERE (id = $1 OR student_id = $2 OR UPPER(customer_code) = $3 OR LOWER(email) = $4)
+         WHERE (id = $1 OR UPPER(ihms_id) = $2 OR LOWER(email) = $3)
            AND role = 'STUDENT'`,
-        [autoStudent.user_id, autoStudent.id, autoStudent.customer_code.toUpperCase(), autoStudent.email.toLowerCase()]
+        [autoStudent.user_id, (autoStudent.ihms_id || '').toUpperCase(), autoStudent.email.toLowerCase()]
       );
 
       if (!user || user.status === 'DISABLED' || user.status === 'INACTIVE') {
@@ -549,7 +538,7 @@ export class AuthService {
 
     let user = await queryOne<any>(
       `SELECT * FROM users
-       WHERE LOWER(email) = $1 OR UPPER(user_id) = $2 OR UPPER(staff_code) = $2 OR UPPER(customer_code) = $2`,
+       WHERE LOWER(email) = $1 OR UPPER(ihms_id) = $2`,
       [normalizedEmail, normalizedCode]
     );
 
@@ -696,6 +685,8 @@ export class AuthService {
       studentId: user.student_id,
       ownerId: user.user_id || user.staff_code,
       customerCode: user.customer_code,
+      ihmsId: user.ihms_id,
+      ihms_id: user.ihms_id,
       mustChangePassword: user.must_change_password || false,
       avatarUrl: '',
     };
@@ -749,7 +740,7 @@ export class AuthService {
     // 1. Search users table (Owner, Admin, Super Admin, Student)
     let user = await queryOne<any>(
       `SELECT * FROM users
-       WHERE LOWER(email) = $1 OR UPPER(user_id) = $2 OR UPPER(staff_code) = $2 OR UPPER(customer_code) = $2`,
+       WHERE LOWER(email) = $1 OR UPPER(ihms_id) = $2 OR UPPER(user_id) = $2 OR UPPER(staff_code) = $2 OR UPPER(customer_code) = $2`,
       [lower, upper]
     );
 
@@ -757,16 +748,16 @@ export class AuthService {
     if (!user) {
       const student = await queryOne<any>(
         `SELECT * FROM students
-         WHERE LOWER(email) = $1 OR UPPER(customer_code) = $2 OR UPPER(student_id) = $2`,
+         WHERE LOWER(email) = $1 OR UPPER(ihms_id) = $2 OR UPPER(customer_code) = $2 OR UPPER(student_id) = $2`,
         [lower, upper]
       );
 
       if (student && (student.portal_access === true || student.portal_access === 'true' || student.portal_access === 't' || student.portal_access === 1)) {
         user = await queryOne<any>(
           `SELECT * FROM users
-           WHERE (id = $1 OR student_id = $2 OR UPPER(customer_code) = $3 OR LOWER(email) = $4)
+           WHERE (id = $1 OR student_id = $2 OR UPPER(customer_code) = $3 OR UPPER(ihms_id) = $3 OR LOWER(email) = $4)
              AND role = 'STUDENT'`,
-          [student.user_id, student.id, (student.customer_code || '').toUpperCase(), (student.email || '').toLowerCase()]
+          [student.user_id, student.id, (student.ihms_id || student.customer_code || '').toUpperCase(), (student.email || '').toLowerCase()]
         );
       }
     }
@@ -1031,18 +1022,14 @@ export class AuthService {
 
     const normalizedClean = cleanId.replace(/[\s-]/g, '').toUpperCase();
 
-    // 1. Direct query on students table (case-insensitive email & normalized customer_code/student_id)
+    // 1. Direct query on students table (case-insensitive email & normalized ihms_id)
     let student = await queryOne<any>(
       `SELECT s.*, o.name as org_name
        FROM students s
        LEFT JOIN organizations o ON o.id = s.organization_id
        WHERE LOWER(s.email) = LOWER($1)
-          OR UPPER(s.customer_code) = UPPER($1)
-          OR UPPER(s.student_id) = UPPER($1)
-          OR REPLACE(REPLACE(UPPER(COALESCE(s.customer_code, '')), '-', ''), ' ', '') = $2
-          OR REPLACE(REPLACE(UPPER(COALESCE(s.student_id, '')), '-', ''), ' ', '') = $2
-          OR s.id = $1
-          OR s.user_id = $1
+          OR UPPER(s.ihms_id) = UPPER($1)
+          OR REPLACE(REPLACE(UPPER(COALESCE(s.ihms_id, '')), '-', ''), ' ', '') = $2
        ORDER BY s.created_at DESC LIMIT 1`,
       [cleanId, normalizedClean]
     );
@@ -1052,12 +1039,8 @@ export class AuthService {
       const user = await queryOne<any>(
         `SELECT * FROM users
          WHERE (LOWER(email) = LOWER($1)
-             OR UPPER(customer_code) = UPPER($1)
-             OR UPPER(student_id) = UPPER($1)
-             OR REPLACE(REPLACE(UPPER(COALESCE(customer_code, '')), '-', ''), ' ', '') = $2
-             OR REPLACE(REPLACE(UPPER(COALESCE(student_id, '')), '-', ''), ' ', '') = $2
-             OR UPPER(user_id) = UPPER($1)
-             OR id = $1)
+             OR UPPER(ihms_id) = UPPER($1)
+             OR REPLACE(REPLACE(UPPER(COALESCE(ihms_id, '')), '-', ''), ' ', '') = $2)
            AND role = 'STUDENT'
          LIMIT 1`,
         [cleanId, normalizedClean]

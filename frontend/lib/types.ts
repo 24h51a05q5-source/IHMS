@@ -30,6 +30,7 @@ export interface AuthUser {
   hostelBranchId?: string;
   studentId?: string;
   customerCode?: string;
+  ihmsId?: string;
   mustChangePassword?: boolean;
   avatarUrl?: string;
 }
@@ -128,6 +129,7 @@ export interface Student {
   id: string;
   customerCode: string;
   studentId?: string;
+  ihmsId?: string;
   name: string;
   email?: string;
   phone?: string;
@@ -229,7 +231,7 @@ export interface Payment {
   amount: number;
   currency?: string;
   method?: 'CASH' | 'CARD' | 'UPI' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'NET_BANKING' | 'BANK_TRANSFER' | 'CHEQUE' | 'ONLINE';
-  status: 'CREATED' | 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'REFUNDED' | 'REVERSED';
+  status: 'CREATED' | 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'REFUNDED' | 'REVERSED' | 'SUBMITTED' | 'UNDER_VERIFICATION' | 'VERIFIED' | 'REJECTED' | string;
   transactionRef?: string;
   gatewayOrderId?: string;
   gatewayTransactionId?: string;

@@ -156,4 +156,25 @@ export const studentsApi = {
 
   removeDocument: (studentId: string, docId: string) =>
     api.delete<void>(`/students/${studentId}/documents/${docId}`),
+
+  getPaymentInitiationDetails: (amount?: number) =>
+    api.get<any>('/fees/student/payment-initiation', { query: { amount } }),
+
+  initiateDynamicQrPayment: (data: { amount?: number; installmentId?: string }) =>
+    api.post<any>('/fees/payments/dynamic-qr', data),
+
+  getPaymentStatus: (paymentId: string) =>
+    api.get<any>(`/fees/payments/${paymentId}/status`),
+
+  submitZeroGatewayPayment: (data: {
+    amount: number;
+    paymentMethod: string;
+    transactionRef: string;
+    proofUrl?: string;
+    installmentId?: string;
+    notes?: string;
+  }) => api.post<any>('/fees/student/submit-payment', data),
+
+  uploadPaymentProof: (imagePayload: string) =>
+    api.post<{ url: string }>('/fees/payments/upload-proof', { file: imagePayload }),
 };

@@ -194,6 +194,7 @@ describe('IHMS ERP High-Concurrency & Stress Test Suite', () => {
       feeService.recordPayment(orgId1, {
         studentId: testStudentId,
         amount: 500,
+        transactionRef: `CONC-REF-${i + 1}-${Date.now()}`,
         notes: `Concurrent payment ${i + 1}`,
       })
     );

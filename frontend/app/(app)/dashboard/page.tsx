@@ -21,10 +21,12 @@ import { reportsApi } from '@/lib/api/reports.api';
 import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
+import { useLanguage } from '@/lib/i18n/language-context';
 import type { OwnerDashboardData, ApiError } from '@/lib/types';
 
 function OwnerDashboardPageContent() {
   const { user, currentBranchId } = useAuth();
+  const { t } = useLanguage();
   const [data, setData] = useState<OwnerDashboardData | null>(() =>
     getCachedData<OwnerDashboardData>('/dashboard/owner', currentBranchId ? { branchId: currentBranchId } : undefined)
   );

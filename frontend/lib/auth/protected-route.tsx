@@ -46,7 +46,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
         '/inventory',
         '/reports',
         '/hostels',
-        '/settings',
         '/accountant',
         '/warden',
         '/security',

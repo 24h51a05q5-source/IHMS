@@ -96,6 +96,7 @@ export const authApi = {
   sendStudentOtp: (identifier: string) =>
     api.post<{
       success: boolean;
+      status?: string;
       alreadyActivated?: boolean;
       requiresPassword?: boolean;
       requiresOtp?: boolean;

@@ -18,6 +18,7 @@ import { notificationsApi } from '@/lib/api/notifications.api';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ContactUsModal } from '@/components/support/contact-us-modal';
+import { useLanguage } from '@/lib/i18n/language-context';
 import { cn } from '@/lib/utils';
 
 const SHG_ICON_COLORS: Record<string, string> = {
@@ -278,6 +279,47 @@ function SidebarBrand({
 /* ========================================================================= */
 /* 2. SIDEBAR GROUPED NAVIGATION (Clean 2D Flat Active / Hover States)       */
 /* ========================================================================= */
+
+function getTranslatedNavLabel(label: string, t: (k: string, d?: string) => string): string {
+  switch (label) {
+    case 'Dashboard': return t('nav.dashboard', label);
+    case 'Hostels': return t('nav.hostels', label);
+    case 'Students': return t('nav.students', label);
+    case 'Rooms & Beds': return t('nav.rooms', label);
+    case 'Attendance': return t('nav.attendance', label);
+    case 'Visitors': return t('nav.visitors', label);
+    case 'Fees': return t('nav.fees', label);
+    case 'Finance': return t('nav.finance', label);
+    case 'Reports': return t('nav.reports', label);
+    case 'Mess': return t('nav.mess', label);
+    case 'Inventory': return t('nav.inventory', label);
+    case 'Complaints': return t('nav.complaints', label);
+    case 'Announcements': return t('nav.announcements', label);
+    case 'Notifications': return t('nav.notifications', label);
+    case 'Help & Support': return t('nav.support', label);
+    case 'Settings': return t('nav.settings', label);
+    case 'My Profile': return t('nav.myProfile', label);
+    case 'My Room & Bed': return t('nav.myRoom', label);
+    case 'My Fees': return t('nav.myFees', label);
+    case 'Mess Menu': return t('nav.messMenu', label);
+    default: return label;
+  }
+}
+
+function getTranslatedSectionLabel(section: string, t: (k: string, d?: string) => string): string {
+  switch (section) {
+    case 'MAIN': return t('section.main', section);
+    case 'HOSTEL MANAGEMENT': return t('section.hostelManagement', section);
+    case 'FINANCE': return t('section.finance', section);
+    case 'OPERATIONS': return t('section.operations', section);
+    case 'SYSTEM': return t('section.system', section);
+    case 'ACCOMMODATION': return t('section.accommodation', section);
+    case 'SERVICES': return t('section.services', section);
+    case 'STUDENT OVERVIEW': return t('section.studentOverview', section);
+    default: return section;
+  }
+}
+
 function SidebarNav({
   nav,
   pathname,
@@ -287,13 +329,14 @@ function SidebarNav({
   pathname: string;
   onNavigate?: () => void;
 }) {
+  const { t } = useLanguage();
   const groupedNav = useMemo(() => {
-    const groups: { [key: string]: NavItem[] } = {};
-    nav.forEach((item) => {
-      const section = item.section || 'MAIN';
-      if (!groups[section]) groups[section] = [];
-      groups[section].push(item);
-    });
+    const groups: Record<string, NavItem[]> = {};
+    for (const item of nav) {
+      const sec = item.section || 'MAIN';
+      if (!groups[sec]) groups[sec] = [];
+      groups[sec].push(item);
+    }
     return groups;
   }, [nav]);
 
@@ -308,7 +351,7 @@ function SidebarNav({
             {/* Section Label */}
             {groupKeys.length > 1 && sectionKey !== 'MAIN' && (
               <div className="menu-heading section-title px-3 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
-                {sectionKey}
+                {getTranslatedSectionLabel(sectionKey, t)}
               </div>
             )}
 
@@ -344,7 +387,9 @@ function SidebarNav({
                       />
 
                       {/* Menu Label */}
-                      <span className={cn('truncate', active ? 'text-[#111827] font-bold' : 'font-semibold')}>{item.label}</span>
+                      <span className={cn('truncate', active ? 'text-[#111827] font-bold' : 'font-semibold')}>
+                        {getTranslatedNavLabel(item.label, t)}
+                      </span>
 
                       {/* Notification Dot */}
                       {item.badge === 'notifications' && (
