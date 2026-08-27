@@ -96,10 +96,10 @@ export class AuthService {
 
     if (!existingOwner) return null;
 
-    let ownerIdFormatted = existingOwner.user_id || existingOwner.staff_code;
-    if (!ownerIdFormatted) {
-      ownerIdFormatted = `IHMS-OWN-${existingOwner.id.slice(-6).toUpperCase()}`;
-      await query('UPDATE users SET user_id = $1, staff_code = $1 WHERE id = $2', [ownerIdFormatted, existingOwner.id]);
+    let ownerIdFormatted = existingOwner.user_id || existingOwner.staff_code || existingOwner.ihms_id;
+    if (!ownerIdFormatted || !ownerIdFormatted.startsWith('IHM-')) {
+      ownerIdFormatted = await generateIhmsId('H', existingOwner.hostel_name || 'AA', 'Main', existingOwner.organization_id || 'GLOBAL');
+      await query('UPDATE users SET user_id = $1, staff_code = $1, ihms_id = $1 WHERE id = $2', [ownerIdFormatted, existingOwner.id]);
     }
 
     const orgIdFormatted = existingOwner.org_code || `IHMS-HST-${(existingOwner.organization_id || '').slice(-6).toUpperCase()}`;
@@ -616,21 +616,21 @@ export class AuthService {
 
         await query(
           `INSERT INTO students (
-            id, user_id, organization_id, hostel_id, customer_code, student_id, full_name, email,
+            id, user_id, organization_id, hostel_id, customer_code, student_id, ihms_id, full_name, email,
             portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-          ) VALUES ($1, $2, $3, $4, 'HYD001-ST000001', 'HYD001-ST000001', 'Rahul Kumar', 'student@ihms.com', true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE')`,
+          ) VALUES ($1, $2, $3, $4, 'IHM-GV-MN-S-0001', 'IHM-GV-MN-S-0001', 'IHM-GV-MN-S-0001', 'Rahul Kumar', 'student@ihms.com', true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE')`,
           [studentUuid, userUuid, orgId, hostelId]
         );
       }
 
-      const stu2026003Exists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'STU2026003' OR UPPER(student_id) = 'STU2026003'");
+      const stu2026003Exists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'IHM-GV-MN-S-0003' OR UPPER(ihms_id) = 'IHM-GV-MN-S-0003'");
       if (!stu2026003Exists) {
         const studentUuid = require('crypto').randomUUID();
         await query(
           `INSERT INTO students (
-            id, organization_id, hostel_id, customer_code, student_id, full_name, email,
+            id, organization_id, hostel_id, customer_code, student_id, ihms_id, full_name, email,
             portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-          ) VALUES ($1, $2, $3, 'STU2026003', 'STU2026003', 'Rahul Varma', 'stu2026003@ihms.com', true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+          ) VALUES ($1, $2, $3, 'IHM-GV-MN-S-0003', 'IHM-GV-MN-S-0003', 'IHM-GV-MN-S-0003', 'Rahul Varma', 'stu2026003@ihms.com', true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
           [studentUuid, orgId, hostelId]
         );
       }

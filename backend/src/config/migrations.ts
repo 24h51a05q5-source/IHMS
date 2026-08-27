@@ -930,6 +930,40 @@ export async function backfillIhmsIds(): Promise<void> {
         console.warn(`[Backfill] Error backfilling owner ${owner.id}: ${err.message}`);
       }
     }
+
+    // 3. Backfill Rooms
+    const unmappedRooms = await query(`
+      SELECT r.id, r.organization_id, r.hostel_id, h.name as hostel_name
+      FROM rooms r
+      LEFT JOIN hostels h ON r.hostel_id = h.id
+      WHERE r.room_code IS NULL OR r.room_code = '' OR r.room_code NOT LIKE 'IHM-%'
+    `);
+
+    for (const rm of unmappedRooms.rows) {
+      try {
+        const roomCode = await generateIhmsId('R', rm.hostel_name, 'Main', rm.organization_id || 'GLOBAL');
+        await query(`UPDATE rooms SET room_code = $1 WHERE id = $2`, [roomCode, rm.id]);
+      } catch (err: any) {
+        console.warn(`[Backfill] Error backfilling room ${rm.id}: ${err.message}`);
+      }
+    }
+
+    // 4. Backfill Beds
+    const unmappedBeds = await query(`
+      SELECT b.id, b.organization_id, b.hostel_id, h.name as hostel_name
+      FROM beds b
+      LEFT JOIN hostels h ON b.hostel_id = h.id
+      WHERE b.bed_code IS NULL OR b.bed_code = '' OR b.bed_code NOT LIKE 'IHM-%'
+    `);
+
+    for (const bd of unmappedBeds.rows) {
+      try {
+        const bedCode = await generateIhmsId('B', bd.hostel_name, 'Main', bd.organization_id || 'GLOBAL');
+        await query(`UPDATE beds SET bed_code = $1 WHERE id = $2`, [bedCode, bd.id]);
+      } catch (err: any) {
+        console.warn(`[Backfill] Error backfilling bed ${bd.id}: ${err.message}`);
+      }
+    }
   } catch (err: any) {
     console.warn(`[Backfill] Backfill execution note: ${err.message}`);
   }

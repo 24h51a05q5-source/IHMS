@@ -2,6 +2,7 @@ import { query, queryOne, queryRows } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { BedStatus } from '../../config/constants';
 import { emitRealTimeEvent } from '../../events/events.gateway';
+import { generateIhmsId } from '../../common/utils/code-generator';
 
 export interface IRoom {
   id: string;
@@ -83,7 +84,7 @@ export class RoomService {
     const monthlyRate = Number(data.monthlyRate || data.monthlyRentPerBed || 8000);
     const roomType = data.roomType || data.type || (bedCount === 1 ? 'SINGLE' : bedCount === 2 ? 'DOUBLE' : bedCount === 3 ? 'TRIPLE' : 'FOUR_SHARING');
     const roomId = require('crypto').randomUUID();
-    const roomCode = `${bCode}-B${blockName}-F${floorNumber}-R${roomNumber}`;
+    const roomCode = await generateIhmsId('R', branch.name, 'Main', orgId);
 
     const room = await queryOne<any>(
       `INSERT INTO rooms (
@@ -123,7 +124,7 @@ export class RoomService {
     const beds: any[] = [];
     for (let i = 1; i <= bedCount; i++) {
       const bedId = require('crypto').randomUUID();
-      const bedCode = `${bCode}-R${roomNumber}-B${String(i).padStart(2, '0')}`;
+      const bedCode = await generateIhmsId('B', branch.name, 'Main', orgId);
       const bed = await queryOne<any>(
         `INSERT INTO beds (
           id, room_id, hostel_id, organization_id, bed_number, bed_code,
@@ -253,7 +254,7 @@ export class RoomService {
       for (let i = 1; i <= bedsToAdd; i++) {
         const nextNum = maxBedNumber + i;
         const bedId = require('crypto').randomUUID();
-        const bedCode = `${bCode}-R${newRoomNumber}-B${String(nextNum).padStart(2, '0')}`;
+        const bedCode = await generateIhmsId('B', branch?.name, 'Main', orgId);
         await query(
           `INSERT INTO beds (id, room_id, hostel_id, organization_id, bed_number, bed_code, monthly_rate, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -340,7 +341,7 @@ export class RoomService {
     const currentBeds = await queryRows<any>('SELECT bed_number FROM beds WHERE room_id = $1 AND organization_id = $2', [roomId, orgId]);
     const maxBedNumber = currentBeds.reduce((max, b) => Math.max(max, Number(b.bed_number) || 0), 0);
     const nextBedNumber = maxBedNumber + 1;
-    const bedCode = `${bCode}-R${room.room_number}-B${String(nextBedNumber).padStart(2, '0')}`;
+    const bedCode = await generateIhmsId('B', branch?.name, 'Main', orgId);
     const bedId = require('crypto').randomUUID();
 
     const bed = await queryOne<any>(

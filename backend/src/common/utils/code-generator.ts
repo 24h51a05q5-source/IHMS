@@ -179,7 +179,7 @@ export function derive2LetterCode(nameOrCode?: string, defaultFallback: string =
 }
 
 export async function generateIhmsId(
-  type: 'S' | 'H',
+  type: 'S' | 'H' | 'R' | 'B',
   hostelNameOrCode?: string,
   branchNameOrCode?: string,
   organizationId: string = 'GLOBAL'
@@ -193,18 +193,37 @@ export async function generateIhmsId(
   let seq = await getNextSequence(organizationId, seqPrefix);
   let candidate = `IHM-${hostelCode}-${branchCode}-${type}-${String(seq).padStart(4, '0')}`;
 
-  let existing = await queryOne(
-    `SELECT id FROM students WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1)`,
-    [candidate]
-  );
+  const checkExisting = async (cand: string) => {
+    if (type === 'S') {
+      return queryOne(
+        `SELECT id FROM students WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1)`,
+        [cand]
+      );
+    } else if (type === 'H') {
+      return queryOne(
+        `SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM owners WHERE UPPER(ihms_id) = UPPER($1)`,
+        [cand]
+      );
+    } else if (type === 'R') {
+      return queryOne(
+        `SELECT id FROM rooms WHERE UPPER(room_code) = UPPER($1)`,
+        [cand]
+      );
+    } else if (type === 'B') {
+      return queryOne(
+        `SELECT id FROM beds WHERE UPPER(bed_code) = UPPER($1)`,
+        [cand]
+      );
+    }
+    return null;
+  };
+
+  let existing = await checkExisting(candidate);
 
   while (existing) {
     seq = await getNextSequence(organizationId, seqPrefix);
     candidate = `IHM-${hostelCode}-${branchCode}-${type}-${String(seq).padStart(4, '0')}`;
-    existing = await queryOne(
-      `SELECT id FROM students WHERE UPPER(ihms_id) = UPPER($1) UNION SELECT id FROM users WHERE UPPER(ihms_id) = UPPER($1)`,
-      [candidate]
-    );
+    existing = await checkExisting(candidate);
   }
 
   return candidate;

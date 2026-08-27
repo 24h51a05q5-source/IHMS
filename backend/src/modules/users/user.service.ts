@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { query, queryOne, queryRows } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { UserRole } from '../../config/constants';
-import { generateStaffCode } from '../../common/utils/code-generator';
+import { generateStaffCode, generateIhmsId } from '../../common/utils/code-generator';
 
 export interface IUser {
   id: string;
@@ -54,7 +54,7 @@ export class UserService {
         data.phone || '',
         orgId,
         branchId,
-        staffCode,
+        ihmsId,
         'ACTIVE'
       ]
     );
