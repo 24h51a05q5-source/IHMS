@@ -108,7 +108,7 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
       const ownerUser = await queryOne<any>('SELECT * FROM users WHERE email = $1 AND role = $2', ['vikram@greenvalley.com', UserRole.OWNER]);
       expect(ownerUser?.user_id).toBeDefined();
 
-      const loginRes = await authService.login(ownerUser!.user_id!, 'SecretPassword@123', 'ADMIN');
+      const loginRes = await authService.login(ownerUser!.ihms_id || ownerUser!.user_id!, 'SecretPassword@123', 'ADMIN');
       expect(loginRes.token).toBeDefined();
       expect(loginRes.user.email).toBe('vikram@greenvalley.com');
     });
@@ -199,7 +199,7 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
         securityDeposit: 5000,
       });
 
-      expect(student.customerCode).toMatch(/^(STU|HYD001-ST)/);
+      expect(student.customerCode).toMatch(/^IHM-[A-Z0-9]{2}-[A-Z0-9]{2}-S-\d{4}$/);
       expect(student.portalAccess).toBe('DISABLED'); // CORE BUSINESS RULE
       expect(student.financialSummary.totalDemanded).toBe(14000);
       expect(student.financialSummary.outstandingBalance).toBe(14000);

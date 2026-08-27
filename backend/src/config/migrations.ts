@@ -895,15 +895,15 @@ export async function backfillIhmsIds(): Promise<void> {
              h.name as hostel_name
       FROM students s
       LEFT JOIN hostels h ON s.hostel_id = h.id
-      WHERE s.ihms_id IS NULL OR s.ihms_id = ''
+      WHERE s.ihms_id IS NULL OR s.ihms_id = '' OR s.ihms_id NOT LIKE 'IHM-%'
     `);
 
     for (const stu of unmappedStudents.rows) {
       try {
         const ihmsId = await generateIhmsId('S', stu.hostel_name, 'Main', stu.organization_id || 'GLOBAL');
-        await query(`UPDATE students SET ihms_id = $1 WHERE id = $2`, [ihmsId, stu.id]);
+        await query(`UPDATE students SET ihms_id = $1, student_id = $1, customer_code = $1 WHERE id = $2`, [ihmsId, stu.id]);
         if (stu.user_id) {
-          await query(`UPDATE users SET ihms_id = $1 WHERE id = $2 AND (ihms_id IS NULL OR ihms_id = '')`, [ihmsId, stu.user_id]);
+          await query(`UPDATE users SET ihms_id = $1, student_id = $1, customer_code = $1 WHERE id = $2`, [ihmsId, stu.user_id]);
         }
       } catch (err: any) {
         console.warn(`[Backfill] Error backfilling student ${stu.id}: ${err.message}`);
@@ -916,15 +916,15 @@ export async function backfillIhmsIds(): Promise<void> {
              h.name as hostel_name_from_db
       FROM users u
       LEFT JOIN hostels h ON u.organization_id = h.organization_id
-      WHERE (u.ihms_id IS NULL OR u.ihms_id = '')
-        AND u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT')
+      WHERE (u.ihms_id IS NULL OR u.ihms_id = '' OR u.ihms_id NOT LIKE 'IHM-%')
+        AND u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN', 'ADMIN', 'OWNER')
     `);
 
     for (const owner of unmappedOwners.rows) {
       try {
         const hostelName = owner.hostel_name || owner.hostel_name_from_db || 'AA';
         const ihmsId = await generateIhmsId('H', hostelName, 'Main', owner.organization_id || 'GLOBAL');
-        await query(`UPDATE users SET ihms_id = $1 WHERE id = $2`, [ihmsId, owner.id]);
+        await query(`UPDATE users SET ihms_id = $1, user_id = $1, staff_code = $1 WHERE id = $2`, [ihmsId, owner.id]);
         await query(`UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`, [ihmsId, owner.id]);
       } catch (err: any) {
         console.warn(`[Backfill] Error backfilling owner ${owner.id}: ${err.message}`);

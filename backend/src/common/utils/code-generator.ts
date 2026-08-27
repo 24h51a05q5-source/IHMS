@@ -27,19 +27,12 @@ export async function generateBusinessCode(
   return `${prefix}-${seqStr}`;
 }
 
-export async function generateStudentId(organizationId: string): Promise<string> {
-  const { queryOne } = require('../../config/database');
-  const year = new Date().getFullYear();
-  const prefix = `STU${year}`;
-  let seq = await getNextSequence('GLOBAL', prefix);
-  let candidate = `${prefix}${String(seq).padStart(4, '0')}`;
-  let existing = await queryOne('SELECT id FROM students WHERE UPPER(student_id) = UPPER($1) OR UPPER(customer_code) = UPPER($1)', [candidate]);
-  while (existing) {
-    seq = await getNextSequence('GLOBAL', prefix);
-    candidate = `${prefix}${String(seq).padStart(4, '0')}`;
-    existing = await queryOne('SELECT id FROM students WHERE UPPER(student_id) = UPPER($1) OR UPPER(customer_code) = UPPER($1)', [candidate]);
-  }
-  return candidate;
+export async function generateStudentId(
+  organizationId: string = 'GLOBAL',
+  hostelNameOrCode?: string,
+  branchNameOrCode?: string
+): Promise<string> {
+  return generateIhmsId('S', hostelNameOrCode, branchNameOrCode, organizationId);
 }
 
 export function generateTemporaryPassword(): string {
@@ -130,9 +123,12 @@ export async function generateAssetCode(
   return generateBusinessCode(organizationId, prefix, 6, prefix);
 }
 
-export async function generateOwnerId(): Promise<string> {
-  const seq = await getNextSequence('SYSTEM', 'IHMS-OWN');
-  return `IHMS-OWN-${String(seq).padStart(6, '0')}`;
+export async function generateOwnerId(
+  hostelNameOrCode?: string,
+  branchNameOrCode?: string,
+  organizationId: string = 'GLOBAL'
+): Promise<string> {
+  return generateIhmsId('H', hostelNameOrCode, branchNameOrCode, organizationId);
 }
 
 export async function generateHostelOrgId(): Promise<string> {

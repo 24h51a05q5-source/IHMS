@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { UserRole } from '../../config/constants';
-import { generateOwnerId, generateHostelOrgId, maskEmail } from '../../common/utils/code-generator';
+import { generateOwnerId, generateHostelOrgId, generateIhmsId, maskEmail } from '../../common/utils/code-generator';
 import { emailService } from '../../common/utils/email.service';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ihms-super-secret-jwt-key-production-2026';
@@ -268,18 +268,20 @@ export class AuthService {
       );
 
       const ownerUserId = require('crypto').randomUUID();
-      const ownerId = await generateOwnerId();
+      const ownerIhmsId = await generateIhmsId('H', registeredHostelName, 'Main', orgId);
+      const ownerId = ownerIhmsId;
       const passwordHash = await bcrypt.hash(ownerPassword, 10);
 
       const ownerRes = await client.query(
         `INSERT INTO users (
-          id, user_id, name, email, password_hash, role, phone,
+          id, user_id, ihms_id, name, email, password_hash, role, phone,
           organization_id, branch_id, staff_code, hostel_name, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE')
         RETURNING *`,
         [
           ownerUserId,
           ownerId,
+          ownerIhmsId,
           ownerName,
           targetEmail,
           passwordHash,
@@ -288,19 +290,19 @@ export class AuthService {
           orgId,
           branchId,
           ownerId,
-          registeredHostelName,
-          'ACTIVE'
+          registeredHostelName
         ]
       );
       const owner = ownerRes.rows[0];
 
       const ownerProfileId = require('crypto').randomUUID();
       await client.query(
-        `INSERT INTO owners (id, user_id, organization_id, full_name, owner_name, email, phone, business_name, registered_hostel_name, address, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE')`,
+        `INSERT INTO owners (id, user_id, ihms_id, organization_id, full_name, owner_name, email, phone, business_name, registered_hostel_name, address, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACTIVE')`,
         [
           ownerProfileId,
           ownerUserId,
+          ownerIhmsId,
           orgId,
           ownerName,
           ownerName,

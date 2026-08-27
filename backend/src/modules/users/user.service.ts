@@ -31,21 +31,22 @@ export class UserService {
     const existing = await queryOne('SELECT id FROM users WHERE LOWER(email) = $1', [data.email.toLowerCase()]);
     if (existing) throw new AppError('A user with this email already exists', 400);
 
-    const staffCode = await generateStaffCode(orgId, hostelCode || 'HYD001');
+    const ihmsId = await generateIhmsId('H', hostelCode || 'AA', 'Main', orgId);
     const passwordHash = await bcrypt.hash(data.password || 'Staff@123', 10);
     const id = require('crypto').randomUUID();
 
     const user = await queryOne<any>(
       `INSERT INTO users (
-        id, user_id, name, email, password_hash, role, phone,
+        id, user_id, ihms_id, name, email, password_hash, role, phone,
         organization_id, branch_id, staff_code, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING id, id as "_id", user_id as "userId", name, email, role, phone,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id, id as "_id", user_id as "userId", ihms_id as "ihmsId", name, email, role, phone,
                 organization_id as "organizationId", branch_id as "branchId",
                 staff_code as "staffCode", status, created_at as "createdAt"`,
       [
         id,
-        staffCode,
+        ihmsId,
+        ihmsId,
         data.name,
         data.email.toLowerCase(),
         passwordHash,

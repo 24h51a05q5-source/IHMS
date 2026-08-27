@@ -79,11 +79,10 @@ export class StudentService {
       }
     }
     const ihmsId = await generateIhmsId('S', hostelName, branchName, orgId);
-
-    const studentId = await generateStudentId(orgId);
-    const customerCode = studentId;
+    const studentId = ihmsId;
+    const customerCode = ihmsId;
     const studentDbId = require('crypto').randomUUID();
-    const finalEmail = studentEmail || `${customerCode.toLowerCase()}@example.com`;
+    const finalEmail = studentEmail || `${ihmsId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
 
     const monthlyRent = Number(bed.monthly_rate || room.monthly_rate || 8000);
     const stayDurationMonths = Number(data.stayDurationMonths || data.durationMonths || data.stayDuration || 1);
@@ -742,26 +741,28 @@ export class StudentService {
       return this.admitStudent(orgId, actualBranchId, data);
     }
 
-    const studentId = await generateStudentId(orgId);
-    const customerCode = studentId;
+    const ihmsId = await generateIhmsId('S', branch?.name, 'Main', orgId);
+    const studentId = ihmsId;
+    const customerCode = ihmsId;
     const studentDbId = require('crypto').randomUUID();
-    const finalEmail = studentEmail || `${customerCode.toLowerCase()}@example.com`;
+    const finalEmail = studentEmail || `${ihmsId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
 
     const initialFee = Number(data.totalFee || data.admissionFee || 0);
 
     const student = await queryOne<any>(
       `INSERT INTO students (
-        id, student_id, customer_code, organization_id, hostel_id, full_name, email,
+        id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
         phone, gender, date_of_birth, blood_group, aadhar_number, college, course,
         guardian_name, guardian_relation, guardian_phone, guardian_email, guardian_address,
         admission_date, portal_access, portal_access_approved, portal_status, status, financial_total_demanded,
         financial_total_paid, financial_outstanding_balance
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $20, 0, $20)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $21, 0, $21)
       RETURNING *`,
       [
         studentDbId,
         studentId,
         customerCode,
+        ihmsId,
         orgId,
         actualBranchId,
         fullName,

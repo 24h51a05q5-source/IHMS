@@ -212,7 +212,7 @@ export class FeeService {
     }
 
     const student = await queryOne<any>(
-      'SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
+      'SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
       [data.studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found in this organization.', 404);
@@ -254,7 +254,7 @@ export class FeeService {
 
   async getStudentFeeAccount(orgId: string, studentId: string, branchId?: string): Promise<any> {
     const student = await queryOne<any>(
-      'SELECT id, customer_code, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
+      'SELECT id, customer_code, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
       [studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found', 404);
@@ -488,7 +488,7 @@ export class FeeService {
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR s.user_id = $1) AND s.organization_id = $2`,
+       WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR UPPER(s.ihms_id) = UPPER($1) OR s.user_id = $1) AND s.organization_id = $2`,
       [data.studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found.', 404);
