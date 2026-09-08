@@ -19,6 +19,7 @@ import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ContactUsModal } from '@/components/support/contact-us-modal';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { NotificationBell } from './notification-bell';
 import { cn } from '@/lib/utils';
 
 const SHG_ICON_COLORS: Record<string, string> = {
@@ -119,7 +120,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Scrollable Grouped Navigation */}
         <nav className="sidebar-scroll relative z-10 flex-1 overflow-y-auto px-3.5 py-3">
-          <SidebarNav nav={nav} pathname={pathname} />
+          <SidebarNav nav={nav} pathname={pathname} notifCount={notifCount} />
         </nav>
 
         {/* Profile Card at Bottom */}
@@ -165,7 +166,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Scrollable Navigation links */}
         <nav className="sidebar-scroll relative z-10 flex-1 overflow-y-auto px-3.5 py-3">
-          <SidebarNav nav={nav} pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+          <SidebarNav nav={nav} pathname={pathname} notifCount={notifCount} onNavigate={() => setMobileOpen(false)} />
         </nav>
 
         {/* Bottom Profile Footer */}
@@ -185,7 +186,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       {/* MAIN CONTENT AREA                                                         */}
       {/* ========================================================================= */}
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden lg:pl-64 xl:pl-72">
-        {/* Mobile Header Bar: Left = Brand/Logo, Right = Hamburger Menu (☰) */}
+        {/* Mobile Header Bar: Left = Brand/Logo, Right = Bell + Hamburger Menu (☰) */}
         <header className="flex h-13 sm:h-14 w-full items-center justify-between border-b border-[#DDD8CC] bg-[#ECE9E1] px-3 sm:px-4 lg:hidden shrink-0 z-30">
           {/* Left Side: Logo & Brand Name */}
           <Link
@@ -206,15 +207,35 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </div>
           </Link>
 
-          {/* Right Side: Hamburger Menu Button */}
-          <button
-            type="button"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open navigation menu"
-            className="mobile-menu-button flex h-9 w-9 min-h-[36px] min-w-[36px] shrink-0 items-center justify-center rounded-lg bg-white border border-[#CBD5E1] text-[#111827] hover:border-[#E87545] transition-colors ml-2"
-          >
-            <Menu className="h-5 w-5 text-[#111827]" strokeWidth={2.2} />
-          </button>
+          {/* Right Side: Notification Bell + Hamburger Menu Button */}
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <NotificationBell />
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open navigation menu"
+              className="mobile-menu-button flex h-9 w-9 min-h-[36px] min-w-[36px] shrink-0 items-center justify-center rounded-lg bg-white border border-[#CBD5E1] text-[#111827] hover:border-[#E87545] transition-colors"
+            >
+              <Menu className="h-5 w-5 text-[#111827]" strokeWidth={2.2} />
+            </button>
+          </div>
+        </header>
+
+        {/* Desktop Top Header Bar (Hidden on Mobile) */}
+        <header className="hidden lg:flex h-14 w-full items-center justify-between border-b border-[#DDD8CC] bg-[#ECE9E1] px-6 shrink-0 z-20">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">
+              {user.role.replace(/_/g, ' ')}
+            </span>
+            <span className="text-[#CBD5E1] font-bold">•</span>
+            <span className="text-xs font-bold text-[#111827]">
+              {actualHostelName}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <NotificationBell />
+          </div>
         </header>
 
         {/* ======================================================================= */}
@@ -323,10 +344,12 @@ function getTranslatedSectionLabel(section: string, t: (k: string, d?: string) =
 function SidebarNav({
   nav,
   pathname,
+  notifCount,
   onNavigate,
 }: {
   nav: NavItem[];
   pathname: string;
+  notifCount?: number;
   onNavigate?: () => void;
 }) {
   const { t } = useLanguage();
@@ -391,9 +414,15 @@ function SidebarNav({
                         {getTranslatedNavLabel(item.label, t)}
                       </span>
 
-                      {/* Notification Dot */}
+                      {/* Notification Count Pill or Dot */}
                       {item.badge === 'notifications' && (
-                        <span className="ml-auto flex h-2 w-2 rounded-full bg-[#E87545]" />
+                        (notifCount ?? 0) > 0 ? (
+                          <span className="ml-auto flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#E87545] text-white text-[10px] font-extrabold shadow-xs">
+                            {(notifCount ?? 0) > 99 ? '99+' : notifCount}
+                          </span>
+                        ) : (
+                          <span className="ml-auto flex h-2 w-2 rounded-full bg-[#CBD5E1]" />
+                        )
                       )}
                     </Link>
                   </li>

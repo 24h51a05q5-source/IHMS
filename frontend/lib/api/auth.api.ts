@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { AuthResponse, AuthUser } from '@/lib/types';
+import type { AuthResponse, AuthUser, TermsContent } from '@/lib/types';
 
 export interface RegisterOwnerPayload {
   ownerName: string;
@@ -69,6 +69,12 @@ export const authApi = {
 
   me: () => api.get<AuthUser>('/auth/me'),
 
+  getTerms: (role?: string) =>
+    api.get<TermsContent>(`/terms${role ? `?role=${encodeURIComponent(role)}` : ''}`),
+
+  acceptTerms: (version: string) =>
+    api.post<{ success: boolean; message: string; user: AuthUser; acceptedVersion: string }>('/auth/terms/accept', { version }),
+
   refreshToken: (refreshToken: string) =>
     api.post<AuthResponse>('/auth/refresh', { refreshToken }),
 
@@ -105,6 +111,14 @@ export const authApi = {
       studentId?: string;
       fullName?: string;
       message: string;
+      startTime?: string | number;
+      cooldownSeconds?: number;
+      expiresIn?: number;
+      otpSession?: {
+        startTime: string | number;
+        cooldownSeconds: number;
+        expiresInSeconds: number;
+      };
       _debugOtp?: string;
     }>('/auth/student/send-otp', { identifier }),
 
@@ -112,7 +126,20 @@ export const authApi = {
     api.post<{ success: boolean; activationToken: string; message: string }>('/auth/verify-activation-otp', { identifier, otp }),
 
   resendActivationOtp: (identifier: string) =>
-    api.post<{ success: boolean; maskedEmail?: string; message: string; _debugOtp?: string }>('/auth/resend-activation-otp', { identifier }),
+    api.post<{
+      success: boolean;
+      maskedEmail?: string;
+      message: string;
+      startTime?: string | number;
+      cooldownSeconds?: number;
+      expiresIn?: number;
+      otpSession?: {
+        startTime: string | number;
+        cooldownSeconds: number;
+        expiresInSeconds: number;
+      };
+      _debugOtp?: string;
+    }>('/auth/resend-activation-otp', { identifier }),
 
   activateStudentAccount: (activationToken: string, newPassword: string, confirmPassword?: string) =>
     api.post<AuthResponse>('/auth/activate-student-account', { activationToken, newPassword, confirmPassword }),

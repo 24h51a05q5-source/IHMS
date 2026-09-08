@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { notificationService } from './notification.service';
 import { authenticate } from '../../common/guards/auth.guard';
-import { notificationService } from '../notifications/notification.service';
 
 const router = Router();
 
@@ -20,12 +20,16 @@ const extractUser = (req: Request): any => {
   return null;
 };
 
-// GET /notifications/unread-count or /unread-count
-const handleUnreadCount = async (req: Request, res: Response, next: NextFunction) => {
+// GET /notifications/unread-count (Supports both authenticated users & safe optional fallback)
+router.get('/unread-count', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = extractUser(req);
     if (!user) {
-      return res.json({ success: true, count: 0, data: { count: 0 } });
+      return res.json({
+        success: true,
+        count: 0,
+        data: { count: 0 },
+      });
     }
     const count = await notificationService.getUnreadCount(user);
     res.json({
@@ -36,23 +40,20 @@ const handleUnreadCount = async (req: Request, res: Response, next: NextFunction
   } catch (err) {
     next(err);
   }
-};
+});
 
-router.get('/notifications/unread-count', handleUnreadCount);
-router.get('/unread-count', handleUnreadCount);
-
+// Authenticated routes below
 router.use(authenticate);
 
 // GET /notifications
-router.get('/notifications', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const user = (req as any).user;
-    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 50));
-    const page = Math.max(1, Number(req.query.page) || 1);
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 50;
     const unreadOnly = req.query.unreadOnly === 'true';
     const type = req.query.type as string | undefined;
 
-    const result = await notificationService.getNotifications(user, {
+    const result = await notificationService.getNotifications(req.user, {
       page,
       pageSize,
       unreadOnly,
@@ -70,25 +71,30 @@ router.get('/notifications', async (req: Request, res: Response, next: NextFunct
 });
 
 // PATCH /notifications/:id/read
-router.patch('/notifications/:id/read', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/:id/read', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const user = (req as any).user;
-    const result = await notificationService.markAsRead(user, req.params.id);
-    res.json({ success: true, data: result, message: 'Notification marked as read.' });
+    const result = await notificationService.markAsRead(req.user, req.params.id);
+    res.json({
+      success: true,
+      data: result,
+      message: 'Notification marked as read.',
+    });
   } catch (err) {
     next(err);
   }
 });
 
 // POST /notifications/read-all
-router.post('/notifications/read-all', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/read-all', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const user = (req as any).user;
-    const result = await notificationService.markAllAsRead(user);
-    res.json({ success: true, message: result.message });
+    const result = await notificationService.markAllAsRead(req.user);
+    res.json({
+      success: true,
+      message: result.message,
+    });
   } catch (err) {
     next(err);
   }
 });
 
-export const userRouter = router;
+export const notificationRouter = router;

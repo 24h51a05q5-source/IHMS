@@ -42,7 +42,7 @@ export const STUDENT_NAV: NavItem[] = [
   { section: 'SERVICES', label: 'Complaints', href: '/student/complaints', icon: 'MessageSquareWarning', roles: ['STUDENT'] },
   { section: 'SERVICES', label: 'Announcements', href: '/student/announcements', icon: 'Megaphone', roles: ['STUDENT'] },
   { section: 'SERVICES', label: 'Help & Support', href: '/student/support', icon: 'LifeBuoy', roles: ['STUDENT'] },
-  { section: 'SERVICES', label: 'Notifications', href: '/student/notifications', icon: 'Bell', roles: ['STUDENT'] },
+  { section: 'SERVICES', label: 'Notifications', href: '/student/notifications', icon: 'Bell', roles: ['STUDENT'], badge: 'notifications' },
 ];
 
 export const PARENT_NAV: NavItem[] = [
@@ -52,7 +52,7 @@ export const PARENT_NAV: NavItem[] = [
   { section: 'STUDENT OVERVIEW', label: 'Attendance', href: '/parent/attendance', icon: 'CalendarCheck', roles: ['PARENT'] },
   { section: 'STUDENT OVERVIEW', label: 'Mess Menu', href: '/parent/mess', icon: 'Utensils', roles: ['PARENT'] },
   { section: 'STUDENT OVERVIEW', label: 'Help & Support', href: '/student/support', icon: 'LifeBuoy', roles: ['PARENT'] },
-  { section: 'STUDENT OVERVIEW', label: 'Notifications', href: '/parent/notifications', icon: 'Bell', roles: ['PARENT'] },
+  { section: 'STUDENT OVERVIEW', label: 'Notifications', href: '/parent/notifications', icon: 'Bell', roles: ['PARENT'], badge: 'notifications' },
 ];
 
 export function getNavForRole(role: Role): NavItem[] {

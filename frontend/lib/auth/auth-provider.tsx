@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AuthContext, type AuthContextValue, type BranchInfo } from './auth-context';
 import { authApi } from '@/lib/api/auth.api';
 import { reportsApi } from '@/lib/api/reports.api';
-import { clearTokens, getAccessToken, registerUnauthorizedHandler, setTokens } from '@/lib/api/client';
+import { clearTokens, getAccessToken, registerTermsRequiredHandler, registerUnauthorizedHandler, setTokens } from '@/lib/api/client';
 import type { AuthUser, Role } from '@/lib/types';
 
 const BRANCH_KEY = 'ihms_current_branch';
@@ -35,6 +35,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const path = window.location.pathname;
         if (path !== '/signin' && path !== '/login' && path !== '/register') {
           router.replace('/signin?expired=true');
+        }
+      }
+    });
+
+    registerTermsRequiredHandler(() => {
+      if (typeof window !== 'undefined') {
+        const path = window.location.pathname;
+        if (path !== '/terms' && path !== '/signin' && path !== '/login' && path !== '/register') {
+          router.replace('/terms');
         }
       }
     });

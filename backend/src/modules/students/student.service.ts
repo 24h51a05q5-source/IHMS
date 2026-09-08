@@ -7,6 +7,7 @@ import { feeService } from '../fees/fee.service';
 import { emitRealTimeEvent } from '../../events/events.gateway';
 import { cache } from '../../common/utils/cache';
 import { emailService } from '../../common/utils/email.service';
+import { notificationService } from '../notifications/notification.service';
 
 export class StudentService {
   async admitStudent(orgId: string, branchId: string, data: any): Promise<any> {
@@ -210,6 +211,29 @@ export class StudentService {
         `Student ${fullName} (${customerCode}) admitted to hostel`,
       ]
     ).catch(() => { /* audit log failure must never block admission */ });
+
+    // Notify Owner
+    notificationService.notifyOwner(orgId, {
+      branchId,
+      title: `New Admission: ${fullName}`,
+      message: `${fullName} (${customerCode}) admitted to Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      type: 'SUCCESS',
+      link: '/students',
+      entityType: 'STUDENT',
+      entityId: studentDbId,
+    }).catch(() => {});
+
+    // Notify Student
+    notificationService.notifyStudent(studentDbId, {
+      organizationId: orgId,
+      branchId,
+      title: 'Welcome to IHMS!',
+      message: `Your admission is confirmed. You are assigned to Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      type: 'SUCCESS',
+      link: '/student/dashboard',
+      entityType: 'STUDENT',
+      entityId: studentDbId,
+    }).catch(() => {});
 
     return this.getById(orgId, studentDbId);
   }
@@ -850,6 +874,29 @@ export class StudentService {
 
     emitRealTimeEvent('bed.status_changed', { bedId: bed.id, bedCode: bed.bed_code, status: BedStatus.OCCUPIED }, { branchId: room.hostel_id });
     emitRealTimeEvent('dashboard.kpi_updated', { orgId }, { orgId });
+
+    // Notify Student
+    notificationService.notifyStudent(student.id, {
+      organizationId: orgId,
+      branchId: room.hostel_id || student.hostel_id,
+      title: 'Room & Bed Allocated',
+      message: `You have been allocated Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      type: 'INFO',
+      link: '/student/dashboard',
+      entityType: 'BED_ALLOCATION',
+      entityId: bed.id,
+    }).catch(() => {});
+
+    // Notify Owner
+    notificationService.notifyOwner(orgId, {
+      branchId: room.hostel_id || student.hostel_id,
+      title: `Bed Allocated: ${student.full_name}`,
+      message: `${student.full_name} (${student.customer_code}) allocated to Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      type: 'INFO',
+      link: '/students',
+      entityType: 'BED_ALLOCATION',
+      entityId: bed.id,
+    }).catch(() => {});
 
     return this.getById(orgId, student.id);
   }

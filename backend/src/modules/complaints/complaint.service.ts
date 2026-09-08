@@ -3,6 +3,7 @@ import { AppError } from '../../common/filters/http-exception.filter';
 import { generateComplaintNumber } from '../../common/utils/code-generator';
 import { ComplaintPriority, ComplaintStatus } from '../../config/constants';
 import { emitRealTimeEvent } from '../../events/events.gateway';
+import { notificationService } from '../notifications/notification.service';
 
 export class ComplaintService {
   async createComplaint(orgId: string, data: any): Promise<any> {
@@ -56,6 +57,29 @@ export class ComplaintService {
 
     emitRealTimeEvent('dashboard.kpi_updated', { orgId }, { orgId });
 
+    // Notify Owner
+    await notificationService.notifyOwner(orgId, {
+      branchId: complaint.branchId,
+      title: `New Complaint: ${complaint.title}`,
+      message: `${student.full_name} (Room ${student.room_number || 'N/A'}) filed a ${complaint.priority} priority complaint: "${complaint.title}".`,
+      type: 'WARNING',
+      link: '/complaints',
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+    }).catch(() => {});
+
+    // Notify Student
+    await notificationService.notifyStudent(student.id, {
+      organizationId: orgId,
+      branchId: complaint.branchId,
+      title: `Complaint Registered #${complaint.complaintNumber}`,
+      message: `Your complaint "${complaint.title}" has been registered and assigned ticket #${complaint.complaintNumber}.`,
+      type: 'INFO',
+      link: '/student/complaints',
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+    }).catch(() => {});
+
     return complaint;
   }
 
@@ -78,6 +102,18 @@ export class ComplaintService {
       status: complaint.status,
       assignedStaffName: complaint.assignedStaffName,
     }, { branchId: complaint.branchId });
+
+    // Notify student about assigned staff
+    await notificationService.notifyStudent(complaint.studentId, {
+      organizationId: orgId,
+      branchId: complaint.branchId,
+      title: `Complaint Assigned: #${complaint.complaintNumber}`,
+      message: `Staff ${staffName} has been assigned to work on your complaint "${complaint.title}".`,
+      type: 'INFO',
+      link: '/student/complaints',
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+    }).catch(() => {});
 
     return complaint;
   }
@@ -105,6 +141,29 @@ export class ComplaintService {
     }, { branchId: complaint.branchId });
 
     emitRealTimeEvent('dashboard.kpi_updated', { orgId }, { orgId });
+
+    // Notify Student
+    await notificationService.notifyStudent(complaint.studentId, {
+      organizationId: orgId,
+      branchId: complaint.branchId,
+      title: `Complaint Resolved: #${complaint.complaintNumber}`,
+      message: `Your complaint "${complaint.title}" has been marked as resolved.${data.resolutionNotes ? ` Note: ${data.resolutionNotes}` : ''}`,
+      type: 'SUCCESS',
+      link: '/student/complaints',
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+    }).catch(() => {});
+
+    // Notify Owner
+    await notificationService.notifyOwner(orgId, {
+      branchId: complaint.branchId,
+      title: `Complaint Resolved: #${complaint.complaintNumber}`,
+      message: `Complaint #${complaint.complaintNumber} (${complaint.studentName}) was resolved.`,
+      type: 'SUCCESS',
+      link: '/complaints',
+      entityType: 'COMPLAINT',
+      entityId: complaint.id,
+    }).catch(() => {});
 
     return complaint;
   }

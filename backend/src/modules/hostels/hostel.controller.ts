@@ -153,14 +153,26 @@ const handleUpdate = async (req: Request, res: Response, next: NextFunction) => 
 router.patch('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 router.put('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 
-// GET /hostels/:id/payment-config
-router.get('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+// GET /hostels/:id/payment-config or /hostels/payment-config (Allowed for students, staff, and owners to read settlement details)
+const handleGetPaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
-    const config = await hostelPaymentConfigService.getByHostelId(req.user!.organizationId, req.params.id);
-    res.json({ success: true, data: config });
+    const paramId = req.params.id;
+    const targetHostelId = (!paramId || paramId === 'my' || paramId === 'current')
+      ? ((req.user as any).hostelBranchId || (req.user as any).hostelId || paramId)
+      : paramId;
+
+    const config = await hostelPaymentConfigService.getByHostelId(req.user!.organizationId, targetHostelId);
+    res.json({
+      success: true,
+      data: config,
+      message: config ? 'Hostel payment configuration retrieved.' : 'Online payment is not configured by the hostel.'
+    });
   } catch (err) { next(err); }
-});
+};
+
+router.get('/payment-config', handleGetPaymentConfig);
+router.get('/:id/payment-config', handleGetPaymentConfig);
 
 // PUT /hostels/:id/payment-config
 router.put('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {

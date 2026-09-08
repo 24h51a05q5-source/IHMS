@@ -20,6 +20,7 @@ import { Badge, Money } from '@/components/dashboard/confirm-dialog';
 import { CardSkeleton } from '@/components/dashboard/loader';
 import { ErrorState } from '@/components/dashboard/states';
 import { apiClient } from '@/lib/api/client';
+import { paymentsApi } from '@/lib/api/payments.api';
 import type { PaymentReceipt, ApiError } from '@/lib/types';
 
 export default function StudentPaymentReceiptPage() {
@@ -49,9 +50,21 @@ export default function StudentPaymentReceiptPage() {
     loadReceipt();
   }, [loadReceipt]);
 
-  const handleDownloadPdf = () => {
-    const url = `/api/fees/payments/${paymentId}/receipt/pdf`;
-    window.open(url, '_blank');
+  const handleDownloadPdf = async () => {
+    try {
+      const blob = await paymentsApi.downloadReceipt(paymentId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `receipt-${paymentId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      const pdfUrl = paymentsApi.getReceiptPdfUrl(paymentId);
+      window.open(pdfUrl, '_blank');
+    }
   };
 
   if (loading) {

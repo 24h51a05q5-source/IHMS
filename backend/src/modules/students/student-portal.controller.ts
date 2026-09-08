@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { studentService } from './student.service';
 import { feeService } from '../fees/fee.service';
-import { queryOne } from '../../config/database';
+import { feeReminderService } from '../fees/fee-reminder.service';
+import { queryOne, queryRows } from '../../config/database';
 import { authenticate } from '../../common/guards/auth.guard';
 import { AppError } from '../../common/filters/http-exception.filter';
 
@@ -157,8 +158,59 @@ router.get('/room', async (req: Request, res: Response, next: NextFunction) => {
 router.get('/fees', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const student = await getAuthenticatedStudent(req);
+    // Non-blocking auto evaluation of due reminders for this student
+    feeReminderService.processInstallmentReminders(student.organization_id, student.id).catch(() => {});
     const feeData = await feeService.getStudentFeeAccount(student.organization_id, student.id);
     res.json({ success: true, data: feeData });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /student/payments (List authenticated student's full payment history)
+router.get('/payments', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const student = await getAuthenticatedStudent(req);
+    const { status, limit = 100 } = req.query;
+
+    let sql = `
+      SELECT p.id, p.id as "_id", p.payment_number as "paymentNumber", p.organization_id as "organizationId",
+             p.hostel_id as "branchId", p.student_id as "studentId", p.customer_code as "customerCode",
+             p.amount, p.payment_method as "paymentMethod", p.payment_method as "method",
+             p.transaction_ref as "transactionRef", p.status, p.receipt_number as "receiptNumber",
+             p.receipt_number as "receiptNo", p.received_by as "receivedBy", p.notes,
+             p.created_at as "timestamp", p.created_at as "date", p.created_at as "createdAt",
+             rc.fee_type as "feeType", rc.installment_month as "installmentMonth"
+      FROM payments p
+      LEFT JOIN receipts rc ON (rc.payment_id = p.id OR rc.payment_number = p.payment_number)
+      WHERE p.organization_id = $1 AND p.student_id = $2
+    `;
+    const params: any[] = [student.organization_id, student.id];
+
+    if (status && status !== 'ALL') {
+      params.push(status);
+      sql += ` AND p.status = $${params.length}`;
+    }
+
+    sql += ` ORDER BY p.created_at DESC LIMIT ${Math.min(200, Math.max(1, Number(limit)))}`;
+
+    const payments = await queryRows<any>(sql, params);
+    res.json({ success: true, data: payments });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/payment-config', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const student = await getAuthenticatedStudent(req);
+    const { hostelPaymentConfigService } = await import('../hostels/hostel-payment-config.service');
+    const config = await hostelPaymentConfigService.getByHostelId(student.organization_id, student.hostel_id);
+    res.json({
+      success: true,
+      data: config,
+      message: config ? 'Hostel payment configuration retrieved.' : 'Online payment is not configured by the hostel.',
+    });
   } catch (err) {
     next(err);
   }
@@ -262,6 +314,26 @@ router.get('/payments/:id/receipt', async (req: Request, res: Response, next: Ne
     const student = await getAuthenticatedStudent(req);
     const receipt = await feeService.getReceiptByPaymentId(student.organization_id, req.params.id);
     res.json({ success: true, data: receipt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/payments/:id/receipt/pdf', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const student = await getAuthenticatedStudent(req);
+    const { pdf, receipt } = await feeService.generateReceiptPdfByPaymentId(
+      student.organization_id,
+      req.params.id
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="receipt-${receipt.receiptNumber || req.params.id}.pdf"`
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

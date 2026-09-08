@@ -13,6 +13,7 @@ import { paymentGatewayService } from './payment-gateway.service';
 import { emitRealTimeEvent } from '../../events/events.gateway';
 import { dashboardService } from '../dashboard/dashboard.service';
 import { PaymentProviderFactory } from './provider-factory';
+import { notificationService } from '../notifications/notification.service';
 
 export interface IFeeAccount {
   id: string;
@@ -265,7 +266,7 @@ export class FeeService {
       [orgId, sDbId]
     );
 
-    const installments = await queryRows<any>(
+    const rawInstallments = await queryRows<any>(
       `SELECT id, id as "_id", installment_number as "installmentNumber", month_name as "month",
               due_date as "dueDate", amount, paid_amount as "paidAmount", balance_amount as "balanceAmount",
               status, payment_id as "paymentId", paid_at as "paidAt", receipt_number as "receiptNumber"
@@ -275,7 +276,27 @@ export class FeeService {
       [orgId, sDbId]
     );
 
-    const payments = await queryRows<any>(
+    let installments = rawInstallments.map((inst) => {
+      const amount = Number(inst.amount || 0);
+      const paidAmount = Number(inst.paidAmount || 0);
+      const remainingAmount = Number(
+        inst.balanceAmount !== undefined && inst.balanceAmount !== null
+          ? inst.balanceAmount
+          : Math.max(0, amount - paidAmount)
+      );
+      let status = inst.status;
+      if (status === 'PARTIAL') status = 'PARTIALLY_PAID';
+      return {
+        ...inst,
+        amount,
+        paidAmount,
+        remainingAmount,
+        balanceAmount: remainingAmount,
+        status: status || (remainingAmount <= 0 ? 'PAID' : paidAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING'),
+      };
+    });
+
+    const rawPayments = await queryRows<any>(
       `SELECT id, id as "_id", payment_number as "paymentNumber", amount,
               payment_method as "paymentMethod", transaction_ref as "transactionRef",
               status, receipt_number as "receiptNumber", received_by as "receivedBy",
@@ -286,7 +307,12 @@ export class FeeService {
       [orgId, sDbId]
     );
 
-    const demands = await queryRows<any>(
+    const payments = rawPayments.map((p) => ({
+      ...p,
+      amount: Number(p.amount || 0),
+    }));
+
+    const rawDemands = await queryRows<any>(
       `SELECT id, id as "_id", demand_number as "demandNumber", demand_number as "invoiceNumber",
               term_name as "termName", hostel_rent as "hostelRent", admission_fee as "admissionFee",
               security_deposit as "securityDeposit", total_amount as "totalAmount",
@@ -298,15 +324,97 @@ export class FeeService {
       [orgId, sDbId]
     );
 
-    const totalDemanded = Number(student.financial_total_demanded || (demands.length > 0 ? demands.reduce((acc, d) => acc + Number(d.totalAmount), 0) : account?.total_fee || 0));
-    const totalPaid = Number(student.financial_total_paid || payments.filter((p) => p.status === 'SUCCESS').reduce((acc, p) => acc + Number(p.amount), 0));
+    const demands = rawDemands.map((d) => {
+      const totalAmount = Number(d.totalAmount || 0);
+      const paidAmount = Number(d.paidAmount || 0);
+      const balanceAmount = Number(
+        d.balanceAmount !== undefined && d.balanceAmount !== null
+          ? d.balanceAmount
+          : Math.max(0, totalAmount - paidAmount)
+      );
+      return {
+        ...d,
+        totalAmount,
+        paidAmount,
+        balanceAmount,
+        remainingAmount: balanceAmount,
+        amount: totalAmount,
+      };
+    });
+
+    // Fallback: If no installments were generated but demands exist, synthesize installment items from demands
+    if (installments.length === 0 && demands.length > 0) {
+      installments = demands.map((d, index) => {
+        const amount = Number(d.totalAmount || 0);
+        const paidAmount = Number(d.paidAmount || 0);
+        const remainingAmount = Number(
+          d.balanceAmount !== undefined && d.balanceAmount !== null
+            ? d.balanceAmount
+            : Math.max(0, amount - paidAmount)
+        );
+        let status = d.status;
+        if (status === 'PARTIAL') status = 'PARTIALLY_PAID';
+        return {
+          id: d.id,
+          _id: d.id,
+          installmentNumber: index + 1,
+          month: d.termName || `Installment #${index + 1}`,
+          dueDate: d.dueDate || d.createdAt,
+          amount,
+          paidAmount,
+          remainingAmount,
+          balanceAmount: remainingAmount,
+          status: status || (remainingAmount <= 0 ? 'PAID' : paidAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING'),
+        };
+      });
+    }
+
+    const currentDueInstallment =
+      installments.find(
+        (inst) =>
+          inst.status === 'PENDING' ||
+          inst.status === 'PARTIALLY_PAID' ||
+          inst.status === 'PARTIAL' ||
+          inst.status === 'OVERDUE'
+      ) ||
+      installments.find((inst) => Number(inst.remainingAmount || 0) > 0) ||
+      null;
+
+    const hostel = student.hostel_id
+      ? await queryOne<any>('SELECT hostel_name, name FROM hostels WHERE id = $1', [student.hostel_id])
+      : null;
+    const hostelName = hostel?.hostel_name || hostel?.name || '';
+
+    const demandedFromDemands = demands.length > 0 ? demands.reduce((acc, d) => acc + Number(d.totalAmount), 0) : 0;
+    const demandedFromInsts = installments.length > 0 ? installments.reduce((acc, i) => acc + Number(i.amount), 0) : 0;
+    const demandedFromAccount = Number(account?.total_fee || 0);
+    const demandedFromStudent = Number(student.financial_total_demanded || 0);
+    const totalDemanded = demandedFromDemands > 0
+      ? demandedFromDemands
+      : demandedFromAccount > 0
+      ? demandedFromAccount
+      : demandedFromInsts > 0
+      ? demandedFromInsts
+      : demandedFromStudent;
+
+    const successfulPayments = payments.filter((p) => p.status === 'SUCCESS' || p.status === 'VERIFIED');
+    const totalPaid = successfulPayments.length > 0
+      ? successfulPayments.reduce((acc, p) => acc + Math.max(0, Number(p.amount) - Number((p as any).refunded_amount || (p as any).refundedAmount || 0)), 0)
+      : Number(student.financial_total_paid || 0);
     const balanceAmount = Math.max(0, totalDemanded - totalPaid);
 
-    let feeStatus: 'PAID' | 'PARTIAL' | 'OVERDUE' | 'NO_DUE' = 'NO_DUE';
+    let feeStatus: 'PAID' | 'PARTIAL' | 'OVERDUE' | 'PENDING' | 'NO_DUE' = 'NO_DUE';
     if (totalDemanded > 0) {
-      if (balanceAmount <= 0) feeStatus = 'PAID';
-      else if (totalPaid > 0) feeStatus = 'PARTIAL';
-      else feeStatus = 'OVERDUE';
+      if (balanceAmount <= 0) {
+        feeStatus = 'PAID';
+      } else if (totalPaid > 0) {
+        feeStatus = 'PARTIAL';
+      } else {
+        const hasOverdue = installments.some(
+          (i) => i.status === 'OVERDUE' || (new Date(i.dueDate).getTime() < Date.now() && Number(i.remainingAmount ?? i.balanceAmount ?? 0) > 0)
+        );
+        feeStatus = hasOverdue ? 'OVERDUE' : 'PENDING';
+      }
     }
 
     return {
@@ -315,13 +423,18 @@ export class FeeService {
       studentId: sDbId,
       customerCode: student.customer_code,
       studentName: student.full_name,
+      hostelName,
       paymentPlan: account?.payment_plan || PaymentPlan.MONTHLY,
       totalFee: totalDemanded,
       totalPaid,
+      approvedAdjustments: 0,
+      outstandingBalance: balanceAmount,
       balanceAmount,
       monthlyAmount: Number(account?.monthly_amount || 0),
+      monthlyDueDay: Number(account?.monthly_due_day || 5),
       numberOfInstallments: Number(account?.number_of_installments || installments.length || 1),
       paidInstallments: Number(account?.paid_installments || installments.filter((i) => i.status === 'PAID').length),
+      currentDueInstallment,
       status: account?.status || 'ACTIVE',
       feeStatus,
       allowAdvancePayment: account?.allow_advance_payment ?? false,
@@ -425,7 +538,7 @@ export class FeeService {
     const runQuery = client ? (sql: string, p?: any[]) => client.query(sql, p) : query;
 
     const student = await runQueryOne(
-      'SELECT id, customer_code, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
+      'SELECT id, customer_code, hostel_id, financial_total_demanded FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
       [studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found', 404);
@@ -433,16 +546,37 @@ export class FeeService {
     const sDbId = student.id;
 
     const paidAgg = await runQueryOne(
-      "SELECT COALESCE(SUM(amount), 0)::numeric as total FROM payments WHERE organization_id = $1 AND student_id = $2 AND status = 'SUCCESS'",
+      "SELECT COALESCE(SUM(amount - COALESCE(refunded_amount, 0)), 0)::numeric as total FROM payments WHERE organization_id = $1 AND student_id = $2 AND status IN ('SUCCESS', 'VERIFIED')",
       [orgId, sDbId]
     );
-    const totalPaid = Number(paidAgg?.total || 0);
+    const totalPaid = Math.max(0, Number(paidAgg?.total || 0));
 
     const demandedAgg = await runQueryOne(
       'SELECT COALESCE(SUM(total_amount), 0)::numeric as total FROM fee_demands WHERE organization_id = $1 AND student_id = $2',
       [orgId, sDbId]
     );
-    const totalDemanded = Number(demandedAgg?.total || 0);
+    let totalDemanded = Number(demandedAgg?.total || 0);
+
+    if (totalDemanded === 0) {
+      const feeAcc = await runQueryOne(
+        'SELECT total_fee FROM fee_accounts WHERE organization_id = $1 AND student_id = $2',
+        [orgId, sDbId]
+      );
+      if (feeAcc && Number(feeAcc.total_fee) > 0) {
+        totalDemanded = Number(feeAcc.total_fee);
+      } else {
+        const instAgg = await runQueryOne(
+          'SELECT COALESCE(SUM(amount), 0)::numeric as total FROM fee_installments WHERE organization_id = $1 AND student_id = $2',
+          [orgId, sDbId]
+        );
+        if (instAgg && Number(instAgg.total) > 0) {
+          totalDemanded = Number(instAgg.total);
+        } else {
+          totalDemanded = Number(student.financial_total_demanded || 0);
+        }
+      }
+    }
+
     const outstandingBalance = Math.max(0, totalDemanded - totalPaid);
 
     await runQuery(
@@ -712,8 +846,8 @@ export class FeeService {
           `INSERT INTO receipts (
             id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
             student_id, customer_code, student_name, room_number, bed_number, fee_type,
-            installment_month, amount, payment_method, remaining_balance, issued_by, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            installment_month, amount, payment_method, remaining_balance, issued_by, notes, qr_payload
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
           ON CONFLICT (receipt_number) DO NOTHING`,
           [
             receiptId,
@@ -733,7 +867,8 @@ export class FeeService {
             pMethod,
             ledger.outstandingBalance,
             receipt.issuedBy,
-            data.notes || ''
+            data.notes || '',
+            receipt.qrPayload
           ]
         );
       }
@@ -807,6 +942,28 @@ export class FeeService {
       ]
     ).catch(() => { /* audit log failure must never block payment */ });
 
+    // Notify Student & Owner
+    notificationService.notifyStudent(student.id, {
+      organizationId: orgId,
+      branchId,
+      title: `Payment Received - ₹${amount}`,
+      message: `Your payment of ₹${amount} via ${pMethod} has been successfully recorded. Receipt: ${result.receipt.receiptNumber}`,
+      type: 'SUCCESS',
+      link: '/student/fees',
+      entityType: 'PAYMENT',
+      entityId: result.payment.id,
+    }).catch(() => {});
+
+    notificationService.notifyOwner(orgId, {
+      branchId,
+      title: `Payment Received - ${student.full_name}`,
+      message: `Received ₹${amount} from ${student.full_name} (${student.customer_code}) via ${pMethod}. Receipt: ${result.receipt.receiptNumber}`,
+      type: 'SUCCESS',
+      link: '/finance',
+      entityType: 'PAYMENT',
+      entityId: result.payment.id,
+    }).catch(() => {});
+
     return { payment: result.payment, receipt: result.receipt };
   }
 
@@ -837,6 +994,18 @@ export class FeeService {
       const maxPayable = Number(student.financial_outstanding_balance || 0);
       const amount = Number(data.amount);
       if (!amount || amount <= 0) throw new AppError('Payment amount must be greater than ₹0.', 400);
+
+      // Check fee account for advance payment rules
+      const feeAccount = await queryOne<any>(
+        'SELECT allow_advance_payment FROM fee_accounts WHERE student_id = $1 AND organization_id = $2',
+        [student.id, orgId]
+      );
+      if (maxPayable <= 0 && !feeAccount?.allow_advance_payment) {
+        throw new AppError('Your fees are already fully paid. No outstanding balance due.', 400);
+      }
+      if (amount > maxPayable && !feeAccount?.allow_advance_payment) {
+        throw new AppError(`Payment amount (₹${amount}) exceeds your outstanding balance of ₹${maxPayable}.`, 400);
+      }
 
       // Prevent duplicate active orders with same idempotencyKey
       if (data.idempotencyKey) {
@@ -959,9 +1128,17 @@ export class FeeService {
     );
     if (!payment) throw new AppError('Payment record not found', 404);
 
-    if (payment.status === 'SUCCESS') {
+    if (payment.status === 'SUCCESS' || payment.status === 'VERIFIED') {
       const receipt = await this.getReceiptByPaymentId(orgId, payment.id);
       return { payment, receipt };
+    }
+
+    if (payment.status === 'CANCELLED') {
+      throw new AppError('Cannot verify a payment order that has been cancelled.', 400);
+    }
+
+    if (payment.status === 'EXPIRED') {
+      throw new AppError('Payment session has expired. Please generate a new payment request.', 400);
     }
 
     // Atomic confirmation updating the existing pending payment
@@ -970,7 +1147,7 @@ export class FeeService {
       amount: Number(payment.amount),
       paymentId: payment.id,
       paymentNumber: payment.payment_number,
-      paymentMethod: PaymentMethod.ONLINE,
+      paymentMethod: (payment.payment_method as PaymentMethod) || PaymentMethod.ONLINE,
       transactionRef: data.gatewayPaymentId,
       receivedBy: 'Online Gateway Verification',
       notes: `Online Gateway Order: ${data.gatewayOrderId}`,
@@ -1313,6 +1490,57 @@ export class FeeService {
         [refundAmount, payment.student_id, orgId]
       );
 
+      // Revert paid installments linked to this payment
+      const linkedInstallments = await client.query(
+        'SELECT * FROM fee_installments WHERE organization_id = $1 AND student_id = $2 AND (payment_id = $3 OR receipt_number = $4) ORDER BY installment_number DESC',
+        [orgId, payment.student_id, payment.id, payment.receipt_number || '']
+      );
+
+      let refundToRevert = refundAmount;
+      for (const inst of linkedInstallments.rows) {
+        if (refundToRevert <= 0) break;
+        const currentPaid = Number(inst.paid_amount || 0);
+        const amountToDeduct = Math.min(refundToRevert, currentPaid);
+        const newPaid = Math.max(0, currentPaid - amountToDeduct);
+        const newBalance = Math.max(0, Number(inst.amount) - newPaid);
+        const isPastDue = new Date(inst.due_date).getTime() < Date.now();
+        const newStatus = newBalance <= 0 ? 'PAID' : newPaid > 0 ? 'PARTIALLY_PAID' : isPastDue ? 'OVERDUE' : 'PENDING';
+
+        await client.query(
+          `UPDATE fee_installments
+           SET paid_amount = $1, balance_amount = $2, status = $3,
+               payment_id = CASE WHEN $1 <= 0 THEN NULL ELSE payment_id END,
+               receipt_number = CASE WHEN $1 <= 0 THEN NULL ELSE receipt_number END
+           WHERE id = $4`,
+          [newPaid, newBalance, newStatus, inst.id]
+        );
+        refundToRevert -= amountToDeduct;
+      }
+
+      // Revert paid demands if any
+      const linkedDemands = await client.query(
+        'SELECT * FROM fee_demands WHERE organization_id = $1 AND student_id = $2 AND paid_amount > 0 ORDER BY created_at DESC',
+        [orgId, payment.student_id]
+      );
+      let demandRefundToRevert = refundAmount;
+      for (const d of linkedDemands.rows) {
+        if (demandRefundToRevert <= 0) break;
+        const currentPaid = Number(d.paid_amount || 0);
+        const amountToDeduct = Math.min(demandRefundToRevert, currentPaid);
+        const newPaid = Math.max(0, currentPaid - amountToDeduct);
+        const newBalance = Math.max(0, Number(d.total_amount) - newPaid);
+        const newStatus = newBalance <= 0 ? 'PAID' : newPaid > 0 ? 'PARTIAL' : 'UNPAID';
+
+        await client.query(
+          `UPDATE fee_demands SET paid_amount = $1, balance_amount = $2, status = $3 WHERE id = $4`,
+          [newPaid, newBalance, newStatus, d.id]
+        );
+        demandRefundToRevert -= amountToDeduct;
+      }
+
+      // Recalculate full ledger and fee accounts
+      await this.recalculateStudentLedger(orgId, payment.student_id, client);
+
       // Post Immutable Refund Ledger Entry
       await client.query(
         `INSERT INTO fee_ledgers (
@@ -1364,6 +1592,28 @@ export class FeeService {
           `Refund of ₹${refundAmount} processed for payment ${payment.payment_number} by ${data.authorizedBy}`,
         ]
       );
+
+      // Notifications for Student & Owner
+      notificationService.notifyStudent(payment.student_id, {
+        organizationId: orgId,
+        branchId: payment.hostel_id,
+        title: `Refund Processed - ₹${refundAmount}`,
+        message: `A refund of ₹${refundAmount} has been processed for payment ${payment.payment_number}.`,
+        type: 'INFO',
+        link: '/student/fees',
+        entityType: 'PAYMENT',
+        entityId: payment.id,
+      }).catch(() => {});
+
+      notificationService.notifyOwner(orgId, {
+        branchId: payment.hostel_id,
+        title: `Refund Issued - ₹${refundAmount}`,
+        message: `Refund of ₹${refundAmount} issued for student ${payment.customer_code} by ${data.authorizedBy}.`,
+        type: 'INFO',
+        link: '/finance',
+        entityType: 'PAYMENT',
+        entityId: payment.id,
+      }).catch(() => {});
 
       return { success: true, message: `Payment refunded successfully. Amount: ₹${refundAmount}` };
     });
@@ -1524,6 +1774,10 @@ export class FeeService {
       [paymentId, orgId]
     );
     if (!payment) throw new AppError('Payment not found', 404);
+
+    if (payment.status === 'SUCCESS' || payment.status === 'VERIFIED') {
+      throw new AppError('Cannot cancel a payment that has already been completed.', 400);
+    }
 
     await query(
       "UPDATE payments SET status = 'CANCELLED', notes = notes || $1 WHERE id = $2",
@@ -1698,7 +1952,7 @@ export class FeeService {
 
   async listReceipts(orgId: string, branchId?: string, studentId?: string, search?: string): Promise<any[]> {
     let sql = `SELECT r.id, r.id as "_id", r.receipt_number as "receiptNumber",
-                      r.payment_number as "paymentNumber", r.organization_id as "organizationId",
+                      r.payment_id as "paymentId", r.payment_number as "paymentNumber", r.organization_id as "organizationId",
                       r.hostel_id as "branchId", r.student_id as "studentId",
                       r.customer_code as "customerCode", r.student_name as "studentName",
                       r.room_number as "roomNumber", r.bed_number as "bedNumber",
@@ -1738,7 +1992,7 @@ export class FeeService {
               r.fee_type as "feeType", r.installment_month as "installmentMonth",
               r.amount, r.payment_method as "paymentMethod",
               r.remaining_balance as "remainingBalance", r.issued_by as "issuedBy",
-              r.notes, r.issued_at as "issuedAt", r.created_at as "createdAt",
+              r.notes, r.qr_payload as "qrPayload", r.issued_at as "issuedAt", r.created_at as "createdAt",
               h.name as "hostelName"
        FROM receipts r
        LEFT JOIN hostels h ON h.id = r.hostel_id
@@ -1756,6 +2010,10 @@ export class FeeService {
     );
     if (!payment) throw new AppError('Payment not found.', 404);
 
+    if (payment.status !== 'SUCCESS' && payment.status !== 'VERIFIED') {
+      throw new AppError('Receipt is only available for confirmed successful payments.', 400);
+    }
+
     let receipt = await queryOne<any>(
       `SELECT r.id, r.id as "_id", r.receipt_number as "receiptNumber",
               r.payment_id as "paymentId", r.payment_number as "paymentNumber", r.organization_id as "organizationId",
@@ -1765,7 +2023,7 @@ export class FeeService {
               r.fee_type as "feeType", r.installment_month as "installmentMonth",
               r.amount, r.payment_method as "paymentMethod",
               r.remaining_balance as "remainingBalance", r.issued_by as "issuedBy",
-              r.notes, r.issued_at as "issuedAt", r.created_at as "createdAt",
+              r.notes, r.qr_payload as "qrPayload", r.issued_at as "issuedAt", r.created_at as "createdAt",
               h.name as "hostelName"
        FROM receipts r
        LEFT JOIN hostels h ON h.id = r.hostel_id
@@ -1775,53 +2033,57 @@ export class FeeService {
       [payment.id, payment.payment_number, payment.receipt_number || '', orgId]
     );
 
-    if (!receipt) {
-      if (payment.status !== 'SUCCESS') {
-        throw new AppError('Receipt is only available for successful payments.', 400);
+    if (receipt) {
+      if (!receipt.qrPayload) {
+        receipt.qrPayload = `IHMS-REC:${receipt.receiptNumber}:${receipt.customerCode || 'STU'}:${receipt.amount}`;
       }
+      return receipt;
+    }
 
-      // Generate the single canonical receipt if missing
-      const student = await queryOne<any>(
-        `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name
-         FROM students s
-         LEFT JOIN rooms r ON r.id = s.room_id
-         LEFT JOIN beds b ON b.id = s.bed_id
-         LEFT JOIN hostels h ON h.id = s.hostel_id
-         WHERE s.id = $1 AND s.organization_id = $2`,
-        [payment.student_id, orgId]
-      );
+    // Generate the single canonical receipt if missing
+    const student = await queryOne<any>(
+      `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name
+       FROM students s
+       LEFT JOIN rooms r ON r.id = s.room_id
+       LEFT JOIN beds b ON b.id = s.bed_id
+       LEFT JOIN hostels h ON h.id = s.hostel_id
+       WHERE s.id = $1 AND s.organization_id = $2`,
+      [payment.student_id, orgId]
+    );
 
-      const receiptNumber = payment.receipt_number || (await getNextReceiptNumber(orgId));
-      const receiptId = require('crypto').randomUUID();
+    const receiptNumber = payment.receipt_number || (await getNextReceiptNumber(orgId));
+    const receiptId = require('crypto').randomUUID();
+    const qrPayload = `IHMS-REC:${receiptNumber}:${student?.customer_code || ''}:${payment.amount}`;
 
-      await query(
-        `INSERT INTO receipts (
-          id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
-          student_id, customer_code, student_name, room_number, bed_number, fee_type,
-          installment_month, amount, payment_method, remaining_balance, issued_by, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-        ON CONFLICT (receipt_number) DO NOTHING`,
-        [
-          receiptId,
-          receiptNumber,
-          payment.id,
-          payment.payment_number,
-          orgId,
-          payment.hostel_id,
-          student?.id || payment.student_id,
-          student?.customer_code || '',
-          student?.full_name || 'Student',
-          student?.room_number || '',
-          student?.bed_code || '',
-          'Hostel Rent',
-          this.getCurrentMonthString(),
-          Number(payment.amount),
-          payment.payment_method || 'ONLINE',
-          Number(student?.financial_outstanding_balance || 0),
-          payment.received_by || 'Authorized Staff',
-          payment.notes || ''
-        ]
-      );
+    await query(
+      `INSERT INTO receipts (
+        id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
+        student_id, customer_code, student_name, room_number, bed_number, fee_type,
+        installment_month, amount, payment_method, remaining_balance, issued_by, notes, qr_payload
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      ON CONFLICT (receipt_number) DO NOTHING`,
+      [
+        receiptId,
+        receiptNumber,
+        payment.id,
+        payment.payment_number,
+        orgId,
+        payment.hostel_id,
+        student?.id || payment.student_id,
+        student?.customer_code || '',
+        student?.full_name || 'Student',
+        student?.room_number || '',
+        student?.bed_code || '',
+        'Hostel Rent',
+        this.getCurrentMonthString(),
+        Number(payment.amount),
+        payment.payment_method || 'ONLINE',
+        Number(student?.financial_outstanding_balance || 0),
+        payment.received_by || 'Authorized Staff',
+        payment.notes || '',
+        qrPayload
+      ]
+    );
 
       if (!payment.receipt_number) {
         await query('UPDATE payments SET receipt_number = $1 WHERE id = $2', [receiptNumber, payment.id]);
@@ -1850,7 +2112,6 @@ export class FeeService {
         notes: payment.notes || '',
         qrPayload: `IHMS-REC:${receiptNumber}:${student?.customer_code}:${payment.amount}`,
       };
-    }
 
     return receipt;
   }

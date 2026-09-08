@@ -33,6 +33,9 @@ export interface AuthUser {
   ihmsId?: string;
   mustChangePassword?: boolean;
   avatarUrl?: string;
+  termsAccepted?: boolean;
+  acceptedTermsVersion?: string;
+  termsAcceptedAt?: string;
 }
 
 export interface AuthResponse {
@@ -372,8 +375,10 @@ export interface Notification {
   message: string;
   type?: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
   read: boolean;
+  isRead?: boolean;
   createdAt: string;
   link?: string;
+  actionUrl?: string;
 }
 
 export type AnnouncementPriority = 'NORMAL' | 'IMPORTANT' | 'URGENT';
@@ -588,5 +593,34 @@ export interface CreateSupportTicketDto {
 export interface UpdateSupportTicketDto {
   status: SupportTicketStatus;
   resolutionNotes?: string;
+}
+
+export interface TermsSection {
+  id: string;
+  title: string;
+  summary: string;
+  content: string;
+  applicableTo: 'ALL' | 'STUDENT' | 'OWNER';
+  order: number;
+}
+
+export interface TermsContent {
+  version: string;
+  effectiveDate: string;
+  lastUpdated: string;
+  currentVersion: string;
+  totalSections: number;
+  sections: TermsSection[];
+}
+
+export interface TermsAcceptanceRecord {
+  id: string;
+  userId: string;
+  role: string;
+  termsVersion: string;
+  ipAddress?: string;
+  userAgent?: string;
+  status: 'ACCEPTED' | 'DECLINED';
+  acceptedAt: string;
 }
 

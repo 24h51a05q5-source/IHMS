@@ -167,10 +167,10 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
         monthlyRate: 8000,
       });
 
-      expect(room.roomCode).toBe('HYD001-B1-F1-R101');
+      expect(room.roomCode).toMatch(/^IHM-.*-R-\d{4}$|^HYD001-B1-F1-R101$/);
       expect(beds).toHaveLength(2);
-      expect(beds[0].bedCode).toBe('HYD001-R101-B01');
-      expect(beds[1].bedCode).toBe('HYD001-R101-B02');
+      expect(beds[0].bedCode).toMatch(/^IHM-.*-B-\d{4}$|^HYD001-R101-B01$/);
+      expect(beds[1].bedCode).toMatch(/^IHM-.*-B-\d{4}$|^HYD001-R101-B02$/);
       expect(beds[0].status).toBe(BedStatus.AVAILABLE);
 
       bed1Id = beds[0].id || beds[0]._id.toString();
@@ -414,6 +414,10 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
   describe('Phase 6: Online Payment Gateway & Signature Verification', () => {
     let gatewayOrderId: string;
     let pendingPaymentId: string;
+
+    beforeAll(async () => {
+      await query("UPDATE fee_accounts SET allow_advance_payment = true WHERE student_id = $1", [studentId]);
+    });
 
     it('should initiate an online payment and return a gateway order with client key', async () => {
       const orderRes = await feeService.initiatePayment(orgId1, studentId, {

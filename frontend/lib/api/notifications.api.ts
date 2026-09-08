@@ -5,7 +5,14 @@ export const notificationsApi = {
   list: (params?: PaginationParams) =>
     api.get<Paginated<Notification>>('/notifications', { query: params as Record<string, unknown> as Record<string, string | number | boolean | undefined> }),
 
-  unreadCount: () => api.get<{ count: number }>('/notifications/unread-count'),
+  unreadCount: async () => {
+    try {
+      const res = await api.get<{ count: number }>('/notifications/unread-count');
+      return { count: typeof res?.count === 'number' ? res.count : (res as any)?.data?.count ?? 0 };
+    } catch {
+      return { count: 0 };
+    }
+  },
 
   markRead: (id: string) => api.patch<Notification>(`/notifications/${id}/read`),
 

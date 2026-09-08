@@ -18,9 +18,66 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     let sql = 'SELECT * FROM attendances WHERE organization_id = $1';
     const params: any[] = [orgId];
 
-    if (studentId) {
+    if (req.user!.role === UserRole.STUDENT) {
+      const sId = req.user!.studentId || req.user!.id;
+      params.push(sId);
+      sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
+    } else if (studentId) {
       params.push(studentId);
       sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
+    }
+
+    const countSql = `SELECT COUNT(*)::int as total FROM (${sql}) as sub`;
+    const totalRow = await queryOne<any>(countSql, params);
+    const total = totalRow?.total || 0;
+
+    const limit = Number(pageSize);
+    const offset = (Number(page) - 1) * limit;
+    sql += ` ORDER BY date DESC LIMIT ${limit} OFFSET ${offset}`;
+
+    const records = await queryRows<any>(sql, params);
+
+    const mapped = records.map((r: any) => ({
+      id: r.id,
+      _id: r.id,
+      studentId: r.student_id,
+      studentName: r.student_name || 'Student',
+      customerCode: r.customer_code || '',
+      date: r.date,
+      status: r.status || 'PRESENT',
+      checkInTime: r.created_at,
+      checkOutTime: r.created_at,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        items: mapped,
+        total,
+        page: Number(page),
+        pageSize: Number(pageSize),
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
+router.get('/student/:studentId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { studentId } = req.params;
+    const { startDate, endDate, page = 1, pageSize = 50 } = req.query;
+    const orgId = req.user!.organizationId;
+
+    let sql = 'SELECT * FROM attendances WHERE organization_id = $1 AND (student_id = $2 OR customer_code = $2)';
+    const params: any[] = [orgId, studentId];
+
+    if (startDate) {
+      params.push(new Date(startDate as string));
+      sql += ` AND date >= $${params.length}`;
+    }
+    if (endDate) {
+      params.push(new Date(endDate as string));
+      sql += ` AND date <= $${params.length}`;
     }
 
     const countSql = `SELECT COUNT(*)::int as total FROM (${sql}) as sub`;
@@ -106,7 +163,11 @@ router.get('/leave', async (req: Request, res: Response, next: NextFunction) => 
     let sql = 'SELECT * FROM leave_requests WHERE organization_id = $1';
     const params: any[] = [orgId];
 
-    if (studentId) {
+    if (req.user!.role === UserRole.STUDENT) {
+      const sId = req.user!.studentId || req.user!.id;
+      params.push(sId);
+      sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
+    } else if (studentId) {
       params.push(studentId);
       sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
     }
@@ -231,5 +292,92 @@ router.patch('/leave/:id/approve', handleApproveLeave);
 router.patch('/leave/:id/status', handleApproveLeave);
 router.patch('/:id/approve', handleApproveLeave);
 router.patch('/:id/status', handleApproveLeave);
+
+const handleGetStudentLeaves = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { studentId } = req.params;
+    const { status, page = 1, pageSize = 50 } = req.query;
+    const orgId = req.user!.organizationId;
+
+    let sql = 'SELECT * FROM leave_requests WHERE organization_id = $1 AND (student_id = $2 OR customer_code = $2)';
+    const params: any[] = [orgId, studentId];
+
+    if (status && status !== 'ALL') {
+      params.push(status);
+      sql += ` AND status = $${params.length}`;
+    }
+
+    const countSql = `SELECT COUNT(*)::int as total FROM (${sql}) as sub`;
+    const totalRow = await queryOne<any>(countSql, params);
+    const total = totalRow?.total || 0;
+
+    const limit = Number(pageSize);
+    const offset = (Number(page) - 1) * limit;
+    sql += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+
+    const leaves = await queryRows<any>(sql, params);
+
+    const mapped = leaves.map((l: any) => ({
+      id: l.id,
+      _id: l.id,
+      leaveNumber: l.leave_number,
+      studentId: l.student_id,
+      studentName: l.student_name || 'Student',
+      customerCode: l.customer_code || '',
+      fromDate: l.start_date,
+      toDate: l.end_date,
+      reason: l.reason,
+      status: l.status,
+      appliedAt: l.created_at,
+      remarks: l.reason,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        items: mapped,
+        total,
+        page: Number(page),
+        pageSize: Number(pageSize),
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+router.get('/leave/student/:studentId', handleGetStudentLeaves);
+router.get('/student/:studentId/leave', handleGetStudentLeaves);
+
+const handleCancelLeave = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orgId = req.user!.organizationId;
+    const leaveId = req.params.id;
+
+    const updated = await queryOne<any>(
+      `UPDATE leave_requests
+       SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND organization_id = $2
+       RETURNING *`,
+      [leaveId, orgId]
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Leave request not found' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: updated.id,
+        leaveNumber: updated.leave_number,
+        status: updated.status,
+      },
+      message: 'Leave request cancelled successfully',
+    });
+  } catch (err) { next(err); }
+};
+
+router.patch('/leave/:id/cancel', handleCancelLeave);
+router.patch('/:id/cancel', handleCancelLeave);
 
 export const attendanceRouter = router;

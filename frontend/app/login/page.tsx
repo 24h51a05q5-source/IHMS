@@ -37,6 +37,12 @@ import { cn } from '@/lib/utils';
 //  STEP 4: SIGN_IN          → Normal Password Login (for already active accounts)
 type StudentStep = 'IDENTIFIER' | 'OTP' | 'CREATE_PASSWORD' | 'SIGN_IN';
 
+export interface OtpTimerSession {
+  startTime: number;
+  cooldownSeconds: number;
+  expiresInSeconds: number;
+}
+
 // Mask email: s*****@gmail.com
 function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return 's*****@gmail.com';
@@ -67,7 +73,12 @@ function LoginForm() {
   const [showNewPw, setShowNewPw] = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
 
-  // ── OTP Resend Cooldown ────────────────────────────────────────────────────
+  // ── OTP Session & Resend Cooldown ──────────────────────────────────────────
+  const [otpSession, setOtpSession] = useState<OtpTimerSession>(() => ({
+    startTime: Date.now(),
+    cooldownSeconds: 60,
+    expiresInSeconds: 600,
+  }));
   const [cooldown, setCooldown] = useState(0);
 
   // ── UI Feedback ────────────────────────────────────────────────────────────
@@ -87,18 +98,33 @@ function LoginForm() {
     if (paramIdentifier) setIdentifier(paramIdentifier);
   }, [paramRole, paramIdentifier]);
 
-  // Cooldown countdown timer
+  // Cooldown countdown timer derived safely from otpSession
   useEffect(() => {
-    let t: NodeJS.Timeout;
-    if (cooldown > 0) t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
+    if (studentStep !== 'OTP') return;
+
+    const updateCountdown = () => {
+      const start = otpSession?.startTime ? new Date(otpSession.startTime).getTime() : Date.now();
+      const duration = (otpSession?.cooldownSeconds ?? 60) * 1000;
+      const elapsed = Date.now() - (isNaN(start) ? Date.now() : start);
+      const remaining = Math.max(0, Math.ceil((duration - elapsed) / 1000));
+      setCooldown(remaining);
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [studentStep, otpSession]);
 
   // Redirect if already logged in
   useEffect(() => {
     if (!authLoading && user) {
-      if (user.mustChangePassword) router.replace('/student/change-password');
-      else router.replace(user.role === 'STUDENT' ? '/student/dashboard' : user.role === 'PARENT' ? '/parent' : '/dashboard');
+      if (!user.termsAccepted) {
+        router.replace('/terms');
+      } else if (user.mustChangePassword) {
+        router.replace('/student/change-password');
+      } else {
+        router.replace(user.role === 'STUDENT' ? '/student/dashboard' : user.role === 'PARENT' ? '/parent' : '/dashboard');
+      }
     }
   }, [user, authLoading, router]);
 
@@ -117,6 +143,11 @@ function LoginForm() {
     setActivationToken('');
     setMaskedEmail('');
     setCooldown(0);
+    setOtpSession({
+      startTime: Date.now(),
+      cooldownSeconds: 60,
+      expiresInSeconds: 600,
+    });
     clearMessages();
   };
 
@@ -208,8 +239,20 @@ function LoginForm() {
       setMaskedEmail(emailToMask);
       setNotice(res?.message || `Verification code sent to ${emailToMask}.`);
       setOtpDigits(['', '', '', '', '', '']);
+
+      const rawStart = res?.startTime || res?.otpSession?.startTime;
+      const parsedStartTime = rawStart ? new Date(rawStart).getTime() : Date.now();
+      const cooldownSec = res?.cooldownSeconds ?? res?.otpSession?.cooldownSeconds ?? 60;
+      const expiresSec = res?.expiresIn ?? res?.otpSession?.expiresInSeconds ?? 600;
+
+      const newSession: OtpTimerSession = {
+        startTime: isNaN(parsedStartTime) ? Date.now() : parsedStartTime,
+        cooldownSeconds: cooldownSec,
+        expiresInSeconds: expiresSec,
+      };
+      setOtpSession(newSession);
+      setCooldown(cooldownSec);
       setStudentStep('OTP');
-      setCooldown(60);
       setTimeout(() => {
         otpInputRefs.current[0]?.focus();
       }, 100);
@@ -233,7 +276,19 @@ function LoginForm() {
       setMaskedEmail(emailToMask);
       setNotice(res?.message || 'A new 6-digit verification code has been sent to your registered email.');
       setOtpDigits(['', '', '', '', '', '']);
-      setCooldown(60);
+
+      const rawStart = res?.startTime || res?.otpSession?.startTime;
+      const parsedStartTime = rawStart ? new Date(rawStart).getTime() : Date.now();
+      const cooldownSec = res?.cooldownSeconds ?? res?.otpSession?.cooldownSeconds ?? 60;
+      const expiresSec = res?.expiresIn ?? res?.otpSession?.expiresInSeconds ?? 600;
+
+      const newSession: OtpTimerSession = {
+        startTime: isNaN(parsedStartTime) ? Date.now() : parsedStartTime,
+        cooldownSeconds: cooldownSec,
+        expiresInSeconds: expiresSec,
+      };
+      setOtpSession(newSession);
+      setCooldown(cooldownSec);
       otpInputRefs.current[0]?.focus();
     } catch (err: any) {
       setError(err?.message || 'Failed to resend verification code.');
@@ -300,9 +355,9 @@ function LoginForm() {
       if (token) {
         setTokens(token, refreshToken);
       }
-      setNotice('Account activated successfully! Redirecting to your dashboard...');
+      setNotice('Account activated successfully! Redirecting...');
       setTimeout(() => {
-        window.location.href = '/student/dashboard';
+        window.location.href = '/terms';
       }, 500);
     } catch (err: any) {
       setError(err?.message || 'Failed to activate account. Please verify your details.');
@@ -317,8 +372,12 @@ function LoginForm() {
     clearMessages();
     setLoading(true);
     try {
-      await login(identifier.trim(), password, 'STUDENT');
-      router.replace('/student/dashboard');
+      const authRes = await login(identifier.trim(), password, 'STUDENT');
+      if (!authRes?.user?.termsAccepted) {
+        router.replace('/terms');
+      } else {
+        router.replace('/student/dashboard');
+      }
     } catch (err: any) {
       setError(err?.message || 'Incorrect password. Please try again.');
     } finally {
@@ -332,7 +391,12 @@ function LoginForm() {
     clearMessages();
     setLoading(true);
     try {
-      await login(identifier.trim(), password, 'ADMIN');
+      const authRes = await login(identifier.trim(), password, 'ADMIN');
+      if (!authRes?.user?.termsAccepted) {
+        router.replace('/terms');
+      } else {
+        router.replace('/dashboard');
+      }
     } catch (err: any) {
       setError(err?.message || 'Invalid Admin / Staff credentials.');
     } finally {

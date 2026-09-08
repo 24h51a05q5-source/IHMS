@@ -16,7 +16,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     let whereClause = 'WHERE organization_id = $1';
     const params: any[] = [orgId];
 
-    if (studentId) {
+    if (req.user!.role === UserRole.STUDENT) {
+      const sId = req.user!.studentId || req.user!.id;
+      params.push(sId);
+      whereClause += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
+    } else if (studentId) {
       params.push(studentId);
       whereClause += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
     }

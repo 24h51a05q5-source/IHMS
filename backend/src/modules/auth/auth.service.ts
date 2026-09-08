@@ -52,6 +52,8 @@ export class AuthService {
       ownerId: user.owner_id || user.ownerId || user.staff_code || user.staffCode,
       customerCode: user.customer_code || user.customerCode,
       mustChangePassword: user.must_change_password || user.mustChangePassword || false,
+      termsAccepted: Boolean(user.terms_accepted ?? user.termsAccepted),
+      acceptedTermsVersion: user.accepted_terms_version || user.acceptedTermsVersion || null,
     };
 
     const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
@@ -76,6 +78,9 @@ export class AuthService {
         ihmsId: user.ihms_id || user.ihmsId,
         ihms_id: user.ihms_id || user.ihmsId,
         mustChangePassword: user.must_change_password || user.mustChangePassword || false,
+        termsAccepted: Boolean(user.terms_accepted ?? user.termsAccepted),
+        acceptedTermsVersion: user.accepted_terms_version || user.acceptedTermsVersion || null,
+        termsAcceptedAt: user.terms_accepted_at || user.termsAcceptedAt || null,
       },
     };
   }
@@ -634,6 +639,18 @@ export class AuthService {
           [studentUuid, orgId, hostelId]
         );
       }
+
+      const pmtCfgExists = await queryOne('SELECT id FROM hostel_payment_configs WHERE organization_id = $1 LIMIT 1', [orgId]);
+      if (!pmtCfgExists) {
+        await query(
+          `INSERT INTO hostel_payment_configs (
+            id, organization_id, hostel_id,
+            upi_vpa, upi_display_name, upi_status,
+            bank_beneficiary_name, bank_account_number, bank_ifsc_code, bank_name, bank_status
+          ) VALUES ($1, $2, $3, 'greenvalley@upi', 'Green Valley Hostels Pvt Ltd', 'ACTIVE', 'Green Valley Hostels Pvt Ltd', '50100234567890', 'HDFC0001234', 'HDFC Bank', 'ACTIVE')`,
+          [require('crypto').randomUUID(), orgId, hostelId]
+        );
+      }
     } catch (err: any) {
       console.warn('[Bootstrap] Warning while ensuring seed defaults:', err.message);
     }
@@ -690,6 +707,9 @@ export class AuthService {
       ihmsId: user.ihms_id,
       ihms_id: user.ihms_id,
       mustChangePassword: user.must_change_password || false,
+      termsAccepted: Boolean(user.terms_accepted),
+      acceptedTermsVersion: user.accepted_terms_version || null,
+      termsAcceptedAt: user.terms_accepted_at || null,
       avatarUrl: '',
     };
   }
@@ -1256,6 +1276,9 @@ export class AuthService {
     );
 
     if (recentOtp) {
+      const startTime = recentOtp.created_at ? new Date(recentOtp.created_at).toISOString() : new Date().toISOString();
+      const elapsed = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
+      const remainingCooldown = Math.max(0, 60 - elapsed);
       return {
         success: true,
         exists: true,
@@ -1267,6 +1290,14 @@ export class AuthService {
         email: sEmail,
         studentId: student.customer_code || student.student_id,
         fullName: student.full_name,
+        startTime,
+        cooldownSeconds: remainingCooldown,
+        expiresIn: 600,
+        otpSession: {
+          startTime,
+          cooldownSeconds: remainingCooldown,
+          expiresInSeconds: 600,
+        },
         message: `Verification code sent to ${maskedEmail}`,
         _debugOtp: process.env.NODE_ENV !== 'production' ? recentOtp.otp_code : undefined,
       };
@@ -1281,6 +1312,8 @@ export class AuthService {
     const crypto = require('crypto');
     const otpCode = crypto.randomInt(100000, 1000000).toString(); // 6-digit OTP
     const otpHash = await bcrypt.hash(otpCode, 10);
+    const now = new Date();
+    const startTime = now.toISOString();
 
     await query(
       `INSERT INTO otps (
@@ -1308,6 +1341,14 @@ export class AuthService {
       email: sEmail,
       studentId: student.customer_code || student.student_id,
       fullName: student.full_name,
+      startTime,
+      cooldownSeconds: 60,
+      expiresIn: 600,
+      otpSession: {
+        startTime,
+        cooldownSeconds: 60,
+        expiresInSeconds: 600,
+      },
       message: `Verification code sent to ${maskedEmail}`,
       _debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
     };

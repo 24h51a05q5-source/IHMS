@@ -48,10 +48,21 @@ export default function StudentPaymentsPage() {
     REVERSED: 'error',
   };
 
-  const handleDownloadPdf = (paymentId: string) => {
-    const token = localStorage.getItem('accessToken');
-    const url = `/api/fees/payments/${paymentId}/receipt/pdf`;
-    window.open(url, '_blank');
+  const handleDownloadPdf = async (paymentId: string) => {
+    try {
+      const blob = await paymentsApi.downloadReceipt(paymentId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `receipt-${paymentId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      const pdfUrl = paymentsApi.getReceiptPdfUrl(paymentId);
+      window.open(pdfUrl, '_blank');
+    }
   };
 
   const filteredPayments = payments.filter((p) => {

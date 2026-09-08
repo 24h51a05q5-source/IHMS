@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from './auth.service';
+import { termsService } from '../terms/terms.service';
 import { authenticate } from '../../common/guards/auth.guard';
 
 const router = Router();
@@ -98,6 +99,42 @@ router.post('/logout', (req: Request, res: Response) => {
 router.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json({ success: true, message: 'Session refreshed' });
+  } catch (err) { next(err); }
+});
+
+router.get('/terms', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const role = (req.query.role as string) || (req.user?.role as string) || undefined;
+    const termsData = termsService.getTerms(role);
+    res.json({
+      success: true,
+      data: termsData,
+      ...termsData,
+    });
+  } catch (err) { next(err); }
+});
+
+router.post('/terms/accept', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { version, termsVersion } = req.body;
+    const submittedVersion = version || termsVersion;
+    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = await termsService.acceptTerms(
+      req.user!.id,
+      req.user!.role,
+      submittedVersion,
+      ipAddress,
+      userAgent
+    );
+
+    res.json({
+      success: true,
+      message: result.message,
+      data: result,
+      ...result,
+    });
   } catch (err) { next(err); }
 });
 
@@ -288,6 +325,7 @@ router.post('/resend-activation-otp', async (req: Request, res: Response, next: 
     res.json({
       success: true,
       data: result,
+      ...result,
       message: result.message,
     });
   } catch (err) {
@@ -305,6 +343,7 @@ router.post('/activate-student-account', async (req: Request, res: Response, nex
       success: true,
       data: result,
       token: result.token,
+      accessToken: result.token,
       refreshToken: result.refreshToken,
       user: result.user,
       message: result.message,

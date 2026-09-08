@@ -46,24 +46,25 @@ export default function SettingsPage() {
     if (currentBranch?.id && user?.role !== 'STUDENT') {
       feesApi
         .getHostelPaymentConfig(currentBranch.id)
-        .then((res) => {
-          if (res?.data) {
-            const cfg = res.data;
-            if (cfg.upi_vpa) {
-              setUpiVpa(cfg.upi_vpa);
-              setConfirmUpiVpa(cfg.upi_vpa);
+        .then((res: any) => {
+          const cfg = res?.data || res;
+          if (cfg) {
+            const upi = cfg.upiConfig?.vpaAddress || cfg.upiConfig?.pendingVpaAddress || cfg.upi_vpa || '';
+            if (upi) {
+              setUpiVpa(upi);
+              setConfirmUpiVpa(upi);
             }
-            if (cfg.bank_account_number) {
-              setBankAccountNum(cfg.bank_account_number);
-              setConfirmBankAccountNum(cfg.bank_account_number);
+            const bankAcc = cfg.bankConfig?.accountNumber || cfg.bankConfig?.pendingAccountNumber || cfg.bank_account_number || '';
+            if (bankAcc) {
+              setBankAccountNum(bankAcc);
+              setConfirmBankAccountNum(bankAcc);
             }
-            if (cfg.bank_ifsc_code) setBankIfsc(cfg.bank_ifsc_code);
-            if (cfg.verified_beneficiary_name || cfg.pending_beneficiary_name) {
-              setBeneficiaryName(cfg.verified_beneficiary_name || cfg.pending_beneficiary_name);
-            }
-            if (cfg.bank_name || cfg.pending_bank_name) {
-              setBankName(cfg.bank_name || cfg.pending_bank_name);
-            }
+            const ifsc = cfg.bankConfig?.ifscCode || cfg.bankConfig?.pendingIfscCode || cfg.bank_ifsc_code || '';
+            if (ifsc) setBankIfsc(ifsc);
+            const bName = cfg.bankConfig?.beneficiaryName || cfg.bankConfig?.pendingBeneficiaryName || cfg.verified_beneficiary_name || cfg.pending_beneficiary_name || '';
+            if (bName) setBeneficiaryName(bName);
+            const bBank = cfg.bankConfig?.bankName || cfg.bankConfig?.pendingBankName || cfg.bank_name || cfg.pending_bank_name || '';
+            if (bBank) setBankName(bBank);
           }
         })
         .catch(() => {});
@@ -77,16 +78,30 @@ export default function SettingsPage() {
       return;
     }
 
-    if (upiVpa || confirmUpiVpa) {
-      if (upiVpa.trim() !== confirmUpiVpa.trim()) {
-        toast.error(t('settings.upiMismatch', 'UPI IDs do not match'));
-        return;
-      }
-      const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
-      if (!upiRegex.test(upiVpa.trim())) {
-        toast.error(t('settings.invalidUpiId', 'Invalid UPI ID format (e.g. name@bank)'));
-        return;
-      }
+    // 4. Trim leading/trailing spaces before validation
+    const trimmedUpi = (upiVpa || '').trim();
+    const trimmedConfirmUpi = (confirmUpiVpa || '').trim();
+
+    // 5. Validate that UPI ID and Confirm UPI ID are not empty
+    if (!trimmedUpi) {
+      toast.error('UPI ID / VPA is required.');
+      return;
+    }
+    if (!trimmedConfirmUpi) {
+      toast.error('Please confirm your UPI ID.');
+      return;
+    }
+
+    // 6. Validate that both UPI IDs match
+    if (trimmedUpi !== trimmedConfirmUpi) {
+      toast.error(t('settings.upiMismatch', 'UPI IDs do not match'));
+      return;
+    }
+
+    const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+    if (!upiRegex.test(trimmedUpi)) {
+      toast.error(t('settings.invalidUpiId', 'Invalid UPI ID format (e.g. name@bank)'));
+      return;
     }
 
     if (bankAccountNum || confirmBankAccountNum) {
@@ -110,9 +125,13 @@ export default function SettingsPage() {
 
     setSavingPaymentConfig(true);
     try {
-      if (upiVpa.trim()) {
+      if (trimmedUpi) {
         await feesApi.initiateHostelPaymentVerification(currentBranch.id, 'UPI', {
-          vpaAddress: upiVpa.trim(),
+          upiConfig: {
+            vpaAddress: trimmedUpi,
+            displayName: hostelName || 'Hostel Owner',
+          },
+          vpaAddress: trimmedUpi,
           displayName: hostelName || 'Hostel Owner',
         });
         await feesApi.confirmAndActivateHostelPaymentConfig(currentBranch.id, 'UPI');
@@ -120,6 +139,13 @@ export default function SettingsPage() {
 
       if (bankAccountNum.trim() && beneficiaryName.trim() && bankIfsc.trim()) {
         await feesApi.initiateHostelPaymentVerification(currentBranch.id, 'BANK', {
+          bankConfig: {
+            beneficiaryName: beneficiaryName.trim(),
+            accountNumber: bankAccountNum.trim(),
+            confirmAccountNumber: confirmBankAccountNum.trim(),
+            ifscCode: bankIfsc.trim().toUpperCase(),
+            bankName: bankName.trim(),
+          },
           beneficiaryName: beneficiaryName.trim(),
           accountNumber: bankAccountNum.trim(),
           confirmAccountNumber: confirmBankAccountNum.trim(),
@@ -128,6 +154,9 @@ export default function SettingsPage() {
         });
         await feesApi.confirmAndActivateHostelPaymentConfig(currentBranch.id, 'BANK');
       }
+
+      setUpiVpa(trimmedUpi);
+      setConfirmUpiVpa(trimmedUpi);
 
       toast.success(t('settings.paymentConfigSaved', 'Payment configuration saved successfully'));
     } catch (err: any) {
@@ -354,8 +383,9 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <Label className="text-xs font-bold text-[#64748B]">{t('settings.upiId', 'UPI ID / VPA')}</Label>
+                    <Label htmlFor="upiVpa" className="text-xs font-bold text-[#64748B]">{t('settings.upiId', 'UPI ID / VPA')}</Label>
                     <Input
+                      id="upiVpa"
                       value={upiVpa}
                       onChange={(e) => setUpiVpa(e.target.value)}
                       placeholder="e.g. hostelowner@upi"
@@ -364,8 +394,9 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <Label className="text-xs font-bold text-[#64748B]">{t('settings.confirmUpiId', 'Confirm UPI ID')}</Label>
+                    <Label htmlFor="confirmUpiVpa" className="text-xs font-bold text-[#64748B]">{t('settings.confirmUpiId', 'Confirm UPI ID')}</Label>
                     <Input
+                      id="confirmUpiVpa"
                       value={confirmUpiVpa}
                       onChange={(e) => setConfirmUpiVpa(e.target.value)}
                       placeholder="Re-enter UPI ID"

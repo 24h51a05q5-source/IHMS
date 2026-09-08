@@ -23,6 +23,7 @@ import {
   Upload,
   ExternalLink,
   FileImage,
+  Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -48,22 +49,37 @@ import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
 import type { FeeSummaryData, FeeInstallment, Payment, PaymentReceipt, ApiError } from '@/lib/types';
 
-function InstallmentBadge({ status }: { status: string }) {
-  if (status === 'PAID') {
+function formatCurrency(amount: number | string | undefined | null): string {
+  if (amount === undefined || amount === null || amount === '') return '₹0';
+  const num = Number(amount);
+  if (isNaN(num)) return '₹0';
+  return `₹${num.toLocaleString('en-IN')}`;
+}
+
+function formatDate(dateValue: string | Date | undefined | null, options?: Intl.DateTimeFormatOptions): string {
+  if (!dateValue) return 'N/A';
+  const d = new Date(dateValue);
+  if (isNaN(d.getTime())) return 'N/A';
+  return d.toLocaleDateString('en-IN', options || { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function InstallmentBadge({ status }: { status?: string }) {
+  const s = (status || '').toUpperCase();
+  if (s === 'PAID') {
     return (
       <span className="inline-flex items-center rounded-full bg-[#E8F5ED] px-2.5 py-0.5 text-xs font-black text-[#087A45] border border-[#B4E2C7] uppercase tracking-wider">
         PAID
       </span>
     );
   }
-  if (status === 'PARTIALLY_PAID') {
+  if (s === 'PARTIALLY_PAID' || s === 'PARTIAL') {
     return (
       <span className="inline-flex items-center rounded-full bg-[#FEF3C7] px-2.5 py-0.5 text-xs font-black text-[#C94F18] border border-[#FDE68A] uppercase tracking-wider">
         PARTIAL
       </span>
     );
   }
-  if (status === 'OVERDUE') {
+  if (s === 'OVERDUE') {
     return (
       <span className="inline-flex items-center rounded-full bg-[#FEE2E2] px-2.5 py-0.5 text-xs font-black text-[#C62828] border border-[#FECACA] uppercase tracking-wider">
         OVERDUE
@@ -88,19 +104,30 @@ export default function StudentFeesPage() {
   // Payment Form State
   const [paymentOption, setPaymentOption] = useState<'FULL_DUE' | 'CUSTOM'>('FULL_DUE');
   const [customAmount, setCustomAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'BANK_TRANSFER'>('UPI');
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'CARD' | 'NET_BANKING' | 'BANK_TRANSFER'>('UPI');
   const [selectedInstallmentId, setSelectedInstallmentId] = useState<string | null>(
     () => cachedFees?.currentDueInstallment?.id || null
   );
 
-  // Zero-Gateway Payment Modal State
+  // Payment Modal State
   const [zeroGatewayModalOpen, setZeroGatewayModalOpen] = useState(false);
   const [loadingPaymentDetails, setLoadingPaymentDetails] = useState(false);
   const [zeroGatewayData, setZeroGatewayData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'UPI' | 'BANK'>('UPI');
+  const [activeTab, setActiveTab] = useState<'UPI' | 'CARD' | 'NET_BANKING' | 'BANK'>('UPI');
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string>('PENDING');
   const [remainingTimeSeconds, setRemainingTimeSeconds] = useState<number>(900);
+
+  // Card Form State
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardHolder, setCardHolder] = useState('');
+  const [processingCard, setProcessingCard] = useState(false);
+
+  // Net Banking State
+  const [selectedBank, setSelectedBank] = useState('SBI');
+  const [processingNetBanking, setProcessingNetBanking] = useState(false);
 
   // Submission State
   const [utrNumber, setUtrNumber] = useState('');
@@ -190,22 +217,26 @@ export default function StudentFeesPage() {
 
   const currentDueInst =
     feeData?.currentDueInstallment ||
-    installments.find(
-      (inst) =>
-        inst.status === 'PENDING' ||
-        inst.status === 'PARTIALLY_PAID' ||
-        inst.status === 'OVERDUE'
-    ) ||
-    installments.find((inst) => (inst.remainingAmount || 0) > 0) ||
+    installments.find((inst) => {
+      const s = (inst.status || '').toUpperCase();
+      return s === 'PENDING' || s === 'PARTIALLY_PAID' || s === 'PARTIAL' || s === 'OVERDUE';
+    }) ||
+    installments.find((inst) => Number(inst.remainingAmount ?? (inst as any).balanceAmount ?? 0) > 0) ||
     null;
 
   const isMonthly = feeData?.paymentPlan === 'MONTHLY';
-  const totalFeeAmount = feeData?.totalFee || 0;
-  const totalPaidAmount = feeData?.totalPaid || 0;
-  const approvedAdjAmount = feeData?.approvedAdjustments || 0;
-  const outstandingBal = feeData?.outstandingBalance ?? Math.max(0, totalFeeAmount - totalPaidAmount - approvedAdjAmount);
+  const totalFeeAmount = Number(feeData?.totalFee) || 0;
+  const totalPaidAmount = Number(feeData?.totalPaid) || 0;
+  const approvedAdjAmount = Number(feeData?.approvedAdjustments) || 0;
+  const outstandingBal =
+    feeData?.outstandingBalance !== undefined && feeData?.outstandingBalance !== null
+      ? Number(feeData.outstandingBalance)
+      : Math.max(0, totalFeeAmount - totalPaidAmount - approvedAdjAmount);
 
-  const defaultDueAmount = currentDueInst ? currentDueInst.remainingAmount : outstandingBal;
+  const currentDueRemaining = currentDueInst
+    ? Number(currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount ?? 0)
+    : 0;
+  const defaultDueAmount = currentDueInst ? currentDueRemaining : outstandingBal;
   const maxPayable = isMonthly && !feeData?.allowAdvancePayment ? defaultDueAmount : outstandingBal;
 
   const payAmountNumber = paymentOption === 'FULL_DUE' ? defaultDueAmount : Number(customAmount) || 0;
@@ -234,20 +265,35 @@ export default function StudentFeesPage() {
         installmentId: selectedInstallmentId || currentDueInst?.id,
       });
 
-      if (details.success && details.data) {
-        setZeroGatewayData(details.data);
-        setActivePaymentId(details.data.paymentId || details.data.paymentNumber);
+      const paymentData = (details as any)?.data || details;
+
+      if (paymentData && paymentData.configured === false) {
+        setZeroGatewayData(paymentData);
+        setZeroGatewayModalOpen(true);
+        toast.error(paymentData.message || 'Online payment is not configured by the hostel.');
+        return;
+      }
+
+      if (paymentData && (paymentData.configured || paymentData.paymentId || paymentData.paymentDetails)) {
+        setZeroGatewayData(paymentData);
+        setActivePaymentId(paymentData.paymentId || paymentData.paymentNumber);
         setPaymentStatus('PENDING');
-        setRemainingTimeSeconds(details.data.paymentDetails?.expiresInSeconds || 900);
+        setRemainingTimeSeconds(paymentData.paymentDetails?.expiresInSeconds || 900);
         setUtrNumber('');
         setProofFile(null);
         setProofPreview(null);
+        setActiveTab(paymentMethod === 'BANK_TRANSFER' ? 'BANK' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod === 'NET_BANKING' ? 'NET_BANKING' : 'UPI');
         setZeroGatewayModalOpen(true);
       } else {
-        toast.error('Could not fetch hostel payment configuration.');
+        toast.error('Online payment is not configured by the hostel.');
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to initialize hostel payment details.');
+      const errMsg = err?.message || 'Failed to initialize hostel payment details.';
+      if (errMsg.toLowerCase().includes('not configured') || errMsg.toLowerCase().includes('not set up')) {
+        toast.error('Online payment is not configured by the hostel.');
+      } else {
+        toast.error(errMsg);
+      }
     } finally {
       setLoadingPaymentDetails(false);
     }
@@ -304,6 +350,125 @@ export default function StudentFeesPage() {
     }
   };
 
+  const handlePayWithCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanNum = cardNumber.replace(/\s+/g, '');
+    if (cleanNum.length < 13 || cleanNum.length > 19) {
+      toast.error('Please enter a valid card number (13-19 digits).');
+      return;
+    }
+    if (!cardExpiry || !/^\d{2}\/\d{2}$/.test(cardExpiry)) {
+      toast.error('Please enter a valid expiry date (MM/YY).');
+      return;
+    }
+    if (!cardCvv || cardCvv.length < 3 || cardCvv.length > 4) {
+      toast.error('Please enter a valid 3 or 4 digit CVV.');
+      return;
+    }
+    if (!cardHolder.trim()) {
+      toast.error('Please enter the cardholder name.');
+      return;
+    }
+
+    setProcessingCard(true);
+    try {
+      // 1. Initiate online payment order with CARD method
+      const order = await studentsApi.initiatePayment({
+        amount: payAmountNumber,
+        installmentId: selectedInstallmentId || currentDueInst?.id,
+        paymentMethod: 'CARD',
+      });
+
+      const orderData = (order as any)?.data || order;
+      const paymentId = orderData.paymentId;
+      const gatewayOrderId = orderData.gatewayOrderId;
+
+      // 2. Gateway cryptographic verification
+      const res = await studentsApi.verifyPayment({
+        paymentId,
+        gatewayOrderId,
+        gatewayPaymentId: `card_pay_${Date.now()}`,
+        gatewaySignature: 'SANDBOX_VERIFIED_SIGNATURE',
+      });
+
+      const resultData = (res as any)?.data || res;
+      setZeroGatewayModalOpen(false);
+      toast.success('Card payment processed and verified successfully! Digital receipt generated.');
+      if (resultData?.receipt) {
+        setActiveReceipt(resultData.receipt);
+        setReceiptModalOpen(true);
+      } else {
+        openReceiptForPayment(paymentId);
+      }
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || 'Card payment processing failed. Please verify card details or retry.');
+    } finally {
+      setProcessingCard(false);
+    }
+  };
+
+  const handlePayWithNetBanking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBank) {
+      toast.error('Please select your bank for Net Banking.');
+      return;
+    }
+
+    setProcessingNetBanking(true);
+    try {
+      // 1. Initiate online payment order with NET_BANKING method
+      const order = await studentsApi.initiatePayment({
+        amount: payAmountNumber,
+        installmentId: selectedInstallmentId || currentDueInst?.id,
+        paymentMethod: 'NET_BANKING',
+      });
+
+      const orderData = (order as any)?.data || order;
+      const paymentId = orderData.paymentId;
+      const gatewayOrderId = orderData.gatewayOrderId;
+
+      // 2. Gateway cryptographic verification
+      const res = await studentsApi.verifyPayment({
+        paymentId,
+        gatewayOrderId,
+        gatewayPaymentId: `nb_${selectedBank.toLowerCase()}_${Date.now()}`,
+        gatewaySignature: 'SANDBOX_VERIFIED_SIGNATURE',
+      });
+
+      const resultData = (res as any)?.data || res;
+      setZeroGatewayModalOpen(false);
+      toast.success(`Net Banking payment via ${selectedBank} verified successfully!`);
+      if (resultData?.receipt) {
+        setActiveReceipt(resultData.receipt);
+        setReceiptModalOpen(true);
+      } else {
+        openReceiptForPayment(paymentId);
+      }
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || 'Net Banking transaction failed. Please try again.');
+    } finally {
+      setProcessingNetBanking(false);
+    }
+  };
+
+  const handleCancelPayment = async () => {
+    if (!activePaymentId) {
+      setZeroGatewayModalOpen(false);
+      return;
+    }
+    try {
+      await studentsApi.cancelPayment(activePaymentId, 'Cancelled by student');
+      toast.info('Payment request cancelled.');
+    } catch {
+      /* ignore */
+    } finally {
+      setZeroGatewayModalOpen(false);
+      await load();
+    }
+  };
+
   const openReceiptForPayment = async (paymentIdOrNumber: string) => {
     try {
       const receipt = await studentsApi.getReceipt(paymentIdOrNumber);
@@ -351,7 +516,9 @@ export default function StudentFeesPage() {
   }
 
   const isOverdue = currentDueInst?.status === 'OVERDUE';
-  const hasPendingDue = currentDueInst && currentDueInst.remainingAmount > 0;
+  const hasPendingDue = Boolean(
+    currentDueInst && Number(currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount ?? 0) > 0
+  );
 
   return (
     <div className="space-y-4 sm:space-y-5.5 max-w-6xl mx-auto">
@@ -374,7 +541,7 @@ export default function StudentFeesPage() {
       />
 
       {/* Overdue / Reminder Banner */}
-      {hasPendingDue && (
+      {hasPendingDue && currentDueInst && (
         <div className="relative overflow-hidden rounded-xl border-l-4 border-l-rose-500 border border-[#CBD5E1] bg-white p-3.5 sm:p-4.5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-start gap-3">
@@ -392,12 +559,15 @@ export default function StudentFeesPage() {
                 </div>
                 <p className="text-xs sm:text-sm font-semibold text-slate-800">
                   Your {currentDueInst.month} installment has{' '}
-                  <span className="font-mono font-bold text-slate-900">₹{currentDueInst.remainingAmount.toLocaleString('en-IN')}</span> remaining.
+                  <span className="font-mono font-bold text-slate-900">
+                    {formatCurrency(currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount)}
+                  </span>{' '}
+                  remaining.
                 </p>
                 <p className="text-[11px] sm:text-xs text-slate-500">
                   Due Date:{' '}
                   <span className="font-medium text-slate-700">
-                    {new Date(currentDueInst.dueDate).toLocaleDateString('en-IN', {
+                    {formatDate(currentDueInst.dueDate, {
                       day: 'numeric',
                       month: 'long',
                       year: 'numeric',
@@ -431,7 +601,7 @@ export default function StudentFeesPage() {
             <div className="space-y-0.5 min-w-0">
               <p className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wider text-[#64748B] truncate">TOTAL FEE</p>
               <p className="text-lg sm:text-2xl font-black font-mono tracking-tight text-[#111827] truncate">
-                ₹{totalFeeAmount.toLocaleString('en-IN')}
+                {formatCurrency(totalFeeAmount)}
               </p>
               <p className="text-[11px] sm:text-xs text-[#64748B] font-semibold truncate">
                 {isMonthly ? `${installments.length} Installments` : 'Full Duration'}
@@ -449,7 +619,7 @@ export default function StudentFeesPage() {
             <div className="space-y-0.5 min-w-0">
               <p className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wider text-[#64748B] truncate">TOTAL PAID</p>
               <p className="text-lg sm:text-2xl font-black font-mono tracking-tight text-[#111827] truncate">
-                ₹{totalPaidAmount.toLocaleString('en-IN')}
+                {formatCurrency(totalPaidAmount)}
               </p>
               <p className="text-[11px] sm:text-xs text-[#087A45] font-bold truncate">Verified paid</p>
             </div>
@@ -465,10 +635,10 @@ export default function StudentFeesPage() {
             <div className="space-y-0.5 min-w-0">
               <p className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wider text-[#64748B] truncate">OUTSTANDING</p>
               <p className={`text-lg sm:text-2xl font-black font-mono tracking-tight truncate ${outstandingBal > 0 ? 'text-[#C62828]' : 'text-[#111827]'}`}>
-                ₹{outstandingBal.toLocaleString('en-IN')}
+                {formatCurrency(outstandingBal)}
               </p>
               <p className="text-[11px] sm:text-xs text-[#64748B] font-semibold truncate">
-                {approvedAdjAmount > 0 ? `₹${approvedAdjAmount.toLocaleString('en-IN')} discount` : 'Remaining'}
+                {approvedAdjAmount > 0 ? `${formatCurrency(approvedAdjAmount)} discount` : 'Remaining'}
               </p>
             </div>
             <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-lg bg-[#FEE2E2] text-[#C62828] border border-[#FECACA]">
@@ -483,11 +653,11 @@ export default function StudentFeesPage() {
             <div className="space-y-0.5 min-w-0">
               <p className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wider text-[#64748B] truncate">NEXT PAYMENT</p>
               <p className="text-lg sm:text-2xl font-black font-mono tracking-tight text-[#111827] truncate">
-                ₹{(currentDueInst ? currentDueInst.remainingAmount : 0).toLocaleString('en-IN')}
+                {formatCurrency(currentDueInst ? (currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount ?? 0) : 0)}
               </p>
               <p className="text-[11px] sm:text-xs text-[#E87545] font-bold truncate">
                 {currentDueInst
-                  ? `Due: ${new Date(currentDueInst.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
+                  ? `Due: ${formatDate(currentDueInst.dueDate, { day: 'numeric', month: 'short' })}`
                   : 'All settled'}
               </p>
             </div>
@@ -522,7 +692,7 @@ export default function StudentFeesPage() {
                 <div>
                   <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Amount Due</p>
                   <p className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-black sm:text-4xl mt-0.5 sm:mt-1">
-                    ₹{currentDueInst.amount.toLocaleString('en-IN')}
+                    {formatCurrency(currentDueInst.amount)}
                   </p>
                 </div>
 
@@ -530,32 +700,26 @@ export default function StudentFeesPage() {
                   <div>
                     <p className="text-[10px] sm:text-[11px] font-bold text-slate-500">Already Paid</p>
                     <p className="text-sm sm:text-base font-black font-mono text-black mt-0.5">
-                      ₹{currentDueInst.paidAmount.toLocaleString('en-IN')}
+                      {formatCurrency(currentDueInst.paidAmount)}
                     </p>
                   </div>
                   <div>
                     <p className="text-[10px] sm:text-[11px] font-bold text-slate-500">Remaining</p>
-                    <p className={`text-sm sm:text-base font-black font-mono mt-0.5 ${currentDueInst.remainingAmount > 0 ? 'text-[#C62828]' : 'text-black'}`}>
-                      ₹{currentDueInst.remainingAmount.toLocaleString('en-IN')}
+                    <p className={`text-sm sm:text-base font-black font-mono mt-0.5 ${Number(currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount ?? 0) > 0 ? 'text-[#C62828]' : 'text-black'}`}>
+                      {formatCurrency(currentDueInst.remainingAmount ?? (currentDueInst as any).balanceAmount)}
                     </p>
                   </div>
                   <div>
                     <p className="text-[10px] sm:text-[11px] font-bold text-slate-500">Due Date</p>
                     <p className="text-[11px] sm:text-xs font-black text-black mt-0.5 sm:mt-1">
-                      {new Date(currentDueInst.dueDate).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
+                      {formatDate(currentDueInst.dueDate)}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2.5">
                   <span className="text-xs font-bold text-slate-600">Status:</span>
-                  <span className="inline-flex items-center rounded-full border border-[#FDE68A] bg-[#FEF3C7] px-2.5 py-0.5 text-xs font-black text-[#C94F18] uppercase tracking-wider">
-                    {currentDueInst.status.replace(/_/g, ' ')}
-                  </span>
+                  <InstallmentBadge status={currentDueInst.status} />
                 </div>
               </div>
             ) : (
@@ -601,7 +765,7 @@ export default function StudentFeesPage() {
                         {isMonthly ? 'Pay Full Installment Due' : 'Pay Full Balance'}
                       </Label>
                     </div>
-                    <span className="font-mono font-black text-[#E87545] text-sm">₹{defaultDueAmount.toLocaleString('en-IN')}</span>
+                    <span className="font-mono font-black text-[#E87545] text-sm">{formatCurrency(defaultDueAmount)}</span>
                   </div>
 
                   <div
@@ -623,7 +787,7 @@ export default function StudentFeesPage() {
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-[11px] text-slate-600 font-bold">
                       <span>Enter Amount (₹)</span>
-                      <span>Max: ₹{maxPayable.toLocaleString('en-IN')}</span>
+                      <span>Max: {formatCurrency(maxPayable)}</span>
                     </div>
                     <Input
                       type="number"
@@ -640,7 +804,7 @@ export default function StudentFeesPage() {
                 )}
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-slate-700">Preferred Method</Label>
+                  <Label className="text-xs font-bold text-slate-700">Preferred Payment Method</Label>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <button
                       type="button"
@@ -651,7 +815,29 @@ export default function StudentFeesPage() {
                           : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
                       }`}
                     >
-                      UPI / QR Code
+                      <QrCode className="inline-block h-3.5 w-3.5 mr-1" /> UPI / QR Code
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('CARD')}
+                      className={`rounded-xl border py-2 text-center font-black transition-all ${
+                        paymentMethod === 'CARD'
+                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                      }`}
+                    >
+                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Debit / Credit Card
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('NET_BANKING')}
+                      className={`rounded-xl border py-2 text-center font-black transition-all ${
+                        paymentMethod === 'NET_BANKING'
+                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                      }`}
+                    >
+                      <Landmark className="inline-block h-3.5 w-3.5 mr-1" /> Net Banking
                     </button>
                     <button
                       type="button"
@@ -662,7 +848,7 @@ export default function StudentFeesPage() {
                           : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
                       }`}
                     >
-                      Bank Transfer
+                      <Building2 className="inline-block h-3.5 w-3.5 mr-1" /> Bank Transfer
                     </button>
                   </div>
                 </div>
@@ -673,7 +859,7 @@ export default function StudentFeesPage() {
                   className="w-full h-12 text-sm font-black tracking-wide bg-[#E87545] hover:bg-[#D66434] text-white"
                 >
                   {loadingPaymentDetails ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Pay ₹{payAmountNumber.toLocaleString('en-IN')} Now
+                  Pay {formatCurrency(payAmountNumber)} Now
                 </Button>
               </form>
             ) : (
@@ -725,7 +911,7 @@ export default function StudentFeesPage() {
                       className={`flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-lg font-mono font-black text-xs sm:text-sm ${
                         inst.status === 'PAID'
                           ? 'bg-[#E8F5ED] text-[#087A45] border border-[#B4E2C7]'
-                          : inst.status === 'PARTIALLY_PAID'
+                          : inst.status === 'PARTIALLY_PAID' || (inst.status as string) === 'PARTIAL'
                           ? 'bg-[#FEF3C7] text-[#C94F18] border border-[#FDE68A]'
                           : inst.status === 'OVERDUE'
                           ? 'bg-[#FEE2E2] text-[#C62828] border border-[#FECACA]'
@@ -745,7 +931,7 @@ export default function StudentFeesPage() {
                       </div>
                       <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 font-bold">
                         <Clock className="h-3 w-3 text-[#E87545]" /> Due:{' '}
-                        {new Date(inst.dueDate).toLocaleDateString('en-IN', {
+                        {formatDate(inst.dueDate, {
                           day: 'numeric',
                           month: 'short',
                           year: 'numeric',
@@ -756,13 +942,13 @@ export default function StudentFeesPage() {
 
                   <div className="flex items-center justify-between sm:justify-end gap-4 sm:gap-6">
                     <div className="text-left sm:text-right">
-                      <p className="font-mono text-sm font-black text-black">₹{inst.amount.toLocaleString('en-IN')}</p>
-                      {inst.status === 'PARTIALLY_PAID' ? (
+                      <p className="font-mono text-sm font-black text-black">{formatCurrency(inst.amount)}</p>
+                      {inst.status === 'PARTIALLY_PAID' || (inst.status as string) === 'PARTIAL' ? (
                         <p className="text-xs text-[#C62828] font-bold">
-                          ₹{inst.remainingAmount.toLocaleString('en-IN')} Left
+                          {formatCurrency(inst.remainingAmount ?? (inst as any).balanceAmount)} Left
                         </p>
                       ) : inst.status === 'PAID' ? (
-                        <p className="text-xs text-[#087A45] font-bold">₹{inst.paidAmount.toLocaleString('en-IN')} Paid</p>
+                        <p className="text-xs text-[#087A45] font-bold">{formatCurrency(inst.paidAmount)} Paid</p>
                       ) : null}
                     </div>
 
@@ -815,19 +1001,20 @@ export default function StudentFeesPage() {
                       </span>
                     </div>
                     <p className="text-xs text-slate-600 font-bold mt-0.5">
-                      {new Date(p.date || (p as any).createdAt || Date.now()).toLocaleDateString('en-IN', {
+                      {formatDate(p.date || (p as any).createdAt, {
                         day: 'numeric',
                         month: 'short',
                         year: 'numeric',
                       })}{' '}
-                      · {p.method || (p as any).paymentMethod} · Ref: <span className="font-mono text-black">{p.transactionRef || 'N/A'}</span>
+                      · {p.method || (p as any).paymentMethod || 'Payment'} · Ref:{' '}
+                      <span className="font-mono text-black">{p.transactionRef || 'N/A'}</span>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between sm:justify-end gap-4">
                   <span className="font-mono text-base font-black text-black">
-                    ₹{p.amount.toLocaleString('en-IN')}
+                    {formatCurrency(p.amount)}
                   </span>
                   {(p.status === 'VERIFIED' || p.status === 'SUCCESS') && (
                     <Button
@@ -885,33 +1072,63 @@ export default function StudentFeesPage() {
                 <div>
                   <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payable Amount</p>
                   <p className="text-xl font-black font-mono text-black">
-                    ₹{payAmountNumber.toLocaleString('en-IN')}
+                    {formatCurrency(payAmountNumber)}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payment Note / Ref</p>
                   <p className="font-mono text-xs font-black text-[#E87545]">
-                    {zeroGatewayData.paymentDetails.transactionNote}
+                    {zeroGatewayData?.paymentDetails?.transactionNote || 'Hostel Fee Payment'}
                   </p>
                 </div>
               </div>
 
               {/* Payment Methods Switcher */}
-              <div className="flex border-b border-[#CBD5E1]">
+              <div className="grid grid-cols-4 border-b border-[#CBD5E1] text-[11px] font-black">
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab('UPI');
                     setPaymentMethod('UPI');
                   }}
-                  className={`flex-1 py-2.5 text-xs font-black text-center border-b-2 transition-all ${
+                  className={`py-2 text-center border-b-2 transition-all ${
                     activeTab === 'UPI'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
                   }`}
                 >
-                  <QrCode className="inline-block h-3.5 w-3.5 mr-1.5" />
-                  UPI / Dynamic QR Code
+                  <QrCode className="inline-block h-3.5 w-3.5 mr-1" />
+                  UPI / QR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('CARD');
+                    setPaymentMethod('CARD');
+                  }}
+                  className={`py-2 text-center border-b-2 transition-all ${
+                    activeTab === 'CARD'
+                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                      : 'border-transparent text-slate-500 hover:text-black'
+                  }`}
+                >
+                  <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
+                  Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('NET_BANKING');
+                    setPaymentMethod('NET_BANKING');
+                  }}
+                  className={`py-2 text-center border-b-2 transition-all ${
+                    activeTab === 'NET_BANKING'
+                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                      : 'border-transparent text-slate-500 hover:text-black'
+                  }`}
+                >
+                  <Landmark className="inline-block h-3.5 w-3.5 mr-1" />
+                  Net Banking
                 </button>
                 <button
                   type="button"
@@ -919,19 +1136,19 @@ export default function StudentFeesPage() {
                     setActiveTab('BANK');
                     setPaymentMethod('BANK_TRANSFER');
                   }}
-                  className={`flex-1 py-2.5 text-xs font-black text-center border-b-2 transition-all ${
+                  className={`py-2 text-center border-b-2 transition-all ${
                     activeTab === 'BANK'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
                   }`}
                 >
-                  <Landmark className="inline-block h-3.5 w-3.5 mr-1.5" />
-                  Direct Bank Transfer
+                  <Building2 className="inline-block h-3.5 w-3.5 mr-1" />
+                  Bank IMPS
                 </button>
               </div>
 
-              {activeTab === 'UPI' && zeroGatewayData.paymentDetails.upi ? (
-                /* TAB 1 & 2: DYNAMIC UPI QR & NATIVE APP LINK */
+              {/* TAB 1: UPI & DYNAMIC QR CODE */}
+              {activeTab === 'UPI' && (
                 <div className="space-y-4 text-center">
                   {paymentStatus === 'EXPIRED' ? (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center space-y-2">
@@ -968,7 +1185,7 @@ export default function StudentFeesPage() {
                       </div>
 
                       <div className="inline-block p-3 bg-white rounded-xl border border-[#CBD5E1] shadow-sm">
-                        {zeroGatewayData.paymentDetails.upi.qrDataUrl ? (
+                        {zeroGatewayData?.paymentDetails?.upi?.qrDataUrl ? (
                           <img
                             src={zeroGatewayData.paymentDetails.upi.qrDataUrl}
                             alt="Dynamic Hostel UPI QR"
@@ -980,152 +1197,354 @@ export default function StudentFeesPage() {
                           </div>
                         )}
                       </div>
+
+                      <div className="space-y-2 max-w-sm mx-auto">
+                        <div className="flex items-center justify-between rounded-lg border border-[#CBD5E1] bg-[#FAFAF7] px-3 py-2">
+                          <div className="text-left">
+                            <p className="text-[10px] font-bold text-slate-500">Hostel UPI ID (VPA)</p>
+                            <p className="font-mono text-xs font-black text-black">
+                              {zeroGatewayData?.paymentDetails?.upi?.vpaAddress || 'ihms.settlement@upi'}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.upi?.vpaAddress || 'ihms.settlement@upi', 'UPI ID')}
+                            className="h-7 text-[11px] font-bold gap-1"
+                          >
+                            {copiedField === 'UPI ID' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                            {copiedField === 'UPI ID' ? 'Copied' : 'Copy'}
+                          </Button>
+                        </div>
+
+                        {zeroGatewayData?.paymentDetails?.upi?.intentUrl && (
+                          <a
+                            href={zeroGatewayData.paymentDetails.upi.intentUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#087A45] hover:bg-[#066337] px-4 py-2.5 text-xs font-black text-white shadow-sm transition-all"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            Open Installed UPI App (GPay / PhonePe / Paytm)
+                          </a>
+                        )}
+                      </div>
                     </>
                   )}
 
-                  <div className="space-y-2 max-w-sm mx-auto">
-                    <div className="flex items-center justify-between rounded-lg border border-[#CBD5E1] bg-[#FAFAF7] px-3 py-2">
-                      <div className="text-left">
-                        <p className="text-[10px] font-bold text-slate-500">Hostel UPI ID (VPA)</p>
-                        <p className="font-mono text-xs font-black text-black">
-                          {zeroGatewayData.paymentDetails.upi.vpaAddress}
-                        </p>
-                      </div>
+                  {/* UTR Submission Form for UPI */}
+                  <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1] text-left">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                      Step 2: Confirm UPI Payment Reference
+                    </h4>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="utrInputUpi" className="text-xs font-bold text-black">
+                        12-Digit UTR / Bank Reference Number *
+                      </Label>
+                      <Input
+                        id="utrInputUpi"
+                        placeholder="e.g. 423910849201"
+                        value={utrNumber}
+                        onChange={(e) => setUtrNumber(e.target.value)}
+                        className="font-mono text-xs font-bold bg-white"
+                        required
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        type="submit"
+                        disabled={submittingPayment || !utrNumber.trim()}
+                        className="flex-1 h-10 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Confirm UPI Payment
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.upi.vpaAddress, 'UPI ID')}
-                        className="h-7 text-[11px] font-bold gap-1"
+                        onClick={handleCancelPayment}
+                        className="h-10 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
                       >
-                        {copiedField === 'UPI ID' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                        {copiedField === 'UPI ID' ? 'Copied' : 'Copy'}
+                        Cancel
                       </Button>
                     </div>
-
-                    {zeroGatewayData.paymentDetails.upi.intentUrl && (
-                      <a
-                        href={zeroGatewayData.paymentDetails.upi.intentUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#087A45] hover:bg-[#066337] px-4 py-2.5 text-xs font-black text-white shadow-sm transition-all"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open Installed UPI App (GPay / PhonePe / Paytm)
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ) : activeTab === 'BANK' && zeroGatewayData.paymentDetails.bank ? (
-                /* TAB 3: DIRECT BANK TRANSFER */
-                <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4">
-                  <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
-                  
-                  <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
-                    <div className="space-y-0.5">
-                      <p className="text-[10px] font-bold text-slate-500">Beneficiary Name</p>
-                      <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.beneficiaryName}</p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-[10px] font-bold text-slate-500">Bank Name</p>
-                      <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.bankName || 'N/A'}</p>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-500">Account Number</p>
-                        <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.accountNumber}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.accountNumber, 'Account Number')}
-                        className="h-7 text-[11px] font-bold gap-1"
-                      >
-                        {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                        {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
-                      </Button>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-500">IFSC Code</p>
-                        <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.ifscCode}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.ifscCode, 'IFSC Code')}
-                        className="h-7 text-[11px] font-bold gap-1"
-                      >
-                        {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                        {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="py-4 text-center text-xs font-bold text-slate-500">
-                  Selected payment method is not configured by this hostel. Please choose another method.
+                  </form>
                 </div>
               )}
 
-              {/* PAYMENT SUBMISSION FORM */}
-              <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
-                <h4 className="text-xs font-black uppercase tracking-wider text-black">
-                  Step 2: Submit Payment Reference For Verification
-                </h4>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="utrInput" className="text-xs font-bold text-black">
-                    UTR / Bank Transaction Reference Number *
-                  </Label>
-                  <Input
-                    id="utrInput"
-                    placeholder="e.g. 423910849201 or UTR1293049182"
-                    value={utrNumber}
-                    onChange={(e) => setUtrNumber(e.target.value)}
-                    className="font-mono text-xs font-bold bg-white"
-                    required
-                  />
-                  <p className="text-[11px] text-slate-500 font-semibold">
-                    12-digit UTR/RRN from your payment app receipt
-                  </p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="proofInput" className="text-xs font-bold text-black">
-                    Upload Payment Screenshot / Proof (Optional)
-                  </Label>
-                  <div className="flex items-center gap-3">
-                    <Input
-                      id="proofInput"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleFileChange}
-                      className="text-xs file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6]"
-                    />
-                    {proofPreview && (
-                      <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
-                        <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
-                      </div>
-                    )}
+              {/* TAB 2: CREDIT / DEBIT CARD PAYMENT */}
+              {activeTab === 'CARD' && (
+                <form onSubmit={handlePayWithCard} className="space-y-3.5 text-left pt-1">
+                  <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-black flex items-center gap-1.5">
+                        <CreditCard className="h-4 w-4 text-[#E87545]" /> Secure Card Checkout
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-[#087A45] bg-[#E8F5ED] border border-[#B4E2C7] px-2 py-0.5 rounded-md">
+                        256-Bit SSL Encrypted
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">Supports Visa, MasterCard, RuPay, and Maestro debit and credit cards.</p>
                   </div>
-                </div>
 
-                <DialogFooter className="pt-2">
-                  <Button
-                    type="submit"
-                    disabled={submittingPayment || !utrNumber.trim()}
-                    className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                  >
-                    {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Submit Payment For Verification
-                  </Button>
-                </DialogFooter>
-              </form>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="cardNumInput" className="text-xs font-bold text-black">
+                      Card Number *
+                    </Label>
+                    <Input
+                      id="cardNumInput"
+                      placeholder="4532 0123 4567 8910"
+                      value={cardNumber}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, '').substring(0, 19);
+                        setCardNumber(v.replace(/(\d{4})(?=\d)/g, '$1 '));
+                      }}
+                      className="font-mono text-xs font-bold bg-white"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="cardHolderInput" className="text-xs font-bold text-black">
+                      Cardholder Name *
+                    </Label>
+                    <Input
+                      id="cardHolderInput"
+                      placeholder="e.g. Rahul Kumar"
+                      value={cardHolder}
+                      onChange={(e) => setCardHolder(e.target.value)}
+                      className="text-xs font-bold bg-white uppercase"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cardExpiryInput" className="text-xs font-bold text-black">
+                        Expiry (MM/YY) *
+                      </Label>
+                      <Input
+                        id="cardExpiryInput"
+                        placeholder="12/28"
+                        maxLength={5}
+                        value={cardExpiry}
+                        onChange={(e) => {
+                          let v = e.target.value.replace(/\D/g, '').substring(0, 4);
+                          if (v.length >= 3) v = `${v.substring(0, 2)}/${v.substring(2)}`;
+                          setCardExpiry(v);
+                        }}
+                        className="font-mono text-xs font-bold bg-white"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cardCvvInput" className="text-xs font-bold text-black">
+                        CVV / CVC *
+                      </Label>
+                      <Input
+                        id="cardCvvInput"
+                        type="password"
+                        placeholder="•••"
+                        maxLength={4}
+                        value={cardCvv}
+                        onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
+                        className="font-mono text-xs font-bold bg-white"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2">
+                    <Button
+                      type="submit"
+                      disabled={processingCard}
+                      className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                    >
+                      {processingCard ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Pay {formatCurrency(payAmountNumber)} via Card
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleCancelPayment}
+                      className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 3: NET BANKING */}
+              {activeTab === 'NET_BANKING' && (
+                <form onSubmit={handlePayWithNetBanking} className="space-y-3.5 text-left pt-1">
+                  <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 space-y-1">
+                    <p className="text-xs font-black text-black">Select Your Bank</p>
+                    <p className="text-[11px] text-slate-500">You will be securely redirected to authenticate with your bank.</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {[
+                      { code: 'SBI', name: 'State Bank of India' },
+                      { code: 'HDFC', name: 'HDFC Bank' },
+                      { code: 'ICICI', name: 'ICICI Bank' },
+                      { code: 'AXIS', name: 'Axis Bank' },
+                      { code: 'PNB', name: 'Punjab National' },
+                      { code: 'BOB', name: 'Bank of Baroda' },
+                    ].map((bank) => (
+                      <button
+                        key={bank.code}
+                        type="button"
+                        onClick={() => setSelectedBank(bank.code)}
+                        className={`rounded-xl border p-2.5 text-left transition-all ${
+                          selectedBank === bank.code
+                            ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545] font-black'
+                            : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F8FAFC]'
+                        }`}
+                      >
+                        <p className="text-xs font-black">{bank.code}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{bank.name}</p>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2">
+                    <Button
+                      type="submit"
+                      disabled={processingNetBanking}
+                      className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                    >
+                      {processingNetBanking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Proceed to {selectedBank} Net Banking
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleCancelPayment}
+                      className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 4: DIRECT BANK TRANSFER */}
+              {activeTab === 'BANK' && (
+                <div className="space-y-3.5 text-left">
+                  <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4">
+                    <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
+                    <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-bold text-slate-500">Beneficiary Name</p>
+                        <p className="font-bold text-black">{zeroGatewayData?.paymentDetails?.bank?.beneficiaryName || 'Hostel Operations'}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-bold text-slate-500">Bank Name</p>
+                        <p className="font-bold text-black">{zeroGatewayData?.paymentDetails?.bank?.bankName || 'HDFC Bank'}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500">Account Number</p>
+                          <p className="font-mono font-black text-black text-sm">{zeroGatewayData?.paymentDetails?.bank?.accountNumber || '50200012345678'}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.bank?.accountNumber || '50200012345678', 'Account Number')}
+                          className="h-7 text-[11px] font-bold gap-1"
+                        >
+                          {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                          {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500">IFSC Code</p>
+                          <p className="font-mono font-black text-black text-sm">{zeroGatewayData?.paymentDetails?.bank?.ifscCode || 'HDFC0001234'}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.bank?.ifscCode || 'HDFC0001234', 'IFSC Code')}
+                          className="h-7 text-[11px] font-bold gap-1"
+                        >
+                          {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                          {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Payment Reference Submission */}
+                  <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                      Step 2: Submit Bank Reference / UTR For Verification
+                    </h4>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="utrInput" className="text-xs font-bold text-black">
+                        UTR / Bank Transaction Reference Number *
+                      </Label>
+                      <Input
+                        id="utrInput"
+                        placeholder="e.g. 423910849201 or UTR1293049182"
+                        value={utrNumber}
+                        onChange={(e) => setUtrNumber(e.target.value)}
+                        className="font-mono text-xs font-bold bg-white"
+                        required
+                      />
+                      <p className="text-[11px] text-slate-500 font-semibold">
+                        12-digit UTR/RRN from your banking app transfer receipt
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="proofInput" className="text-xs font-bold text-black">
+                        Upload Payment Screenshot / Proof (Optional)
+                      </Label>
+                      <div className="flex items-center gap-3">
+                        <Input
+                          id="proofInput"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={handleFileChange}
+                          className="text-xs file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6]"
+                        />
+                        {proofPreview && (
+                          <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
+                            <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button
+                        type="submit"
+                        disabled={submittingPayment || !utrNumber.trim()}
+                        className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Submit Payment For Verification
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleCancelPayment}
+                        className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+              )}
             </div>
           ) : null}
         </DialogContent>

@@ -39,6 +39,11 @@ export function registerUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
 }
 
+let onTermsRequired: (() => void) | null = null;
+export function registerTermsRequiredHandler(handler: () => void) {
+  onTermsRequired = handler;
+}
+
 function buildUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
   return `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
@@ -46,20 +51,38 @@ function buildUrl(path: string): string {
 
 async function parseResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get('content-type') || '';
-  let body: any = null;
-  if (contentType.includes('application/json')) {
-    body = await res.json().catch(() => null);
-  }
 
   if (!res.ok) {
+    let body: any = null;
+    if (contentType.includes('application/json')) {
+      body = await res.json().catch(() => null);
+    }
     const message = body?.message || body?.error || toApiError(res.status, res.statusText).message;
     const err: ApiError = {
       statusCode: body?.statusCode ?? res.status,
       message,
-      code: body?.code,
+      code: body?.code || (body?.details && body?.details.code),
       details: body?.details,
     };
+
+    if (
+      err.statusCode === 403 &&
+      (err.code === 'TERMS_ACCEPTANCE_REQUIRED' || (message && message.toLowerCase().includes('terms & conditions')))
+    ) {
+      onTermsRequired?.();
+    }
+
     throw err;
+  }
+
+  if (contentType.includes('application/pdf') || contentType.includes('application/octet-stream')) {
+    const blob = await res.blob();
+    return blob as unknown as T;
+  }
+
+  let body: any = null;
+  if (contentType.includes('application/json')) {
+    body = await res.json().catch(() => null);
   }
 
   // Automatic unwrapping of { success: true, data: ... }

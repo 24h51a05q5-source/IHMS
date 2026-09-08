@@ -54,6 +54,7 @@ export function errorHandler(
   res.status(statusCode).json({
     success: false,
     statusCode,
+    code: err.code || (err.details && err.details.code) || undefined,
     message,
     details: err.details || null,
     timestamp,

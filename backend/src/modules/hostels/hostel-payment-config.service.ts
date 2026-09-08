@@ -23,6 +23,14 @@ export interface IHostelPaymentConfigInput {
     ifscCode?: string;
     bankName?: string;
   };
+  // Direct/flat fields support
+  vpaAddress?: string;
+  displayName?: string;
+  beneficiaryName?: string;
+  accountNumber?: string;
+  confirmAccountNumber?: string;
+  ifscCode?: string;
+  bankName?: string;
 }
 
 export interface IHostelPaymentConfigResponse {
@@ -30,6 +38,15 @@ export interface IHostelPaymentConfigResponse {
   organizationId: string;
   hostelId: string;
   ownerId?: string;
+  upi_vpa?: string;
+  upi_display_name?: string;
+  bank_beneficiary_name?: string;
+  bank_account_number?: string;
+  bank_ifsc_code?: string;
+  bank_name?: string;
+  verified_beneficiary_name?: string;
+  pending_beneficiary_name?: string;
+  pending_bank_name?: string;
   upiConfig: {
     vpaAddress: string;
     displayName: string;
@@ -128,34 +145,61 @@ export class HostelPaymentConfigService {
    * Get payment configuration for a specific hostel branch
    */
   async getByHostelId(orgId: string, hostelId: string): Promise<IHostelPaymentConfigResponse | null> {
-    const config = await queryOne<any>(
+    let config = await queryOne<any>(
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
       [orgId, hostelId]
     );
 
+    // Fallback: if not configured for this specific branch, check for any active payment config in the organization
+    if (!config && orgId) {
+      config = await queryOne<any>(
+        `SELECT * FROM hostel_payment_configs
+         WHERE organization_id = $1
+         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
+         LIMIT 1`,
+        [orgId]
+      );
+    }
+
     if (!config) return null;
 
     const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
+
+    const effectiveVpa = config.upi_vpa || config.pending_upi_vpa || '';
+    const effectiveUpiName = config.upi_display_name || config.pending_upi_display_name || '';
+    const effectiveBeneficiary = config.bank_beneficiary_name || config.pending_bank_beneficiary_name || '';
+    const effectiveAccount = config.bank_account_number || config.pending_bank_account_number || '';
+    const effectiveIfsc = config.bank_ifsc_code || config.pending_bank_ifsc_code || '';
+    const effectiveBankName = config.bank_name || config.pending_bank_name || '';
 
     return {
       id: config.id,
       organizationId: config.organization_id,
       hostelId: config.hostel_id,
       ownerId: config.owner_id,
+      upi_vpa: effectiveVpa,
+      upi_display_name: effectiveUpiName,
+      bank_beneficiary_name: effectiveBeneficiary,
+      bank_account_number: effectiveAccount,
+      bank_ifsc_code: effectiveIfsc,
+      bank_name: effectiveBankName,
+      verified_beneficiary_name: config.verified_beneficiary_name || '',
+      pending_beneficiary_name: config.pending_bank_beneficiary_name || '',
+      pending_bank_name: config.pending_bank_name || '',
       upiConfig: {
-        vpaAddress: config.upi_vpa || '',
-        displayName: config.upi_display_name || '',
-        status: (config.upi_status as PaymentConfigStatus) || (config.upi_vpa ? 'ACTIVE' : 'NOT_CONFIGURED'),
+        vpaAddress: effectiveVpa,
+        displayName: effectiveUpiName,
+        status: (config.upi_status as PaymentConfigStatus) || (effectiveVpa ? 'ACTIVE' : 'NOT_CONFIGURED'),
         pendingVpaAddress: config.pending_upi_vpa || undefined,
         pendingDisplayName: config.pending_upi_display_name || undefined,
       },
       bankConfig: {
-        beneficiaryName: config.bank_beneficiary_name || '',
-        accountNumber: config.bank_account_number || '',
-        maskedAccountNumber: HostelPaymentConfigService.maskAccountNumber(config.bank_account_number || ''),
-        ifscCode: config.bank_ifsc_code || '',
-        bankName: config.bank_name || '',
-        status: (config.bank_status as PaymentConfigStatus) || (config.bank_account_number ? 'ACTIVE' : 'NOT_CONFIGURED'),
+        beneficiaryName: effectiveBeneficiary,
+        accountNumber: effectiveAccount,
+        maskedAccountNumber: HostelPaymentConfigService.maskAccountNumber(effectiveAccount),
+        ifscCode: effectiveIfsc,
+        bankName: effectiveBankName,
+        status: (config.bank_status as PaymentConfigStatus) || (effectiveAccount ? 'ACTIVE' : 'NOT_CONFIGURED'),
         pendingBeneficiaryName: config.pending_bank_beneficiary_name || undefined,
         pendingAccountNumber: config.pending_bank_account_number || undefined,
         pendingMaskedAccountNumber: HostelPaymentConfigService.maskAccountNumber(config.pending_bank_account_number || ''),
@@ -183,7 +227,19 @@ export class HostelPaymentConfigService {
     ownerId: string,
     input: IHostelPaymentConfigInput
   ): Promise<IHostelPaymentConfigResponse> {
-    return this.initiateVerification(orgId, hostelId, ownerId, input.method || 'UPI', input);
+    const hasUpi = Boolean(input.vpaAddress || input.upiConfig?.vpaAddress || (input as any).upiVpa || (input as any).upi_vpa);
+    const hasBank = Boolean(input.accountNumber || input.bankConfig?.accountNumber || (input as any).bankAccountNumber);
+
+    if (hasUpi && hasBank) {
+      await this.initiateVerification(orgId, hostelId, ownerId, 'UPI', input);
+      await this.confirmAndActivate(orgId, hostelId, ownerId, 'UPI');
+      await this.initiateVerification(orgId, hostelId, ownerId, 'BANK', input);
+      return this.confirmAndActivate(orgId, hostelId, ownerId, 'BANK');
+    }
+
+    const method = input.method || (hasUpi ? 'UPI' : 'BANK');
+    await this.initiateVerification(orgId, hostelId, ownerId, method, input);
+    return this.confirmAndActivate(orgId, hostelId, ownerId, method);
   }
 
   /**
@@ -232,8 +288,8 @@ export class HostelPaymentConfigService {
     let pendingBankName = existing?.pending_bank_name || null;
 
     if (method === 'UPI') {
-      const vpa = input.upiConfig?.vpaAddress?.trim() || '';
-      const name = input.upiConfig?.displayName?.trim() || hostel.hostel_name || hostel.name || '';
+      const vpa = (input.upiConfig?.vpaAddress || input.vpaAddress || (input as any).upiVpa || (input as any).upi_vpa || '').trim();
+      const name = (input.upiConfig?.displayName || input.displayName || (input as any).upiDisplayName || '').trim() || hostel.hostel_name || hostel.name || '';
       if (!vpa) {
         throw new AppError('UPI ID / VPA is required.', 400);
       }
@@ -252,11 +308,11 @@ export class HostelPaymentConfigService {
         verifiedBeneficiary = name;
       }
     } else {
-      const beneficiary = input.bankConfig?.beneficiaryName?.trim() || '';
-      const acc = input.bankConfig?.accountNumber?.trim() || '';
-      const confirmAcc = input.bankConfig?.confirmAccountNumber?.trim() || '';
-      const ifsc = input.bankConfig?.ifscCode?.trim().toUpperCase() || '';
-      const bank = input.bankConfig?.bankName?.trim() || '';
+      const beneficiary = (input.bankConfig?.beneficiaryName || input.beneficiaryName || (input as any).bankBeneficiaryName || '').trim();
+      const acc = (input.bankConfig?.accountNumber || input.accountNumber || (input as any).bankAccountNumber || '').trim();
+      const confirmAcc = (input.bankConfig?.confirmAccountNumber || input.confirmAccountNumber || (input as any).confirmBankAccountNumber || '').trim();
+      const ifsc = (input.bankConfig?.ifscCode || input.ifscCode || (input as any).bankIfscCode || '').trim().toUpperCase();
+      const bank = (input.bankConfig?.bankName || input.bankName || (input as any).bankName || '').trim();
 
       if (!beneficiary) throw new AppError('Beneficiary account holder name is required.', 400);
       if (!acc) throw new AppError('Bank account number is required.', 400);

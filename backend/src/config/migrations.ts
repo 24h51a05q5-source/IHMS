@@ -46,6 +46,9 @@ export async function runMigrations(): Promise<void> {
       customer_code TEXT,
       hostel_name TEXT,
       must_change_password BOOLEAN DEFAULT FALSE,
+      terms_accepted BOOLEAN DEFAULT FALSE,
+      accepted_terms_version TEXT,
+      terms_accepted_at TIMESTAMPTZ,
       status TEXT DEFAULT 'ACTIVE',
       last_login_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -329,6 +332,11 @@ export async function runMigrations(): Promise<void> {
       gateway_payment_id TEXT,
       gateway_transaction_id TEXT,
       idempotency_key TEXT,
+      expected_amount NUMERIC(12, 2),
+      expires_at TIMESTAMPTZ,
+      proof_url TEXT,
+      verified_by TEXT,
+      verified_at TIMESTAMPTZ,
       refunded_amount NUMERIC(12, 2) DEFAULT 0.00,
       receipt_number TEXT,
       receipt_no TEXT,
@@ -869,6 +877,21 @@ export async function runMigrations(): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_students_ihms_id ON students(ihms_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ihms_id ON users(ihms_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_owners_ihms_id ON owners(ihms_id)`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS accepted_terms_version TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ`,
+    `CREATE TABLE IF NOT EXISTS terms_acceptances (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      terms_version TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      status TEXT DEFAULT 'ACCEPTED',
+      accepted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_user ON terms_acceptances(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_ver ON terms_acceptances(terms_version)`,
   ];
 
   for (const stmt of statements) {

@@ -26,6 +26,8 @@ export async function runSeed() {
     'fee_installments',
     'fee_demands',
     'fee_accounts',
+    'hostel_payment_configs',
+    'payment_gateway_configs',
     'student_transfers',
     'room_allocations',
     'students',
@@ -171,9 +173,9 @@ export async function runSeed() {
     `INSERT INTO students (
       id, student_id, customer_code, ihms_id, organization_id, hostel_id, user_id, full_name, email,
       phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
-      room_id, bed_id, admission_date, portal_access, status, financial_total_demanded,
+      room_id, bed_id, admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status, financial_total_demanded,
       financial_total_paid, financial_outstanding_balance
-    ) VALUES ($1, $2, $2, $2, $3, $4, $5, 'Rahul Kumar', 'student@ihms.com', '+91 9876543210', 'MALE', 'IIT Hyderabad (Computer Science)', 'Anand Kumar', 'Father', '+91 9876500001', 'Madhapur, Hyderabad', $6, $7, CURRENT_TIMESTAMP, true, 'ACTIVE', 14000, 14000, 0)`,
+    ) VALUES ($1, $2, $2, $2, $3, $4, $5, 'Rahul Kumar', 'student@ihms.com', '+91 9876543210', 'MALE', 'IIT Hyderabad (Computer Science)', 'Anand Kumar', 'Father', '+91 9876500001', 'Madhapur, Hyderabad', $6, $7, CURRENT_TIMESTAMP, true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE', 22000, 14000, 8000)`,
     [s1Id, s1IhmsId, orgId, b1Id, s1UserId, r1Id, bed1Id]
   );
 
@@ -224,6 +226,39 @@ export async function runSeed() {
     [s3Id, s3IhmsId, orgId, b1Id]
   );
 
+  // Student 4: Ananya Reddy (Unactivated student for OTP setup test)
+  const s4Id = require('crypto').randomUUID();
+  const s4IhmsId = 'IHM-GV-MN-S-0004';
+  await query(
+    `INSERT INTO students (
+      id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+      phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
+      admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status
+    ) VALUES ($1, $2, $2, $2, $3, $4, 'Ananya Reddy', 'stu2026004@ihms.com', '+91 9876543334', 'FEMALE', 'JNTU Hyderabad', 'Kiran Reddy', 'Father', '+91 9876500004', 'Kukatpally, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+    [s4Id, s4IhmsId, orgId, b1Id]
+  );
+
+  console.log('[Seed] Configuring Hostel Direct Payment (UPI & Bank)...');
+  await query(
+    `INSERT INTO hostel_payment_configs (
+      id, organization_id, hostel_id, owner_id,
+      upi_vpa, upi_display_name, upi_status,
+      bank_beneficiary_name, bank_account_number, bank_ifsc_code, bank_name, bank_status
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, $8, $9, $10, 'ACTIVE')`,
+    [
+      require('crypto').randomUUID(),
+      orgId,
+      b1Id,
+      ownerUserId,
+      'greenvalley@upi',
+      'Green Valley Hostels Pvt Ltd',
+      'Green Valley Hostels Pvt Ltd',
+      '50100234567890',
+      'HDFC0001234',
+      'HDFC Bank'
+    ]
+  );
+
   console.log('[Seed] Creating Fee Demands, Payments, Receipts, and Ledgers...');
   const dem1Id = require('crypto').randomUUID();
   await query(
@@ -231,8 +266,18 @@ export async function runSeed() {
       id, demand_number, organization_id, hostel_id, student_id, customer_code,
       term_name, hostel_rent, admission_fee, security_deposit, total_amount, paid_amount,
       balance_amount, due_date, status
-    ) VALUES ($1, 'DEM-10001', $2, $3, $4, 'HYD001-ST000001', 'August 2026 Fee', 8000, 1000, 5000, 14000, 14000, 0, CURRENT_TIMESTAMP + INTERVAL '7 days', 'PAID')`,
+    ) VALUES ($1, 'DEM-10001', $2, $3, $4, 'HYD001-ST000001', 'August 2026 Fee', 8000, 1000, 5000, 14000, 14000, 0, CURRENT_TIMESTAMP - INTERVAL '15 days', 'PAID')`,
     [dem1Id, orgId, b1Id, s1Id]
+  );
+
+  const dem2Id = require('crypto').randomUUID();
+  await query(
+    `INSERT INTO fee_demands (
+      id, demand_number, organization_id, hostel_id, student_id, customer_code,
+      term_name, hostel_rent, admission_fee, security_deposit, total_amount, paid_amount,
+      balance_amount, due_date, status
+    ) VALUES ($1, 'DEM-10002', $2, $3, $4, 'HYD001-ST000001', 'September 2026 Fee', 8000, 0, 0, 8000, 0, 8000, CURRENT_TIMESTAMP + INTERVAL '7 days', 'UNPAID')`,
+    [dem2Id, orgId, b1Id, s1Id]
   );
 
   const pay1Id = require('crypto').randomUUID();
@@ -258,8 +303,36 @@ export async function runSeed() {
       id, receipt_number, payment_number, organization_id, hostel_id, student_id,
       customer_code, student_name, room_number, bed_number, fee_type, installment_month,
       amount, payment_method, remaining_balance, issued_by, qr_payload, notes
-    ) VALUES ($1, $2, 'PAY-10001', $3, $4, $5, 'HYD001-ST000001', 'Rahul Kumar', '101', 'HYD001-R101-B01', 'Hostel Fee Payment', 'August 2026', 14000, 'UPI', 0, 'Suresh Rao (Accountant)', $6, 'Full payment on admission')`,
+    ) VALUES ($1, $2, 'PAY-10001', $3, $4, $5, 'HYD001-ST000001', 'Rahul Kumar', '101', 'HYD001-R101-B01', 'Hostel Fee Payment', 'August 2026', 14000, 'UPI', 8000, 'Suresh Rao (Accountant)', $6, 'Full payment on admission')`,
     [require('crypto').randomUUID(), receiptNumber, orgId, b1Id, s1Id, qrPayload]
+  );
+
+  const accountId = require('crypto').randomUUID();
+  await query(
+    `INSERT INTO fee_accounts (
+      id, organization_id, hostel_id, student_id, customer_code, payment_plan,
+      total_fee, total_paid, balance_amount, monthly_amount, number_of_installments,
+      paid_installments, start_month, status, allow_advance_payment
+    ) VALUES ($1, $2, $3, $4, 'HYD001-ST000001', 'MONTHLY', 22000, 14000, 8000, 8000, 2, 1, 'August 2026', 'ACTIVE', true)`,
+    [accountId, orgId, b1Id, s1Id]
+  );
+
+  const inst1Id = require('crypto').randomUUID();
+  await query(
+    `INSERT INTO fee_installments (
+      id, fee_account_id, organization_id, hostel_id, student_id, customer_code,
+      installment_number, month_name, due_date, amount, paid_amount, balance_amount, status, payment_id, receipt_number
+    ) VALUES ($1, $2, $3, $4, $5, 'HYD001-ST000001', 1, 'August 2026', CURRENT_TIMESTAMP - INTERVAL '15 days', 14000, 14000, 0, 'PAID', $6, $7)`,
+    [inst1Id, accountId, orgId, b1Id, s1Id, pay1Id, receiptNumber]
+  );
+
+  const inst2Id = require('crypto').randomUUID();
+  await query(
+    `INSERT INTO fee_installments (
+      id, fee_account_id, organization_id, hostel_id, student_id, customer_code,
+      installment_number, month_name, due_date, amount, paid_amount, balance_amount, status
+    ) VALUES ($1, $2, $3, $4, $5, 'HYD001-ST000001', 2, 'September 2026', CURRENT_TIMESTAMP + INTERVAL '7 days', 8000, 0, 8000, 'PENDING')`,
+    [inst2Id, accountId, orgId, b1Id, s1Id]
   );
 
   console.log('[Seed] Creating Sample Expenses & Vouchers...');
@@ -307,6 +380,11 @@ export async function runSeed() {
       `${orgId}_HYD001-CMP`,
       `${orgId}_HYD001-EMP`
     ]
+  );
+
+  // Set default terms acceptance for active seeded demo users
+  await query(
+    "UPDATE users SET terms_accepted = true, accepted_terms_version = '1.0', terms_accepted_at = CURRENT_TIMESTAMP WHERE status = 'ACTIVE'"
   );
 
   console.log('===========================================================');

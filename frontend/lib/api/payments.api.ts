@@ -46,6 +46,7 @@ export const paymentsApi = {
 
   getReceiptPdfUrl: (paymentId: string) => {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://localhost:5000/api';
-    return `${baseUrl}/payments/${paymentId}/receipt/pdf`;
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('ihms_access_token') : null;
+    return `${baseUrl}/payments/${paymentId}/receipt/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   },
 };

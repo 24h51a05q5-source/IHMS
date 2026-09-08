@@ -141,6 +141,22 @@ router.post(
   }
 );
 
+// GET /fees/student/payment-initiation (or /payments/zero-gateway/details)
+const handleGetPaymentDetails = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const isStaff = req.user!.role !== UserRole.STUDENT;
+    const studentId = isStaff && req.query.studentId
+      ? String(req.query.studentId)
+      : (req.user!.studentId || (req.user as any).customerCode || (req.user as any).ihmsId || req.user!.id);
+    const amount = req.query.amount ? Number(req.query.amount) : undefined;
+    const result = await zeroGatewayPaymentService.getStudentHostelPaymentInfo(req.user!.organizationId, studentId, amount);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+};
+router.get('/student/payment-initiation', handleGetPaymentDetails);
+router.get('/payments/zero-gateway/details', handleGetPaymentDetails);
+
 // GET /fees/student/:studentId (Full Fee Account & Installments Details)
 router.get('/student/:studentId', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -246,7 +262,7 @@ router.get('/payments', async (req: Request, res: Response, next: NextFunction) 
              p.receipt_number as "receiptNo", p.received_by as "receivedBy", p.notes,
              p.created_at as "timestamp", p.created_at as "date", p.created_at as "createdAt",
              s.full_name as "studentName", r.room_number as "roomNumber", b.bed_code as "bedNumber",
-             rc.fee_type as "feeType"
+             rc.fee_type as "feeType", rc.installment_month as "installmentMonth"
       FROM payments p
       LEFT JOIN students s ON s.id = p.student_id
       LEFT JOIN rooms r ON r.id = s.room_id
@@ -313,7 +329,7 @@ router.get('/payments/student/:studentId', async (req: Request, res: Response, n
               p.receipt_number as "receiptNo", p.received_by as "receivedBy", p.notes,
               p.created_at as "timestamp", p.created_at as "date", p.created_at as "createdAt",
               s.full_name as "studentName", r.room_number as "roomNumber", b.bed_code as "bedNumber",
-              rc.fee_type as "feeType"
+              rc.fee_type as "feeType", rc.installment_month as "installmentMonth"
        FROM payments p
        LEFT JOIN students s ON s.id = p.student_id
        LEFT JOIN rooms r ON r.id = s.room_id
@@ -409,20 +425,6 @@ router.post('/payments/initiate', async (req: Request, res: Response, next: Next
     res.status(201).json({ success: true, data: order, message: 'Payment order created.' });
   } catch (err) { next(err); }
 });
-
-// GET /payments/zero-gateway/details (or /student/payment-initiation)
-const handleGetPaymentDetails = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
-    const isStaff = req.user!.role !== UserRole.STUDENT;
-    const studentId = isStaff && req.query.studentId ? String(req.query.studentId) : (req.user!.studentId || req.user!.id);
-    const amount = req.query.amount ? Number(req.query.amount) : undefined;
-    const result = await zeroGatewayPaymentService.getStudentHostelPaymentInfo(req.user!.organizationId, studentId, amount);
-    res.json({ success: true, data: result });
-  } catch (err) { next(err); }
-};
-router.get('/payments/zero-gateway/details', handleGetPaymentDetails);
-router.get('/student/payment-initiation', handleGetPaymentDetails);
 
 // POST /payments/zero-gateway/submit (or /student/submit-payment)
 const handleSubmitPayment = async (req: Request, res: Response, next: NextFunction) => {
@@ -629,64 +631,7 @@ router.post(
 router.get('/payments/:id/receipt', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const orgId = req.user!.organizationId;
-    const payment = await queryOne<any>(
-      'SELECT * FROM payments WHERE (id = $1 OR payment_number = $1) AND organization_id = $2',
-      [req.params.id, orgId]
-    );
-    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' });
-
-    let receipt = await queryOne<any>(
-      'SELECT * FROM receipts WHERE (payment_id = $1 OR payment_number = $2) AND organization_id = $3',
-      [payment.id, payment.payment_number, orgId]
-    );
-
-    if (!receipt) {
-      const student = await queryOne<any>('SELECT * FROM students WHERE id = $1', [payment.student_id]);
-      receipt = {
-        id: payment.id,
-        _id: payment.id,
-        receiptNumber: payment.receipt_number || payment.payment_number,
-        paymentId: payment.id,
-        paymentNumber: payment.payment_number,
-        organizationId: payment.organization_id,
-        branchId: payment.hostel_id,
-        hostelName: 'IHMS Hostel',
-        studentId: payment.student_id,
-        customerCode: payment.customer_code || student?.customer_code || '',
-        studentName: student?.full_name || 'Student',
-        amount: Number(payment.amount),
-        remainingBalance: 0,
-        paymentMethod: payment.payment_method,
-        paymentStatus: payment.status,
-        transactionRef: payment.transaction_ref,
-        issuedBy: payment.received_by,
-        issuedAt: payment.created_at,
-        qrPayload: `IHMS-REC:${payment.payment_number}`,
-      };
-    } else {
-      receipt = {
-        id: receipt.id,
-        _id: receipt.id,
-        receiptNumber: receipt.receipt_number,
-        paymentId: receipt.payment_id || payment.id,
-        paymentNumber: receipt.payment_number,
-        organizationId: receipt.organization_id,
-        branchId: receipt.hostel_id,
-        hostelName: 'IHMS Hostel',
-        studentId: receipt.student_id,
-        customerCode: receipt.customer_code,
-        studentName: receipt.student_name,
-        amount: Number(receipt.amount),
-        remainingBalance: Number(receipt.remaining_balance || 0),
-        paymentMethod: receipt.payment_method,
-        paymentStatus: 'SUCCESS',
-        transactionRef: payment.transaction_ref,
-        issuedBy: receipt.issued_by,
-        issuedAt: receipt.issued_at || receipt.created_at,
-        qrPayload: receipt.qr_payload,
-      };
-    }
-
+    const receipt = await feeService.getReceiptByPaymentId(orgId, req.params.id);
     res.json({
       success: true,
       data: receipt,

@@ -7,6 +7,7 @@ import { getNextReceiptNumber } from './receipt-sequence';
 import { emitRealTimeEvent } from '../../events/events.gateway';
 import { PaymentMethod } from '../../config/constants';
 import { PaymentProviderFactory } from './provider-factory';
+import { notificationService } from '../notifications/notification.service';
 
 export interface IInitiateZeroGatewayPaymentResponse {
   configured: boolean;
@@ -67,7 +68,7 @@ export class ZeroGatewayPaymentService {
       `SELECT s.id, s.customer_code, s.full_name, s.hostel_id, s.financial_outstanding_balance, h.name as hostel_name, h.hostel_name as alt_hostel_name
        FROM students s
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (s.id = $1 OR s.user_id = $1 OR s.customer_code = $1) AND s.organization_id = $2`,
+       WHERE (s.id = $1 OR s.user_id = $1 OR s.customer_code = $1 OR s.student_id = $1) AND s.organization_id = $2`,
       [studentUserIdOrId, orgId]
     );
 
@@ -75,22 +76,56 @@ export class ZeroGatewayPaymentService {
       throw new AppError('Student profile not found in your organization.', 404);
     }
 
-    if (!student.hostel_id) {
-      throw new AppError('Student is not currently assigned to a hostel branch.', 400);
+    let hostelId = student.hostel_id;
+    if (!hostelId) {
+      const defaultHostel = await queryOne<any>(
+        `SELECT id, name, hostel_name FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1`,
+        [orgId]
+      );
+      if (defaultHostel) {
+        hostelId = defaultHostel.id;
+      }
     }
 
     const hostelName = student.hostel_name || student.alt_hostel_name || 'Hostel';
-    const config = await hostelPaymentConfigService.getByHostelId(orgId, student.hostel_id);
+    const config = await hostelPaymentConfigService.getByHostelId(orgId, hostelId || student.hostel_id);
 
-    if (!config || (!config.upiConfig.vpaAddress && !config.bankConfig.accountNumber)) {
+    // Build UPI Payload if active
+    let upiPayload: any = null;
+    const isUpiActive = Boolean(config?.upiConfig?.vpaAddress && (config.upiConfig.status === 'ACTIVE' || config.upiConfig.status === 'VERIFIED' || config.upiConfig.status === 'OWNER_CONFIRMED'));
+    if (isUpiActive && config?.upiConfig?.vpaAddress) {
+      upiPayload = {
+        vpaAddress: config.upiConfig.vpaAddress,
+        displayName: config.upiConfig.displayName || hostelName,
+        intentUrl: '',
+        qrDataUrl: '',
+      };
+    }
+
+    // Build Bank Payload if active
+    let bankPayload: any = null;
+    const isBankActive = Boolean(config?.bankConfig?.accountNumber && (config.bankConfig.status === 'ACTIVE' || config.bankConfig.status === 'VERIFIED' || config.bankConfig.status === 'OWNER_CONFIRMED'));
+    if (isBankActive && config?.bankConfig) {
+      bankPayload = {
+        beneficiaryName: config.bankConfig.beneficiaryName || hostelName,
+        accountNumber: config.bankConfig.accountNumber,
+        maskedAccountNumber: config.bankConfig.maskedAccountNumber,
+        ifscCode: config.bankConfig.ifscCode,
+        bankName: config.bankConfig.bankName,
+      };
+    }
+
+    const isConfigured = Boolean(isUpiActive || isBankActive);
+
+    if (!config || !isConfigured) {
       return {
         configured: false,
-        message: `Payment configuration has not been completed by ${hostelName} administration yet. Please contact your hostel manager.`,
+        message: 'Online payment is not configured by the hostel.',
         student: {
           id: student.id,
           customerCode: student.customer_code,
           fullName: student.full_name,
-          hostelId: student.hostel_id,
+          hostelId: student.hostel_id || hostelId,
           hostelName,
         },
         paymentDetails: {
@@ -106,8 +141,25 @@ export class ZeroGatewayPaymentService {
     const outstanding = Number(student.financial_outstanding_balance || 0);
     const amountToPay = requestedAmount && requestedAmount > 0 ? Number(requestedAmount) : outstanding;
 
+    // If no positive amount was requested, return the available configuration without generating a pending payment order
     if (!amountToPay || amountToPay <= 0) {
-      throw new AppError('Fee amount must be greater than ₹0.', 400);
+      return {
+        configured: true,
+        student: {
+          id: student.id,
+          customerCode: student.customer_code,
+          fullName: student.full_name,
+          hostelId: student.hostel_id || hostelId,
+          hostelName,
+        },
+        paymentDetails: {
+          amount: 0,
+          expectedAmount: 0,
+          transactionNote: 'Fee Payment',
+          upi: upiPayload,
+          bank: bankPayload,
+        },
+      };
     }
 
     // Generate unique internal IHMS payment reference
@@ -153,29 +205,9 @@ export class ZeroGatewayPaymentService {
       ]
     );
 
-    // Build UPI Payload if active
-    let upiPayload = null;
-    const isUpiActive = config.upiConfig.vpaAddress && (config.upiConfig.status === 'ACTIVE' || config.upiConfig.status === 'VERIFIED' || config.upiConfig.status === 'OWNER_CONFIRMED');
-    if (isUpiActive) {
-      upiPayload = {
-        vpaAddress: config.upiConfig.vpaAddress,
-        displayName: config.upiConfig.displayName || hostelName,
-        intentUrl: qrResult.intentUrl,
-        qrDataUrl: qrResult.qrDataUrl,
-      };
-    }
-
-    // Build Bank Payload if active
-    let bankPayload = null;
-    const isBankActive = config.bankConfig.accountNumber && (config.bankConfig.status === 'ACTIVE' || config.bankConfig.status === 'VERIFIED' || config.bankConfig.status === 'OWNER_CONFIRMED');
-    if (isBankActive) {
-      bankPayload = {
-        beneficiaryName: config.bankConfig.beneficiaryName || hostelName,
-        accountNumber: config.bankConfig.accountNumber,
-        maskedAccountNumber: config.bankConfig.maskedAccountNumber,
-        ifscCode: config.bankConfig.ifscCode,
-        bankName: config.bankConfig.bankName,
-      };
+    if (upiPayload) {
+      upiPayload.intentUrl = qrResult.intentUrl;
+      upiPayload.qrDataUrl = qrResult.qrDataUrl;
     }
 
     return {
@@ -273,12 +305,21 @@ export class ZeroGatewayPaymentService {
     }
 
     const student = await queryOne<any>(
-      `SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1) AND organization_id = $2`,
+      `SELECT id, customer_code, full_name, hostel_id, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1) AND organization_id = $2`,
       [studentId, orgId]
     );
 
     if (!student) {
       throw new AppError('Student record not found.', 404);
+    }
+
+    const maxPayable = Number(student.financial_outstanding_balance || 0);
+    const feeAccount = await queryOne<any>(
+      'SELECT allow_advance_payment FROM fee_accounts WHERE student_id = $1 AND organization_id = $2',
+      [student.id, orgId]
+    );
+    if (maxPayable <= 0 && !feeAccount?.allow_advance_payment) {
+      throw new AppError('Your fees are already fully paid. No outstanding balance due.', 400);
     }
 
     // Check for existing UTR in database to prevent replay attacks
@@ -345,6 +386,29 @@ export class ZeroGatewayPaymentService {
         },
         { branchId: student.hostel_id }
       );
+
+      // Notify Owner for verification
+      notificationService.notifyOwner(orgId, {
+        branchId: student.hostel_id,
+        title: 'Payment Verification Required',
+        message: `${student.full_name} (${student.customer_code}) submitted a payment of ₹${amount} via ${input.paymentMethod} (UTR: ${cleanUtr}) for verification.`,
+        type: 'INFO',
+        link: '/finance',
+        entityType: 'PAYMENT',
+        entityId: paymentRecord.id,
+      }).catch(() => {});
+
+      // Notify Student of submission acknowledgement
+      notificationService.notifyStudent(student.id, {
+        organizationId: orgId,
+        branchId: student.hostel_id,
+        title: 'Payment Under Verification',
+        message: `Your payment of ₹${amount} (UTR: ${cleanUtr}) has been submitted and is awaiting hostel administration verification.`,
+        type: 'INFO',
+        link: '/student/fees',
+        entityType: 'PAYMENT',
+        entityId: paymentRecord.id,
+      }).catch(() => {});
 
       return {
         payment: {
@@ -589,6 +653,29 @@ export class ZeroGatewayPaymentService {
 
       emitRealTimeEvent('fee.updated', { studentId }, { branchId: payment.hostel_id });
 
+      // Notify Student that payment is verified and receipt is ready
+      notificationService.notifyStudent(studentId, {
+        organizationId: orgId,
+        branchId: payment.hostel_id,
+        title: 'Payment Verified',
+        message: `Your payment of ₹${amount} (Ref: ${payment.transaction_ref}) has been verified! Receipt #${receiptNumber} generated.`,
+        type: 'SUCCESS',
+        link: '/student/fees',
+        entityType: 'PAYMENT',
+        entityId: payment.id,
+      }).catch(() => {});
+
+      // Notify Owner
+      notificationService.notifyOwner(orgId, {
+        branchId: payment.hostel_id,
+        title: 'Payment Verified',
+        message: `Payment of ₹${amount} for ${student?.full_name || payment.customer_code} was verified by ${verifierName}.`,
+        type: 'SUCCESS',
+        link: '/finance',
+        entityType: 'PAYMENT',
+        entityId: payment.id,
+      }).catch(() => {});
+
       return {
         success: true,
         receiptNumber,
@@ -631,20 +718,17 @@ export class ZeroGatewayPaymentService {
       [reason, rejectedBy, payment.id, orgId]
     );
 
-    // Notify student
-    const notifId = require('crypto').randomUUID();
-    await query(
-      `INSERT INTO notifications (id, organization_id, branch_id, user_id, role, title, message, type)
-       VALUES ($1, $2, $3, $4, 'STUDENT', $5, $6, 'WARNING')`,
-      [
-        notifId,
-        orgId,
-        payment.hostel_id,
-        payment.student_id,
-        'Payment Submission Rejected',
-        `Your payment submission (Ref: ${payment.transaction_ref || payment.payment_number}) was rejected. Reason: ${reason}`,
-      ]
-    );
+    // Notify student via notificationService
+    await notificationService.notifyStudent(payment.student_id, {
+      organizationId: orgId,
+      branchId: payment.hostel_id,
+      title: 'Payment Submission Rejected',
+      message: `Your payment submission (Ref: ${payment.transaction_ref || payment.payment_number}) was rejected. Reason: ${reason}`,
+      type: 'WARNING',
+      link: '/student/fees',
+      entityType: 'PAYMENT',
+      entityId: payment.id,
+    });
 
     emitRealTimeEvent(
       'payment.rejected',

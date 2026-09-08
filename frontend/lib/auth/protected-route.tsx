@@ -22,6 +22,18 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
     if (!pathname) return;
 
+    // Mandatory Terms & Conditions acceptance enforcement
+    if (!user.termsAccepted && pathname !== '/terms') {
+      router.replace('/terms');
+      return;
+    }
+
+    // If user already accepted terms and visits /terms, route to their dashboard
+    if (user.termsAccepted && pathname === '/terms') {
+      router.replace(user.role === 'STUDENT' ? '/student/dashboard' : '/dashboard');
+      return;
+    }
+
     // First-login mandatory password change enforcement
     if (user.mustChangePassword && pathname !== '/student/change-password') {
       router.replace('/student/change-password');
@@ -30,7 +42,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
     // If user already changed password and visits /student/change-password, send them to appropriate dashboard
     if (!user.mustChangePassword && pathname === '/student/change-password') {
-      router.replace(user.role === 'STUDENT' ? '/student' : '/dashboard');
+      router.replace(user.role === 'STUDENT' ? '/student/dashboard' : '/dashboard');
       return;
     }
 
@@ -78,6 +90,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (loading) return <FullScreenLoader />;
   if (!user) return <FullScreenLoader label="Redirecting to sign in" />;
+  if (!user.termsAccepted && pathname !== '/terms') {
+    return <FullScreenLoader label="Redirecting to Terms & Conditions" />;
+  }
   return <>{children}</>;
 }
 

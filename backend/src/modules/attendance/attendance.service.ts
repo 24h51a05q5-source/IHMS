@@ -4,6 +4,7 @@ import { generateLeaveNumber } from '../../common/utils/code-generator';
 import { generateQrDataUrl } from '../../common/utils/qr-generator';
 import { LeaveStatus } from '../../config/constants';
 import { emitRealTimeEvent } from '../../events/events.gateway';
+import { notificationService } from '../notifications/notification.service';
 
 export class AttendanceService {
   async markBatchAttendance(orgId: string, branchId: string, records: any[], markedBy: string) {
@@ -107,6 +108,29 @@ export class AttendanceService {
       branchId: student.hostel_id,
     }, { branchId: student.hostel_id });
 
+    // Notify Owner
+    await notificationService.notifyOwner(orgId, {
+      branchId: student.hostel_id,
+      title: `New Leave Request: ${student.full_name}`,
+      message: `${student.full_name} (${student.customer_code}) applied for leave from ${new Date(data.startDate).toLocaleDateString()} to ${new Date(data.endDate).toLocaleDateString()}.${data.reason ? ` Reason: ${data.reason}` : ''}`,
+      type: 'INFO',
+      link: '/attendance',
+      entityType: 'LEAVE',
+      entityId: leave.id,
+    }).catch(() => {});
+
+    // Notify Student
+    await notificationService.notifyStudent(student.id, {
+      organizationId: orgId,
+      branchId: student.hostel_id,
+      title: `Leave Request Submitted #${leave.leaveNumber}`,
+      message: `Your leave request #${leave.leaveNumber} has been submitted for warden approval.`,
+      type: 'INFO',
+      link: '/student/leave',
+      entityType: 'LEAVE',
+      entityId: leave.id,
+    }).catch(() => {});
+
     return leave;
   }
 
@@ -155,6 +179,29 @@ export class AttendanceService {
       status,
       gatePassCode: updated.gatePassCode,
     }, { branchId: updated.branchId });
+
+    // Notify Student
+    await notificationService.notifyStudent(leave.student_id, {
+      organizationId: orgId,
+      branchId: leave.branch_id,
+      title: `Leave Request ${status === LeaveStatus.APPROVED ? 'Approved' : 'Rejected'}`,
+      message: `Your leave request #${leave.leave_number} has been ${status.toLowerCase()}${status === LeaveStatus.APPROVED ? '. Your gate pass is ready.' : '.'}`,
+      type: status === LeaveStatus.APPROVED ? 'SUCCESS' : 'WARNING',
+      link: '/student/leave',
+      entityType: 'LEAVE',
+      entityId: leave.id,
+    }).catch(() => {});
+
+    // Notify Owner
+    await notificationService.notifyOwner(orgId, {
+      branchId: leave.branch_id,
+      title: `Leave Request ${status === LeaveStatus.APPROVED ? 'Approved' : 'Rejected'}`,
+      message: `Leave request #${leave.leave_number} for ${leave.student_name} was ${status.toLowerCase()} by ${reviewedBy}.`,
+      type: 'INFO',
+      link: '/attendance',
+      entityType: 'LEAVE',
+      entityId: leave.id,
+    }).catch(() => {});
 
     return updated;
   }

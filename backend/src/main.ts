@@ -27,7 +27,9 @@ import { visitorRouter } from './modules/visitors/visitor.controller';
 import { complaintRouter } from './modules/complaints/complaint.controller';
 import { announcementRouter } from './modules/announcements/announcement.controller';
 import { userRouter } from './modules/users/user.controller';
+import { notificationRouter } from './modules/notifications/notification.controller';
 import { supportRouter } from './modules/support/support.controller';
+import { termsRouter } from './modules/terms/terms.controller';
 
 const app: Application = express();
 const server = http.createServer(app);
@@ -109,6 +111,9 @@ app.get('/health', healthHandler);
 app.get('/api/health', healthHandler);
 
 // Mount Module Routers (Supports both /... and /api/... endpoints)
+app.use('/terms', termsRouter);
+app.use('/api/terms', termsRouter);
+
 app.use('/auth', authRouter);
 app.use('/api/auth', authRouter);
 
@@ -205,14 +210,8 @@ app.use('/api/student/announcements', (req, res, next) => {
   announcementRouter(req, res, next);
 });
 
-app.use('/notifications', (req, res, next) => {
-  req.url = '/notifications' + (req.url === '/' ? '' : req.url);
-  userRouter(req, res, next);
-});
-app.use('/api/notifications', (req, res, next) => {
-  req.url = '/notifications' + (req.url === '/' ? '' : req.url);
-  userRouter(req, res, next);
-});
+app.use('/notifications', notificationRouter);
+app.use('/api/notifications', notificationRouter);
 
 app.use('/users', userRouter);
 app.use('/api/users', userRouter);
