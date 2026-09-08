@@ -13,7 +13,7 @@ router.post(
       const ticket = await supportService.createTicket(req.user, req.body);
       res.status(201).json({
         success: true,
-        message: 'Your issue has been submitted successfully. Our support team will contact you soon.',
+        message: 'Your support request has been submitted successfully. Our support team will review your request.',
         ticket,
       });
     } catch (error) {
@@ -31,7 +31,7 @@ router.post(
       const ticket = await supportService.createTicket(req.user, req.body);
       res.status(201).json({
         success: true,
-        message: 'Your issue has been submitted successfully. Our support team will contact you soon.',
+        message: 'Your support request has been submitted successfully. Our support team will review your request.',
         ticket,
       });
     } catch (error) {

@@ -1,13 +1,14 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { termsService } from './terms.service';
-import { authenticate } from '../../common/guards/auth.guard';
+import { authenticate, optionalAuthenticate } from '../../common/guards/auth.guard';
 
 const router = Router();
 
 // GET /terms or /api/terms (Public or Authenticated)
-router.get('/', (req: Request, res: Response, next: NextFunction) => {
+router.get('/', optionalAuthenticate, (req: Request, res: Response, next: NextFunction) => {
   try {
-    const role = (req.query.role as string) || (req.user?.role as string) || undefined;
+    // Authenticated role ALWAYS takes strict precedence over query params to prevent spoofing
+    const role = (req.user?.role as string) || (req.query.role as string) || undefined;
     const termsData = termsService.getTerms(role);
     res.json({
       success: true,

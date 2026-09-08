@@ -1,6 +1,7 @@
 import { query, queryOne, queryRows } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { generateTicketNumber } from '../../common/utils/code-generator';
+import { emailService } from '../../common/utils/email.service';
 import { emitRealTimeEvent } from '../../events/events.gateway';
 
 export interface CreateSupportTicketInput {
@@ -10,6 +11,7 @@ export interface CreateSupportTicketInput {
   email?: string;
   subject: string;
   category: string;
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   description: string;
   screenshotUrl?: string;
 }
@@ -44,12 +46,14 @@ export class SupportService {
     const email = data.email?.trim() || currentUser?.email || 'support@hostel.local';
     const hostelName = data.hostelName?.trim() || currentUser?.hostelName || '';
     const userId = currentUser?.id || currentUser?.userId || null;
+    const priority = data.priority || 'MEDIUM';
 
+    // 1. Insert ticket first so the request is safely recorded and NEVER lost
     const ticket = await queryOne<any>(
       `INSERT INTO support_tickets (
         id, ticket_number, organization_id, user_id, user_name, user_role,
-        hostel_name, email, subject, category, description, screenshot_url, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'OPEN')
+        hostel_name, email, subject, category, priority, description, screenshot_url, status, email_status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'OPEN', 'PENDING')
       RETURNING
         id,
         id as "_id",
@@ -63,9 +67,11 @@ export class SupportService {
         email,
         subject,
         category,
+        priority,
         description,
         screenshot_url as "screenshotUrl",
         status,
+        email_status as "emailStatus",
         resolution_notes as "resolutionNotes",
         resolved_by as "resolvedBy",
         resolved_at as "resolvedAt",
@@ -82,10 +88,42 @@ export class SupportService {
         email,
         data.subject.trim(),
         data.category.trim(),
+        priority,
         data.description.trim(),
         data.screenshotUrl || null,
       ]
     );
+
+    // 2. Dispatch email to ihmserp00@gmail.com with Reply-To set to user's email
+    try {
+      await emailService.sendSupportEmail({
+        ticketNumber: ticket.ticketNumber,
+        userName: ticket.userName,
+        userRole: ticket.userRole,
+        hostelName: ticket.hostelName,
+        userEmail: ticket.email,
+        category: ticket.category,
+        priority: ticket.priority,
+        subject: ticket.subject,
+        description: ticket.description,
+        screenshotUrl: ticket.screenshotUrl,
+        submittedAt: new Date(ticket.createdAt || Date.now()),
+      });
+
+      await query(
+        `UPDATE support_tickets SET email_status = 'SENT', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [ticket.id]
+      );
+      ticket.emailStatus = 'SENT';
+    } catch (err: any) {
+      console.error(`[SUPPORT] ❌ Failed to dispatch support email for #${ticket.ticketNumber}:`, err?.message);
+      await query(
+        `UPDATE support_tickets SET email_status = 'FAILED', resolution_notes = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [ticket.id, `Email dispatch error: ${err?.message || 'Delivery failure'}`]
+      );
+      ticket.emailStatus = 'FAILED';
+      throw new AppError('Your support request could not be sent. Please try again.', 500);
+    }
 
     // Broadcast real-time support event to admins/organization
     try {
@@ -119,9 +157,11 @@ export class SupportService {
         email,
         subject,
         category,
+        priority,
         description,
         screenshot_url as "screenshotUrl",
         status,
+        email_status as "emailStatus",
         resolution_notes as "resolutionNotes",
         resolved_by as "resolvedBy",
         resolved_at as "resolvedAt",
@@ -168,9 +208,11 @@ export class SupportService {
         email,
         subject,
         category,
+        priority,
         description,
         screenshot_url as "screenshotUrl",
         status,
+        email_status as "emailStatus",
         resolution_notes as "resolutionNotes",
         resolved_by as "resolvedBy",
         resolved_at as "resolvedAt",
@@ -230,9 +272,11 @@ export class SupportService {
         email,
         subject,
         category,
+        priority,
         description,
         screenshot_url as "screenshotUrl",
         status,
+        email_status as "emailStatus",
         resolution_notes as "resolutionNotes",
         resolved_by as "resolvedBy",
         resolved_at as "resolvedAt",

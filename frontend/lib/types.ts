@@ -554,6 +554,8 @@ export type SupportTicketCategory =
   | 'Technical Issue'
   | 'Other';
 
+export type SupportTicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+
 export type SupportTicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
 
 export interface SupportTicket {
@@ -569,9 +571,11 @@ export interface SupportTicket {
   email: string;
   subject: string;
   category: string;
+  priority?: SupportTicketPriority;
   description: string;
   screenshotUrl?: string;
   status: SupportTicketStatus;
+  emailStatus?: string;
   resolutionNotes?: string;
   resolvedBy?: string;
   resolvedAt?: string;
@@ -586,6 +590,7 @@ export interface CreateSupportTicketDto {
   email?: string;
   subject: string;
   category: SupportTicketCategory | string;
+  priority?: SupportTicketPriority | string;
   description: string;
   screenshotUrl?: string;
 }
@@ -609,6 +614,9 @@ export interface TermsContent {
   effectiveDate: string;
   lastUpdated: string;
   currentVersion: string;
+  roleTitle?: string;
+  roleDescription?: string;
+  targetRole?: string;
   totalSections: number;
   sections: TermsSection[];
 }

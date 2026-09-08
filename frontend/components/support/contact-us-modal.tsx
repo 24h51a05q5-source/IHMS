@@ -51,6 +51,7 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
 
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState<string>('');
+  const [priority, setPriority] = useState<string>('MEDIUM');
   const [description, setDescription] = useState('');
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -82,6 +83,7 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
     if (open) {
       setSubject('');
       setCategory('');
+      setPriority('MEDIUM');
       setDescription('');
       setScreenshotUrl(null);
       setFileName(null);
@@ -149,17 +151,20 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
         email,
         subject: subject.trim(),
         category,
+        priority: priority as any,
         description: description.trim(),
         screenshotUrl: screenshotUrl || undefined,
       });
 
       const ticket = res.ticket;
       setCreatedTicket(ticket);
-      toast.success('Your issue has been submitted successfully.');
+      toast.success(`Support request submitted. Ticket ID: ${ticket.ticketNumber || ticket.ticketId}`);
       onTicketSubmitted?.(ticket);
     } catch (err: any) {
-      setError(err?.message || 'Failed to submit support request. Please try again.');
-      toast.error(err?.message || 'Failed to submit support request.');
+      const msg = err?.message || 'Your support request could not be sent. Please try again.';
+      setError(msg);
+      toast.error(msg);
+      // Do NOT show success — form data is preserved for retry
     } finally {
       setSubmitting(false);
     }
@@ -218,18 +223,18 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
 
               <div className="space-y-1.5">
                 <h3 className="text-lg font-black text-[#111827]">
-                  Support Ticket Created
+                  Your support request has been submitted successfully.
                 </h3>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#FAFAF7] border border-[#CBD5E1]">
-                  <span className="text-xs font-semibold text-[#64748B]">Ticket ID:</span>
-                  <span className="text-sm font-black font-mono text-[#E87545]">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FFF7ED] border border-[#FFEDD5]">
+                  <span className="text-xs font-semibold text-[#9A3412]">Ticket ID:</span>
+                  <span className="text-base font-black font-mono text-[#E87545]">
                     {createdTicket.ticketNumber || createdTicket.ticketId}
                   </span>
                 </div>
               </div>
 
               <p className="text-sm font-medium text-[#334155] max-w-md mx-auto leading-relaxed bg-[#F8FAFC] p-3.5 rounded-xl border border-[#CBD5E1]">
-                “Your issue has been submitted successfully. Our support team will contact you soon.”
+                Our support team will review your request and contact you at <strong>{createdTicket.email}</strong>.
               </p>
 
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -321,6 +326,27 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
                         {cat}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Priority */}
+              <div className="space-y-1.5">
+                <Label htmlFor="priority" className="text-xs font-bold text-[#111827]">
+                  Priority
+                </Label>
+                <Select value={priority} onValueChange={setPriority} disabled={submitting}>
+                  <SelectTrigger
+                    id="priority"
+                    className="bg-white border-[#CBD5E1] text-xs sm:text-sm font-semibold"
+                  >
+                    <SelectValue placeholder="Select priority" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white border-[#E4E0D7]">
+                    <SelectItem value="LOW" className="text-xs sm:text-sm font-semibold py-2">Low — Informational or minor issue</SelectItem>
+                    <SelectItem value="MEDIUM" className="text-xs sm:text-sm font-semibold py-2">Medium — Standard issue (default)</SelectItem>
+                    <SelectItem value="HIGH" className="text-xs sm:text-sm font-semibold py-2">High — Blocking my work</SelectItem>
+                    <SelectItem value="URGENT" className="text-xs sm:text-sm font-bold py-2 text-[#991B1B]">Urgent — Critical / cannot access account</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

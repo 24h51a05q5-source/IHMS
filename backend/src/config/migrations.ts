@@ -725,9 +725,11 @@ export async function runMigrations(): Promise<void> {
       email TEXT NOT NULL,
       subject TEXT NOT NULL,
       category TEXT NOT NULL,
+      priority TEXT DEFAULT 'MEDIUM',
       description TEXT NOT NULL,
       screenshot_url TEXT,
       status TEXT DEFAULT 'OPEN',
+      email_status TEXT DEFAULT 'SENT',
       resolution_notes TEXT,
       resolved_by TEXT,
       resolved_at TIMESTAMPTZ,
@@ -741,6 +743,8 @@ export async function runMigrations(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_support_tickets_number ON support_tickets(ticket_number)`,
     `CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status)`,
     `CREATE INDEX IF NOT EXISTS idx_support_tickets_created ON support_tickets(created_at DESC)`,
+    `ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'MEDIUM'`,
+    `ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS email_status TEXT DEFAULT 'SENT'`,
     `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
     `CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id)`,
@@ -892,28 +896,6 @@ export async function runMigrations(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_user ON terms_acceptances(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_ver ON terms_acceptances(terms_version)`,
-    `CREATE TABLE IF NOT EXISTS owner_ai_preferences (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      owner_id TEXT NOT NULL,
-      pref_key TEXT NOT NULL,
-      pref_value TEXT NOT NULL,
-      category TEXT DEFAULT 'TERMINOLOGY',
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_owner_ai_pref_owner ON owner_ai_preferences(organization_id, owner_id)`,
-    `CREATE TABLE IF NOT EXISTS ai_confirmation_tokens (
-      id TEXT PRIMARY KEY,
-      organization_id TEXT NOT NULL,
-      owner_id TEXT NOT NULL,
-      action_type TEXT NOT NULL,
-      action_payload TEXT NOT NULL,
-      status TEXT DEFAULT 'PENDING',
-      expires_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_ai_conf_tokens_owner ON ai_confirmation_tokens(organization_id, owner_id, status)`,
   ];
 
   for (const stmt of statements) {

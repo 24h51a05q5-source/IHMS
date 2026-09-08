@@ -139,10 +139,10 @@ export async function generateHostelOrgId(): Promise<string> {
 export async function generateTicketNumber(
   organizationId: string = 'GLOBAL'
 ): Promise<string> {
-  const year = new Date().getFullYear();
-  const prefix = `TKT-${year}`;
-  const seq = await getNextSequence(organizationId || 'GLOBAL', prefix);
-  return `${prefix}-${String(seq).padStart(5, '0')}`;
+  const prefix = 'IHMS';
+  const seq = await getNextSequence('SYSTEM', prefix);
+  const ticketSeq = 1023 + seq;
+  return `IHMS-${ticketSeq}`;
 }
 
 export function maskEmail(email: string): string {

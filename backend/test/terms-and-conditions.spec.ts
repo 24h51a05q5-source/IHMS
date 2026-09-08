@@ -306,4 +306,30 @@ describe('Terms & Conditions System — Strict Mandatory Enforcement & Audit Tra
     expect(logoutRes.body.success).toBe(true);
     expect(logoutRes.body.message).toContain('Logged out');
   });
+
+  it('11. Query Spoofing Prevention: Authenticated user role strictly determines terms and cannot be overridden by query parameters', async () => {
+    // Authenticated student requests ?role=OWNER -> MUST receive STUDENT terms
+    const studentSpoofRes = await request(app)
+      .get('/api/terms?role=OWNER')
+      .set('Authorization', `Bearer ${studentToken}`);
+
+    expect(studentSpoofRes.status).toBe(200);
+    expect(studentSpoofRes.body.targetRole).toBe('STUDENT');
+    expect(studentSpoofRes.body.roleTitle).toContain('Student');
+    // None of the sections should be OWNER-only
+    const hasOwnerOnly = studentSpoofRes.body.sections.some((s: any) => s.applicableTo === 'OWNER');
+    expect(hasOwnerOnly).toBe(false);
+
+    // Authenticated owner requests ?role=STUDENT -> MUST receive OWNER terms
+    const ownerSpoofRes = await request(app)
+      .get('/api/terms?role=STUDENT')
+      .set('Authorization', `Bearer ${ownerToken}`);
+
+    expect(ownerSpoofRes.status).toBe(200);
+    expect(['OWNER', 'ORGANIZATION_OWNER']).toContain(ownerSpoofRes.body.targetRole);
+    expect(ownerSpoofRes.body.roleTitle).toContain('Owner');
+    const hasStudentOnly = ownerSpoofRes.body.sections.some((s: any) => s.applicableTo === 'STUDENT');
+    expect(hasStudentOnly).toBe(false);
+  });
 });
+

@@ -6,27 +6,38 @@ import {
   TERMS_EFFECTIVE_DATE,
   TERMS_LAST_UPDATED,
   TERMS_SECTIONS,
+  OWNER_TERMS_SECTIONS,
+  STUDENT_TERMS_SECTIONS,
   TermsSection,
 } from './terms.constants';
 
 export class TermsService {
   getTerms(role?: string) {
-    let sections: TermsSection[] = [...TERMS_SECTIONS];
     const normalizedRole = (role || '').toUpperCase();
+    let sections: TermsSection[];
+    let roleTitle = 'IHMS Platform Terms & Conditions';
+    let roleDescription =
+      'These Terms & Conditions govern the use of the Integrated Hostel Management System (IHMS) platform for residential hostel operations, student residency, and lodging administration.';
 
     if (normalizedRole === 'STUDENT') {
-      sections = sections.filter(
-        (s) => s.applicableTo === 'ALL' || s.applicableTo === 'STUDENT'
-      );
+      sections = [...STUDENT_TERMS_SECTIONS];
+      roleTitle = 'Student Terms & Conditions';
+      roleDescription =
+        'These Terms & Conditions govern your enrolment, residency rules, student portal access, room care, and payment obligations as a resident student in an IHMS-managed hostel.';
     } else if (
       normalizedRole === 'OWNER' ||
       normalizedRole === 'ORGANIZATION_OWNER' ||
+      normalizedRole === 'BRANCH_MANAGER' ||
+      normalizedRole === 'ADMIN' ||
       normalizedRole === 'SUPER_ADMIN' ||
       normalizedRole === 'PLATFORM_SUPER_ADMIN'
     ) {
-      sections = sections.filter(
-        (s) => s.applicableTo === 'ALL' || s.applicableTo === 'OWNER'
-      );
+      sections = [...OWNER_TERMS_SECTIONS];
+      roleTitle = 'Hostel Owner & Management Terms & Conditions';
+      roleDescription =
+        'These Terms & Conditions govern your authorization, operational responsibilities, resident management duties, fee accounting, and property listings as a registered hostel owner or management administrator.';
+    } else {
+      sections = [...TERMS_SECTIONS];
     }
 
     // Sort by order ascending
@@ -37,6 +48,9 @@ export class TermsService {
       effectiveDate: TERMS_EFFECTIVE_DATE,
       lastUpdated: TERMS_LAST_UPDATED,
       currentVersion: CURRENT_TERMS_VERSION,
+      roleTitle,
+      roleDescription,
+      targetRole: normalizedRole || 'ALL',
       totalSections: sections.length,
       sections,
     };

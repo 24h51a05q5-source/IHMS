@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authService } from './auth.service';
 import { termsService } from '../terms/terms.service';
-import { authenticate } from '../../common/guards/auth.guard';
+import { authenticate, optionalAuthenticate } from '../../common/guards/auth.guard';
 
 const router = Router();
 
@@ -102,9 +102,9 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
   } catch (err) { next(err); }
 });
 
-router.get('/terms', (req: Request, res: Response, next: NextFunction) => {
+router.get('/terms', optionalAuthenticate, (req: Request, res: Response, next: NextFunction) => {
   try {
-    const role = (req.query.role as string) || (req.user?.role as string) || undefined;
+    const role = (req.user?.role as string) || (req.query.role as string) || undefined;
     const termsData = termsService.getTerms(role);
     res.json({
       success: true,

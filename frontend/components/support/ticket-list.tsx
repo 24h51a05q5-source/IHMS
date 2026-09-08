@@ -126,12 +126,12 @@ export function TicketList({
       {/* Filters Bar */}
       <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-white p-3.5 rounded-xl border border-[#CBD5E1]">
         <div className="relative flex-1 min-w-[220px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748B]" />
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748B]" />
           <Input
             placeholder="Search by ticket ID, subject, user or email..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 bg-[#FAFAF7] border-[#CBD5E1] text-xs sm:text-sm font-semibold"
+            className="!pl-11 !sm:pl-11 pl-11 sm:pl-11 bg-[#FAFAF7] border-[#CBD5E1] text-xs sm:text-sm font-semibold text-[#111827] placeholder:text-[#64748B]"
           />
         </div>
 
@@ -226,6 +226,22 @@ export function TicketList({
                       <span className="text-xs font-bold text-[#475569] bg-[#FAFAF7] px-2 py-0.5 rounded-md border border-[#E4E0D7]">
                         {ticket.category}
                       </span>
+                      {ticket.priority && (
+                        <span
+                          className={cn(
+                            'text-[11px] font-bold px-2 py-0.5 rounded-md border',
+                            ticket.priority === 'URGENT'
+                              ? 'bg-[#FEE2E2] text-[#991B1B] border-[#FECACA]'
+                              : ticket.priority === 'HIGH'
+                              ? 'bg-[#FFEDD5] text-[#9A3412] border-[#FED7AA]'
+                              : ticket.priority === 'LOW'
+                              ? 'bg-[#F1F5F9] text-[#475569] border-[#E2E8F0]'
+                              : 'bg-[#EFF6FF] text-[#1E40AF] border-[#DBEAFE]'
+                          )}
+                        >
+                          {ticket.priority}
+                        </span>
+                      )}
                       <Badge variant={variant}>{ticket.status.replace('_', ' ')}</Badge>
                     </div>
 

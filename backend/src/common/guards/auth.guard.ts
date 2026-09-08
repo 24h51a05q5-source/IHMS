@@ -93,6 +93,30 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export function optionalAuthenticate(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  let token: string | undefined;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.query && typeof req.query.token === 'string' && req.query.token.trim()) {
+    token = req.query.token.trim();
+  }
+
+  if (token) {
+    try {
+      const secret = process.env.JWT_SECRET || 'ihms-super-secret-jwt-key-production-2026';
+      const decoded = jwt.verify(token, secret) as AuthenticatedUser;
+      req.user = decoded;
+    } catch {
+      // Ignore token decode failures for optional authentication
+    }
+  }
+
+  next();
+}
+
+
 export async function ensureTermsAccepted(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return next(new AppError('Authentication required. Please sign in.', 401));

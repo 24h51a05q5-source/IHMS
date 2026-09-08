@@ -30,7 +30,6 @@ import { userRouter } from './modules/users/user.controller';
 import { notificationRouter } from './modules/notifications/notification.controller';
 import { supportRouter } from './modules/support/support.controller';
 import { termsRouter } from './modules/terms/terms.controller';
-import { aiAssistantRouter } from './modules/ai-assistant/ai-assistant.controller';
 
 const app: Application = express();
 const server = http.createServer(app);
@@ -228,9 +227,6 @@ app.use('/api/student/support', (req, res, next) => {
   req.url = '/tickets' + (req.url === '/' ? '' : req.url);
   supportRouter(req, res, next);
 });
-
-app.use('/ai-assistant', aiAssistantRouter);
-app.use('/api/ai-assistant', aiAssistantRouter);
 
 app.use(errorHandler);
 
