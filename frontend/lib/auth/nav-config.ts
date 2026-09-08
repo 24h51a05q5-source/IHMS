@@ -11,6 +11,7 @@ export interface NavItem {
 
 export const OWNER_NAV: NavItem[] = [
   { section: 'MAIN', label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER'] },
+  { section: 'MAIN', label: 'AI Assistant', href: '/ai-assistant', icon: 'Sparkles', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER'] },
   
   { section: 'HOSTEL MANAGEMENT', label: 'Hostels', href: '/hostels', icon: 'Building2', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER'] },
   { section: 'HOSTEL MANAGEMENT', label: 'Students', href: '/students', icon: 'Users', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER', 'WARDEN', 'RECEPTIONIST'] },
