@@ -480,7 +480,8 @@ router.post('/payments/:id/verify-submission', authorize(UserRole.OWNER, UserRol
   try {
     const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
     const verifierName = req.user!.name || req.user!.email || 'Authorized Staff';
-    const result = await zeroGatewayPaymentService.verifyPaymentSubmission(req.user!.organizationId, req.params.id, verifierName);
+    const expectedHostelId = req.body.hostelId || (req.user as any).branchId || undefined;
+    const result = await zeroGatewayPaymentService.verifyPaymentSubmission(req.user!.organizationId, req.params.id, verifierName, expectedHostelId);
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -490,11 +491,13 @@ router.post('/payments/:id/reject-submission', authorize(UserRole.OWNER, UserRol
   try {
     const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
     const rejectedBy = req.user!.name || req.user!.email || 'Authorized Staff';
+    const expectedHostelId = req.body.hostelId || (req.user as any).branchId || undefined;
     const result = await zeroGatewayPaymentService.rejectPaymentSubmission(
       req.user!.organizationId,
       req.params.id,
       req.body.reason || req.body.rejectionReason,
-      rejectedBy
+      rejectedBy,
+      expectedHostelId
     );
     res.json(result);
   } catch (err) { next(err); }

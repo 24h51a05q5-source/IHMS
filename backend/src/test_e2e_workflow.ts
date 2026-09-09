@@ -238,6 +238,12 @@ export async function runCompleteE2ETests() {
     // STEP 10: Initiate payment
     // -------------------------------------------------------------
     console.log('[E2E] Step 10: Initiating online payment order...');
+    await query(
+      `INSERT INTO payment_gateway_configs (id, organization_id, provider, environment, key_id, key_secret, webhook_secret, onboarding_status)
+       VALUES ($1, $2, 'RAZORPAY', 'TEST', 'rzp_test_e2e_key_99', 'sec_e2e_secret_99', 'whsec_e2e_99', 'CONNECTED')
+       ON CONFLICT (organization_id) DO UPDATE SET key_id = EXCLUDED.key_id, key_secret = EXCLUDED.key_secret, onboarding_status = 'CONNECTED'`,
+      [`gw_${runId}`, ownerOrgId]
+    );
     const orderResult = await feeService.initiatePayment(ownerOrgId, createdStudent.id, {
       amount: 8500,
       paymentMethod: PaymentMethod.ONLINE,

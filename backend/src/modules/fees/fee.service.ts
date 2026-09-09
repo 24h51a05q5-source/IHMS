@@ -999,7 +999,7 @@ export class FeeService {
       const method = String(data.paymentMethod || PaymentMethod.ONLINE).toUpperCase();
       if (method === 'CARD' || method === 'DEBIT_CARD' || method === 'CREDIT_CARD' || method === 'NET_BANKING') {
         const isConfigured = await this.isOnlineGatewayConfigured(orgId);
-        if (!isConfigured && process.env.NODE_ENV !== 'test') {
+        if (!isConfigured) {
           throw new AppError(
             'Online Debit / Credit Card and Net Banking payment gateway is not configured for this hostel. Please use UPI / QR or Bank Transfer.',
             400

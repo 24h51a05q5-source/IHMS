@@ -83,6 +83,14 @@ describe('Comprehensive Student-Side E2E & Payment System Test Suite', () => {
     });
     await hostelPaymentConfigService.confirmAndActivate(orgId, hostelId, ownerRes.user.id, 'BANK');
 
+    // 3.1 Configure Payment Gateway credentials for Online Card/Netbanking tests
+    await query(
+      `INSERT INTO payment_gateway_configs (id, organization_id, provider, environment, key_id, key_secret, webhook_secret, onboarding_status)
+       VALUES ($1, $2, 'RAZORPAY', 'TEST', 'rzp_test_student_e2e', 'sec_student_e2e_secret', 'whsec_e2e_secret', 'CONNECTED')
+       ON CONFLICT (organization_id) DO UPDATE SET key_id = EXCLUDED.key_id, key_secret = EXCLUDED.key_secret, onboarding_status = 'CONNECTED'`,
+      [`gw_${timestamp}`, orgId]
+    );
+
     // 4. Create Room and Bed
     const { room, beds } = await roomService.createRoom(orgId, hostelId, {
       roomNumber: 'A-201',

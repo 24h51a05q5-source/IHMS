@@ -250,6 +250,10 @@ app.use('/api/student/support', (req, res, next) => {
 app.use('/ai-assistant', aiAssistantRouter);
 app.use('/api/ai-assistant', aiAssistantRouter);
 
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Cannot ${req.method} ${req.originalUrl}` });
+});
+
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
@@ -296,5 +300,10 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+if (process.env.NODE_ENV !== 'test') {
+  bootstrap();
+}
+
+export { app, server };
+export default app;
 

@@ -13,6 +13,7 @@ import { paymentGatewayService } from './payment-gateway.service';
 export interface IInitiateZeroGatewayPaymentResponse {
   configured: boolean;
   isGatewayConfigured?: boolean;
+  availablePaymentMethods?: string[];
   message?: string;
   paymentId?: string;
   paymentNumber?: string;
@@ -115,10 +116,18 @@ export class ZeroGatewayPaymentService {
     const gwConfig = await paymentGatewayService.getOrgConfig(orgId);
     const isGatewayConfigured = paymentGatewayService.isGatewayConfigured(gwConfig);
 
+    const availableMethods: string[] = [];
+    if (isUpiActive) availableMethods.push('UPI');
+    if (isBankActive) availableMethods.push('BANK_TRANSFER');
+    if (isGatewayConfigured) {
+      availableMethods.push('DEBIT_CARD', 'CREDIT_CARD', 'NET_BANKING');
+    }
+
     if (!config || !isConfigured) {
       return {
         configured: false,
         isGatewayConfigured,
+        availablePaymentMethods: availableMethods,
         message: 'Payment configuration not completed. Your hostel administration has not configured payment details (UPI ID or Bank Account). Please contact the hostel office.',
         student: {
           id: student.id,
@@ -150,6 +159,7 @@ export class ZeroGatewayPaymentService {
       return {
         configured: true,
         isGatewayConfigured,
+        availablePaymentMethods: availableMethods,
         student: {
           id: student.id,
           customerCode: student.customer_code,
@@ -168,6 +178,27 @@ export class ZeroGatewayPaymentService {
     }
 
     if (!isUpiActive || !config.upiConfig?.vpaAddress) {
+      if (isBankActive) {
+        return {
+          configured: true,
+          isGatewayConfigured,
+          availablePaymentMethods: availableMethods,
+          student: {
+            id: student.id,
+            customerCode: student.customer_code,
+            fullName: student.full_name,
+            hostelId: student.hostel_id || hostelId,
+            hostelName,
+          },
+          paymentDetails: {
+            amount: amountToPay,
+            expectedAmount: amountToPay,
+            transactionNote: `Fee Payment ${student.customer_code}`,
+            upi: null,
+            bank: bankPayload,
+          },
+        };
+      }
       throw new AppError('UPI / Dynamic QR payment is not configured or enabled for this hostel. Please contact hostel administration.', 400);
     }
 
@@ -222,6 +253,7 @@ export class ZeroGatewayPaymentService {
     return {
       configured: true,
       isGatewayConfigured,
+      availablePaymentMethods: availableMethods,
       paymentId,
       paymentNumber,
       student: {
@@ -519,7 +551,12 @@ export class ZeroGatewayPaymentService {
   /**
    * Verify and approve student submitted payment (Owner / Admin)
    */
-  async verifyPaymentSubmission(orgId: string, paymentId: string, verifierName: string): Promise<any> {
+  async verifyPaymentSubmission(
+    orgId: string,
+    paymentId: string,
+    verifierName: string,
+    expectedHostelId?: string
+  ): Promise<any> {
     return transaction(async (client) => {
       const pmtRes = await client.query(
         `SELECT * FROM payments WHERE (id = $1 OR payment_number = $1) AND organization_id = $2 FOR UPDATE`,
@@ -529,6 +566,10 @@ export class ZeroGatewayPaymentService {
 
       if (!payment) {
         throw new AppError('Payment submission record not found.', 404);
+      }
+
+      if (expectedHostelId && payment.hostel_id && payment.hostel_id !== expectedHostelId) {
+        throw new AppError('This payment belongs to a different hostel branch and cannot be verified here.', 403);
       }
 
       if (payment.status === 'VERIFIED' || payment.status === 'SUCCESS') {
@@ -721,7 +762,8 @@ export class ZeroGatewayPaymentService {
     orgId: string,
     paymentId: string,
     rejectionReason: string,
-    rejectedBy: string
+    rejectedBy: string,
+    expectedHostelId?: string
   ): Promise<any> {
     const payment = await queryOne<any>(
       `SELECT * FROM payments WHERE (id = $1 OR payment_number = $1) AND organization_id = $2`,
@@ -730,6 +772,10 @@ export class ZeroGatewayPaymentService {
 
     if (!payment) {
       throw new AppError('Payment record not found.', 404);
+    }
+
+    if (expectedHostelId && payment.hostel_id && payment.hostel_id !== expectedHostelId) {
+      throw new AppError('This payment belongs to a different hostel branch and cannot be rejected here.', 403);
     }
 
     if (payment.status === 'VERIFIED' || payment.status === 'SUCCESS') {

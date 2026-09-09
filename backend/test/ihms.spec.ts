@@ -417,6 +417,12 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
 
     beforeAll(async () => {
       await query("UPDATE fee_accounts SET allow_advance_payment = true WHERE student_id = $1", [studentId]);
+      await query(
+        `INSERT INTO payment_gateway_configs (id, organization_id, provider, environment, key_id, key_secret, webhook_secret, onboarding_status)
+         VALUES ($1, $2, 'RAZORPAY', 'TEST', 'rzp_test_ihms_key123', 'sec_test_ihms_sec456', 'whsec_test_ihms_123', 'CONNECTED')
+         ON CONFLICT (organization_id) DO UPDATE SET key_id = EXCLUDED.key_id, key_secret = EXCLUDED.key_secret, onboarding_status = 'CONNECTED'`,
+        [`gw_ihms_${Date.now()}`, orgId1]
+      );
     });
 
     it('should initiate an online payment and return a gateway order with client key', async () => {

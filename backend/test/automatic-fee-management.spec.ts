@@ -40,6 +40,14 @@ describe('IHMS Automatic Fee Management Comprehensive Test Suite', () => {
       email: `fee_owner_${ts}@testdomain.com`,
     };
 
+    // Configure test gateway so payment gateway tests can execute
+    await query(
+      `INSERT INTO payment_gateway_configs (id, organization_id, provider, environment, key_id, key_secret, webhook_secret, onboarding_status)
+       VALUES ($1, $2, 'RAZORPAY', 'TEST', 'rzp_test_fee_mgmt_key123', 'sec_test_fee_mgmt_sec456', 'whsec_test_123', 'CONNECTED')
+       ON CONFLICT (organization_id) DO UPDATE SET key_id = EXCLUDED.key_id, key_secret = EXCLUDED.key_secret, onboarding_status = 'CONNECTED'`,
+      [`gw_${ts}`, orgId]
+    );
+
     // 2. Setup Hostel & Rooms with 10 beds
     const hostel = await hostelService.create(orgId, {
       name: `Grand Palace Residency ${ts}`,

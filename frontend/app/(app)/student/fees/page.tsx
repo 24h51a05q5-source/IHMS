@@ -139,11 +139,23 @@ export default function StudentFeesPage() {
   // Receipt Modal State
   const [activeReceipt, setActiveReceipt] = useState<PaymentReceipt | null>(null);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [hostelPaymentConfig, setHostelPaymentConfig] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await studentsApi.getMyFees();
+      const [res, pmtCfgRes] = await Promise.all([
+        studentsApi.getMyFees(),
+        studentsApi.getPaymentInitiationDetails().catch(() => null),
+      ]);
       setFeeData(res);
+      if (pmtCfgRes) {
+        const cfgData = (pmtCfgRes as any)?.data !== undefined ? (pmtCfgRes as any).data : pmtCfgRes;
+        setHostelPaymentConfig(cfgData);
+        const avail: string[] = cfgData.availablePaymentMethods || [];
+        if (avail.length > 0 && !avail.includes(paymentMethod)) {
+          setPaymentMethod(avail[0] as any);
+        }
+      }
       if (res && res.currentDueInstallment) {
         setSelectedInstallmentId(res.currentDueInstallment.id);
       }
@@ -155,7 +167,7 @@ export default function StudentFeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [feeData]);
+  }, [feeData, paymentMethod]);
 
   // Real-Time Dynamic Payment Polling & Countdown Timer
   useEffect(() => {
@@ -789,75 +801,110 @@ export default function StudentFeesPage() {
                   </div>
                 )}
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-slate-700">Preferred Payment Method</Label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('UPI')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all ${
-                        paymentMethod === 'UPI'
-                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
-                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
-                      }`}
-                    >
-                      <QrCode className="inline-block h-3.5 w-3.5 mr-1" /> UPI / QR Code
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('DEBIT_CARD')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all ${
-                        paymentMethod === 'DEBIT_CARD'
-                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
-                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
-                      }`}
-                    >
-                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Debit Card
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('CREDIT_CARD')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all ${
-                        paymentMethod === 'CREDIT_CARD'
-                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
-                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
-                      }`}
-                    >
-                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Credit Card
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('NET_BANKING')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all ${
-                        paymentMethod === 'NET_BANKING'
-                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
-                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
-                      }`}
-                    >
-                      <Landmark className="inline-block h-3.5 w-3.5 mr-1" /> Net Banking
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('BANK_TRANSFER')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all sm:col-span-2 ${
-                        paymentMethod === 'BANK_TRANSFER'
-                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
-                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
-                      }`}
-                    >
-                      <Building2 className="inline-block h-3.5 w-3.5 mr-1" /> Bank Transfer
-                    </button>
-                  </div>
-                </div>
+                {(() => {
+                  const avail: string[] = hostelPaymentConfig?.availablePaymentMethods || ['UPI', 'BANK_TRANSFER'];
+                  const showUpi = avail.includes('UPI');
+                  const showBank = avail.includes('BANK_TRANSFER');
+                  const showDebit = avail.includes('DEBIT_CARD');
+                  const showCredit = avail.includes('CREDIT_CARD');
+                  const showNet = avail.includes('NET_BANKING');
 
-                <Button
-                  type="submit"
-                  disabled={loadingPaymentDetails || !isValidAmount}
-                  className="w-full h-12 text-sm font-black tracking-wide bg-[#E87545] hover:bg-[#D66434] text-white"
-                >
-                  {loadingPaymentDetails ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Pay {formatCurrency(payAmountNumber)} Now
-                </Button>
+                  if (hostelPaymentConfig && (hostelPaymentConfig.configured === false || avail.length === 0)) {
+                    return (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-center space-y-2 my-2">
+                        <AlertCircle className="mx-auto h-6 w-6 text-amber-600" />
+                        <p className="text-xs font-black text-amber-900">Payment Configuration Not Completed</p>
+                        <p className="text-[11px] text-amber-800 font-medium leading-relaxed max-w-sm mx-auto">
+                          Your hostel administration has not configured any payment methods (UPI ID, Bank Account, or Gateway) yet. Please contact the hostel office.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold text-slate-700">Preferred Payment Method</Label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                          {showUpi && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('UPI')}
+                              className={`rounded-xl border py-2 text-center font-black transition-all ${
+                                paymentMethod === 'UPI'
+                                  ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                                  : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                              }`}
+                            >
+                              <QrCode className="inline-block h-3.5 w-3.5 mr-1" /> UPI / QR Code
+                            </button>
+                          )}
+                          {showBank && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('BANK_TRANSFER')}
+                              className={`rounded-xl border py-2 text-center font-black transition-all ${
+                                paymentMethod === 'BANK_TRANSFER'
+                                  ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                                  : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                              }`}
+                            >
+                              <Building2 className="inline-block h-3.5 w-3.5 mr-1" /> Bank Transfer
+                            </button>
+                          )}
+                          {showDebit && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('DEBIT_CARD')}
+                              className={`rounded-xl border py-2 text-center font-black transition-all ${
+                                paymentMethod === 'DEBIT_CARD'
+                                  ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                                  : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                              }`}
+                            >
+                              <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Debit Card
+                            </button>
+                          )}
+                          {showCredit && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('CREDIT_CARD')}
+                              className={`rounded-xl border py-2 text-center font-black transition-all ${
+                                paymentMethod === 'CREDIT_CARD'
+                                  ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                                  : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                              }`}
+                            >
+                              <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Credit Card
+                            </button>
+                          )}
+                          {showNet && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('NET_BANKING')}
+                              className={`rounded-xl border py-2 text-center font-black transition-all ${
+                                paymentMethod === 'NET_BANKING'
+                                  ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                                  : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                              }`}
+                            >
+                              <Landmark className="inline-block h-3.5 w-3.5 mr-1" /> Net Banking
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <Button
+                        type="submit"
+                        disabled={loadingPaymentDetails || !isValidAmount}
+                        className="w-full h-12 text-sm font-black tracking-wide bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        {loadingPaymentDetails ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Pay {formatCurrency(payAmountNumber)} Now
+                      </Button>
+                    </>
+                  );
+                })()}
               </form>
             ) : (
               <div className="rounded-xl border border-[#B4E2C7] bg-[#E8F5ED] p-5 text-center space-y-1">
@@ -1006,6 +1053,16 @@ export default function StudentFeesPage() {
                       · {p.method || (p as any).paymentMethod || 'Payment'} · Ref:{' '}
                       <span className="font-mono text-black">{p.transactionRef || 'N/A'}</span>
                     </p>
+                    {(p.status === 'UNDER_VERIFICATION' || p.status === 'SUBMITTED') && (
+                      <p className="text-[11px] font-bold text-amber-700 mt-1">
+                        Awaiting hostel owner verification · Balance updates once approved
+                      </p>
+                    )}
+                    {p.status === 'REJECTED' && ((p as any).rejectionReason || (p as any).rejection_reason) && (
+                      <p className="text-[11px] font-bold text-rose-600 mt-1">
+                        Rejected by owner: {(p as any).rejectionReason || (p as any).rejection_reason}
+                      </p>
+                    )}
                   </div>
                 </div>
 
