@@ -1089,625 +1089,647 @@ export default function StudentFeesPage() {
 
       {/* ZERO-GATEWAY DYNAMIC HOSTEL PAYMENT MODAL */}
       <Dialog open={zeroGatewayModalOpen} onOpenChange={setZeroGatewayModalOpen}>
-        <DialogContent className="sm:max-w-xl rounded-xl border border-[#CBD5E1] bg-white p-5 max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
-              <ShieldCheck className="h-6 w-6" />
+        <DialogContent className="w-[calc(100vw-16px)] sm:w-full sm:max-w-lg md:max-w-xl p-0 gap-0 max-h-[calc(100dvh-20px)] sm:max-h-[90vh] flex flex-col rounded-2xl border border-[#CBD5E1] bg-white shadow-2xl overflow-hidden">
+          {/* STICKY HEADER - ALWAYS VISIBLE WITH ACCESSIBLE CLOSE BUTTON */}
+          <DialogHeader className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#E2E8F0] px-4 py-3 sm:px-6 sm:py-4 shrink-0 text-left pr-12">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                <ShieldCheck className="h-5 w-5 sm:h-6 sm:w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="text-sm sm:text-base font-black text-black truncate">
+                  Hostel Payment — Direct Settlement
+                </DialogTitle>
+                <DialogDescription className="text-[11px] sm:text-xs text-slate-500 font-medium truncate">
+                  {zeroGatewayData?.student?.hostelName || 'Hostel'} Payment Portal
+                </DialogDescription>
+              </div>
             </div>
-            <DialogTitle className="text-center text-lg font-black text-black">
-              Hostel Payment — Direct Settlement
-            </DialogTitle>
-            <DialogDescription className="text-center text-xs text-slate-500 font-medium">
-              {zeroGatewayData?.student?.hostelName || 'Hostel'} Payment Portal
-            </DialogDescription>
           </DialogHeader>
 
-          {zeroGatewayData && !zeroGatewayData.configured ? (
-            <div className="py-6 text-center space-y-4">
-              <div className="rounded-xl border border-[#FDE68A] bg-[#FEF3C7] p-5 text-center space-y-2">
-                <AlertCircle className="mx-auto h-7 w-7 text-[#C94F18]" />
-                <p className="text-sm font-black text-[#C94F18]">Payment Configuration Not Completed</p>
-                <p className="text-xs text-[#C94F18] font-semibold leading-relaxed">
-                  {zeroGatewayData.message || 'Payment configuration not completed. Your hostel administration has not configured their payment details (UPI ID / Bank Account). Please contact the hostel office.'}
-                </p>
-              </div>
-              <Button
-                type="button"
-                onClick={() => setZeroGatewayModalOpen(false)}
-                className="w-full font-bold bg-[#E87545] hover:bg-[#D66434] text-white"
-              >
-                Close
-              </Button>
-            </div>
-          ) : zeroGatewayData ? (
-            <div className="space-y-4 py-1 text-xs">
-              {/* Top Payable Summary */}
-              <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payable Amount</p>
-                  <p className="text-xl font-black font-mono text-black">
-                    {formatCurrency(payAmountNumber)}
+          {/* SCROLLABLE MODAL BODY - VERTICAL SCROLL WITH ZERO HORIZONTAL OVERFLOW */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-4 text-xs">
+            {zeroGatewayData && !zeroGatewayData.configured ? (
+              <div className="py-6 text-center space-y-4">
+                <div className="rounded-xl border border-[#FDE68A] bg-[#FEF3C7] p-5 text-center space-y-2">
+                  <AlertCircle className="mx-auto h-7 w-7 text-[#C94F18]" />
+                  <p className="text-sm font-black text-[#C94F18]">Payment Configuration Not Completed</p>
+                  <p className="text-xs text-[#C94F18] font-semibold leading-relaxed">
+                    {zeroGatewayData.message || 'Payment configuration not completed. Your hostel administration has not configured their payment details (UPI ID / Bank Account). Please contact the hostel office.'}
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payment Note / Ref</p>
-                  <p className="font-mono text-xs font-black text-[#E87545]">
-                    {zeroGatewayData?.paymentDetails?.transactionNote || 'Hostel Fee Payment'}
-                  </p>
-                </div>
+                <Button
+                  type="button"
+                  onClick={() => setZeroGatewayModalOpen(false)}
+                  className="w-full h-11 font-bold bg-[#E87545] hover:bg-[#D66434] text-white"
+                >
+                  Close
+                </Button>
               </div>
-
-              {/* Payment Methods Switcher */}
-              {(() => {
-                const hasUpi = Boolean(zeroGatewayData?.paymentDetails?.upi?.vpaAddress);
-                const hasBank = Boolean(zeroGatewayData?.paymentDetails?.bank?.accountNumber);
-                const isGwConfigured = Boolean(zeroGatewayData?.isGatewayConfigured);
-
-                return (
-                  <div className="flex items-stretch border-b border-[#CBD5E1] text-[11px] font-black overflow-x-auto">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('UPI');
-                        setPaymentMethod('UPI');
-                      }}
-                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
-                        activeTab === 'UPI'
-                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                          : 'border-transparent text-slate-500 hover:text-black'
-                      }`}
-                    >
-                      <QrCode className="inline-block h-3.5 w-3.5 mr-1" />
-                      UPI / QR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('DEBIT_CARD');
-                        setPaymentMethod('DEBIT_CARD');
-                      }}
-                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
-                        activeTab === 'DEBIT_CARD'
-                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                          : 'border-transparent text-slate-500 hover:text-black'
-                      }`}
-                    >
-                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
-                      Debit Card {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('CREDIT_CARD');
-                        setPaymentMethod('CREDIT_CARD');
-                      }}
-                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
-                        activeTab === 'CREDIT_CARD'
-                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                          : 'border-transparent text-slate-500 hover:text-black'
-                      }`}
-                    >
-                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
-                      Credit Card {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('NET_BANKING');
-                        setPaymentMethod('NET_BANKING');
-                      }}
-                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
-                        activeTab === 'NET_BANKING'
-                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                          : 'border-transparent text-slate-500 hover:text-black'
-                      }`}
-                    >
-                      <Landmark className="inline-block h-3.5 w-3.5 mr-1" />
-                      Net Banking {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
-                    </button>
-                    {hasBank && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveTab('BANK');
-                          setPaymentMethod('BANK_TRANSFER');
-                        }}
-                        className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
-                          activeTab === 'BANK'
-                            ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                            : 'border-transparent text-slate-500 hover:text-black'
-                        }`}
-                      >
-                        <Building2 className="inline-block h-3.5 w-3.5 mr-1" />
-                        Bank IMPS
-                      </button>
-                    )}
+            ) : zeroGatewayData ? (
+              <>
+                {/* 1. Top Payable Summary Card */}
+                <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 sm:p-4 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-2 sm:gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payable Amount</p>
+                    <p className="text-xl sm:text-2xl font-black font-mono text-black">
+                      {formatCurrency(payAmountNumber)}
+                    </p>
                   </div>
-                );
-              })()}
-
-              {/* TAB 1: UPI & DYNAMIC QR CODE */}
-              {activeTab === 'UPI' && (
-                <div className="space-y-4 text-center">
-                  {!zeroGatewayData?.paymentDetails?.upi?.vpaAddress ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-6 text-center space-y-2">
-                      <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
-                      <p className="text-sm font-black text-amber-900">UPI Payment Not Configured</p>
-                      <p className="text-xs text-amber-800 font-medium max-w-sm mx-auto">
-                        Your hostel administration has not configured a UPI ID / VPA for fee collection. Please contact the hostel office.
-                      </p>
-                    </div>
-                  ) : paymentStatus === 'EXPIRED' ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center space-y-2">
-                      <AlertCircle className="mx-auto h-6 w-6 text-rose-600" />
-                      <p className="text-xs font-black text-rose-700">Dynamic Payment QR Expired</p>
-                      <p className="text-[11px] text-rose-600 font-semibold">The 15-minute validity duration for this QR code has elapsed.</p>
-                      <Button
-                        type="button"
-                        onClick={handleOpenPaymentModal}
-                        className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs"
-                      >
-                        Generate New Dynamic QR
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Live Polling & Timer Banner */}
-                      <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-center space-y-1">
-                        <div className="flex items-center justify-center gap-2 text-amber-800 font-black text-xs">
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-                          Waiting for payment confirmation...
-                        </div>
-                        <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-amber-700 font-mono">
-                          <Clock className="h-3.5 w-3.5 text-amber-600" />
-                          QR Expiry:{' '}
-                          <span>
-                            {Math.floor(remainingTimeSeconds / 60)
-                              .toString()
-                              .padStart(2, '0')}
-                            :
-                            {(remainingTimeSeconds % 60).toString().padStart(2, '0')}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="inline-block p-3 bg-white rounded-xl border border-[#CBD5E1] shadow-sm">
-                        {zeroGatewayData?.paymentDetails?.upi?.qrDataUrl ? (
-                          <img
-                            src={zeroGatewayData.paymentDetails.upi.qrDataUrl}
-                            alt="Dynamic Hostel UPI QR"
-                            className="w-48 h-48 mx-auto object-contain"
-                          />
-                        ) : (
-                          <div className="w-48 h-48 flex items-center justify-center text-slate-400 font-bold">
-                            QR Unavailable
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-2 max-w-sm mx-auto">
-                        <div className="flex items-center justify-between rounded-lg border border-[#CBD5E1] bg-[#FAFAF7] px-3 py-2">
-                          <div className="text-left">
-                            <p className="text-[10px] font-bold text-slate-500">Hostel UPI ID (VPA)</p>
-                            <p className="font-mono text-xs font-black text-black">
-                              {zeroGatewayData.paymentDetails.upi.vpaAddress}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.upi.vpaAddress, 'UPI ID')}
-                            className="h-7 text-[11px] font-bold gap-1"
-                          >
-                            {copiedField === 'UPI ID' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                            {copiedField === 'UPI ID' ? 'Copied' : 'Copy'}
-                          </Button>
-                        </div>
-
-                        {zeroGatewayData?.paymentDetails?.upi?.intentUrl && (
-                          <a
-                            href={zeroGatewayData.paymentDetails.upi.intentUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#087A45] hover:bg-[#066337] px-4 py-2.5 text-xs font-black text-white shadow-sm transition-all"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Open Installed UPI App (GPay / PhonePe / Paytm)
-                          </a>
-                        )}
-                      </div>
-
-                      {/* UTR Submission Form for UPI */}
-                      <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1] text-left">
-                        <h4 className="text-xs font-black uppercase tracking-wider text-black">
-                          Step 2: Confirm UPI Payment Reference
-                        </h4>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="utrInputUpi" className="text-xs font-bold text-black">
-                            12-Digit UTR / Bank Reference Number *
-                          </Label>
-                          <Input
-                            id="utrInputUpi"
-                            placeholder="e.g. 423910849201"
-                            value={utrNumber}
-                            onChange={(e) => setUtrNumber(e.target.value)}
-                            className="font-mono text-xs font-bold bg-white"
-                            required
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 pt-1">
-                          <Button
-                            type="submit"
-                            disabled={submittingPayment || !utrNumber.trim()}
-                            className="flex-1 h-10 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                          >
-                            {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                            Confirm UPI Payment
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleCancelPayment}
-                            className="h-10 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </form>
-                    </>
-                  )}
+                  <div className="min-w-0 text-left xs:text-right">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Payment Note / Ref</p>
+                    <p className="font-mono text-[11px] sm:text-xs font-black text-[#E87545] break-all">
+                      {zeroGatewayData?.paymentDetails?.transactionNote || 'Hostel Fee Payment'}
+                    </p>
+                  </div>
                 </div>
-              )}
 
-              {/* TAB 2 & 3: CREDIT / DEBIT CARD PAYMENT */}
-              {(activeTab === 'DEBIT_CARD' || activeTab === 'CREDIT_CARD' || activeTab === 'CARD') && (
-                !zeroGatewayData?.isGatewayConfigured ? (
-                  <div className="space-y-4 text-center py-4">
-                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
-                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
-                        <CreditCard className="h-6 w-6" />
-                      </div>
-                      <p className="text-sm font-black text-black">
-                        Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Gateway Not Configured
-                      </p>
-                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-                        Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card processing requires a connected payment gateway (e.g. Razorpay or Cashfree). Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('UPI');
-                        setPaymentMethod('UPI');
-                      }}
-                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                    >
-                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
-                    </Button>
-                  </div>
-                ) : (
-                  <form onSubmit={(e) => handlePayWithCard(e, activeTab === 'CREDIT_CARD' ? 'CREDIT_CARD' : 'DEBIT_CARD')} className="space-y-3.5 text-left pt-1">
-                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-black flex items-center gap-1.5">
-                          <CreditCard className="h-4 w-4 text-[#E87545]" /> Secure {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Checkout
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-[#087A45] bg-[#E8F5ED] border border-[#B4E2C7] px-2 py-0.5 rounded-md">
-                          256-Bit SSL Encrypted
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500">Supports Visa, MasterCard, RuPay, and Maestro {activeTab === 'CREDIT_CARD' ? 'credit' : 'debit'} cards.</p>
-                    </div>
+                {/* 2. Responsive Payment Method Selection */}
+                {(() => {
+                  const hasUpi = Boolean(zeroGatewayData?.paymentDetails?.upi?.vpaAddress);
+                  const hasBank = Boolean(zeroGatewayData?.paymentDetails?.bank?.accountNumber);
+                  const isGwConfigured = Boolean(zeroGatewayData?.isGatewayConfigured);
 
+                  return (
                     <div className="space-y-1.5">
-                      <Label htmlFor="cardNumInput" className="text-xs font-bold text-black">
-                        Card Number *
-                      </Label>
-                      <Input
-                        id="cardNumInput"
-                        placeholder="4532 0123 4567 8910"
-                        value={cardNumber}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(/\D/g, '').substring(0, 19);
-                          setCardNumber(v.replace(/(\d{4})(?=\d)/g, '$1 '));
-                        }}
-                        className="font-mono text-xs font-bold bg-white"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="cardHolderInput" className="text-xs font-bold text-black">
-                        Cardholder Name *
-                      </Label>
-                      <Input
-                        id="cardHolderInput"
-                        placeholder="e.g. Rahul Kumar"
-                        value={cardHolder}
-                        onChange={(e) => setCardHolder(e.target.value)}
-                        className="text-xs font-bold bg-white uppercase"
-                        required
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="cardExpiryInput" className="text-xs font-bold text-black">
-                          Expiry (MM/YY) *
-                        </Label>
-                        <Input
-                          id="cardExpiryInput"
-                          placeholder="12/28"
-                          maxLength={5}
-                          value={cardExpiry}
-                          onChange={(e) => {
-                            let v = e.target.value.replace(/\D/g, '').substring(0, 4);
-                            if (v.length >= 3) v = `${v.substring(0, 2)}/${v.substring(2)}`;
-                            setCardExpiry(v);
-                          }}
-                          className="font-mono text-xs font-bold bg-white"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="cardCvvInput" className="text-xs font-bold text-black">
-                          CVV / CVC *
-                        </Label>
-                        <Input
-                          id="cardCvvInput"
-                          type="password"
-                          placeholder="•••"
-                          maxLength={4}
-                          value={cardCvv}
-                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                          className="font-mono text-xs font-bold bg-white"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2">
-                      <Button
-                        type="submit"
-                        disabled={processingCard}
-                        className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                      >
-                        {processingCard ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Pay {formatCurrency(payAmountNumber)} via {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleCancelPayment}
-                        className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                )
-              )}
-
-              {/* TAB 3: NET BANKING */}
-              {activeTab === 'NET_BANKING' && (
-                !zeroGatewayData?.isGatewayConfigured ? (
-                  <div className="space-y-4 text-center py-4">
-                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
-                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
-                        <Landmark className="h-6 w-6" />
-                      </div>
-                      <p className="text-sm font-black text-black">Net Banking Gateway Not Configured</p>
-                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-                        Online Net Banking processing requires a connected payment gateway. Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
+                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                        Select Payment Method
                       </p>
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('UPI');
-                        setPaymentMethod('UPI');
-                      }}
-                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                    >
-                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
-                    </Button>
-                  </div>
-                ) : (
-                  <form onSubmit={handlePayWithNetBanking} className="space-y-3.5 text-left pt-1">
-                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 space-y-1">
-                      <p className="text-xs font-black text-black">Select Your Bank</p>
-                      <p className="text-[11px] text-slate-500">You will be securely redirected to authenticate with your bank.</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {[
-                        { code: 'SBI', name: 'State Bank of India' },
-                        { code: 'HDFC', name: 'HDFC Bank' },
-                        { code: 'ICICI', name: 'ICICI Bank' },
-                        { code: 'AXIS', name: 'Axis Bank' },
-                        { code: 'PNB', name: 'Punjab National' },
-                        { code: 'BOB', name: 'Bank of Baroda' },
-                      ].map((bank) => (
+                      <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-5 gap-1.5 p-1.5 bg-[#F1F5F9] rounded-xl border border-[#E2E8F0]">
                         <button
-                          key={bank.code}
                           type="button"
-                          onClick={() => setSelectedBank(bank.code)}
-                          className={`rounded-xl border p-2.5 text-left transition-all ${
-                            selectedBank === bank.code
-                              ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545] font-black'
-                              : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F8FAFC]'
+                          onClick={() => {
+                            setActiveTab('UPI');
+                            setPaymentMethod('UPI');
+                          }}
+                          className={`flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-center font-black transition-all ${
+                            activeTab === 'UPI'
+                              ? 'bg-white text-[#E87545] shadow-sm border border-[#E87545]/30'
+                              : 'text-slate-600 hover:text-black hover:bg-white/50'
                           }`}
                         >
-                          <p className="text-xs font-black">{bank.code}</p>
-                          <p className="text-[10px] text-slate-500 truncate">{bank.name}</p>
+                          <QrCode className="h-4 w-4 shrink-0" />
+                          <span className="text-[11px] leading-tight">UPI / QR</span>
                         </button>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2">
-                      <Button
-                        type="submit"
-                        disabled={processingNetBanking}
-                        className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                      >
-                        {processingNetBanking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Proceed to {selectedBank} Net Banking
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleCancelPayment}
-                        className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                )
-              )}
-
-              {/* TAB 4: DIRECT BANK TRANSFER */}
-              {activeTab === 'BANK' && (
-                !zeroGatewayData?.paymentDetails?.bank?.accountNumber ? (
-                  <div className="space-y-4 text-center py-4">
-                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
-                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
-                        <Building2 className="h-6 w-6" />
-                      </div>
-                      <p className="text-sm font-black text-black">Direct Bank Transfer Not Configured</p>
-                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-                        Your hostel owner has not configured bank account details (Account Number / IFSC) for direct bank transfers. The hostel has enabled <strong>UPI / Dynamic QR Code</strong> payments.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('UPI');
-                        setPaymentMethod('UPI');
-                      }}
-                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                    >
-                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3.5 text-left">
-                    <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4">
-                      <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
-                      <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
-                        <div className="space-y-0.5">
-                          <p className="text-[10px] font-bold text-slate-500">Beneficiary Name</p>
-                          <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.beneficiaryName}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <p className="text-[10px] font-bold text-slate-500">Bank Name</p>
-                          <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.bankName || 'Hostel Bank Account'}</p>
-                        </div>
-
-                        <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                          <div>
-                            <p className="text-[10px] font-bold text-slate-500">Account Number</p>
-                            <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.accountNumber}</p>
-                          </div>
-                          <Button
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('DEBIT_CARD');
+                            setPaymentMethod('DEBIT_CARD');
+                          }}
+                          className={`flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-center font-black transition-all ${
+                            activeTab === 'DEBIT_CARD'
+                              ? 'bg-white text-[#E87545] shadow-sm border border-[#E87545]/30'
+                              : 'text-slate-600 hover:text-black hover:bg-white/50'
+                          }`}
+                        >
+                          <CreditCard className="h-4 w-4 shrink-0" />
+                          <span className="text-[11px] leading-tight">Debit Card</span>
+                          {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal leading-none">(Gateway)</span>}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('CREDIT_CARD');
+                            setPaymentMethod('CREDIT_CARD');
+                          }}
+                          className={`flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-center font-black transition-all ${
+                            activeTab === 'CREDIT_CARD'
+                              ? 'bg-white text-[#E87545] shadow-sm border border-[#E87545]/30'
+                              : 'text-slate-600 hover:text-black hover:bg-white/50'
+                          }`}
+                        >
+                          <CreditCard className="h-4 w-4 shrink-0" />
+                          <span className="text-[11px] leading-tight">Credit Card</span>
+                          {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal leading-none">(Gateway)</span>}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('NET_BANKING');
+                            setPaymentMethod('NET_BANKING');
+                          }}
+                          className={`flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-center font-black transition-all ${
+                            activeTab === 'NET_BANKING'
+                              ? 'bg-white text-[#E87545] shadow-sm border border-[#E87545]/30'
+                              : 'text-slate-600 hover:text-black hover:bg-white/50'
+                          }`}
+                        >
+                          <Landmark className="h-4 w-4 shrink-0" />
+                          <span className="text-[11px] leading-tight">Net Banking</span>
+                          {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal leading-none">(Gateway)</span>}
+                        </button>
+                        {hasBank && (
+                          <button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.accountNumber, 'Account Number')}
-                            className="h-7 text-[11px] font-bold gap-1"
+                            onClick={() => {
+                              setActiveTab('BANK');
+                              setPaymentMethod('BANK_TRANSFER');
+                            }}
+                            className={`flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-center font-black transition-all ${
+                              activeTab === 'BANK'
+                                ? 'bg-white text-[#E87545] shadow-sm border border-[#E87545]/30'
+                                : 'text-slate-600 hover:text-black hover:bg-white/50'
+                            }`}
                           >
-                            {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                            {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
-                          </Button>
-                        </div>
-
-                        <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                          <div>
-                            <p className="text-[10px] font-bold text-slate-500">IFSC Code</p>
-                            <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.ifscCode}</p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.ifscCode, 'IFSC Code')}
-                            className="h-7 text-[11px] font-bold gap-1"
-                          >
-                            {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                            {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
-                          </Button>
-                        </div>
+                            <Building2 className="h-4 w-4 shrink-0" />
+                            <span className="text-[11px] leading-tight">Bank IMPS</span>
+                          </button>
+                        )}
                       </div>
                     </div>
+                  );
+                })()}
 
-                    {/* Payment Reference Submission */}
-                    <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-black">
-                        Step 2: Submit Bank Reference / UTR For Verification
-                      </h4>
-
-                      <div className="space-y-1.5">
-                        <Label htmlFor="utrInput" className="text-xs font-bold text-black">
-                          UTR / Bank Transaction Reference Number *
-                        </Label>
-                        <Input
-                          id="utrInput"
-                          placeholder="e.g. 423910849201 or UTR1293049182"
-                          value={utrNumber}
-                          onChange={(e) => setUtrNumber(e.target.value)}
-                          className="font-mono text-xs font-bold bg-white"
-                          required
-                        />
-                        <p className="text-[11px] text-slate-500 font-semibold">
-                          12-digit UTR/RRN from your banking app transfer receipt
+                {/* 3. TAB CONTENT */}
+                {/* TAB 1: UPI & DYNAMIC QR CODE */}
+                {activeTab === 'UPI' && (
+                  <div className="space-y-4 text-center">
+                    {!zeroGatewayData?.paymentDetails?.upi?.vpaAddress ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-5 text-center space-y-2">
+                        <AlertCircle className="mx-auto h-7 w-7 text-amber-600" />
+                        <p className="text-sm font-black text-amber-900">UPI Payment Not Configured</p>
+                        <p className="text-xs text-amber-800 font-medium max-w-sm mx-auto leading-relaxed">
+                          Your hostel administration has not configured a UPI ID / VPA for fee collection. Please contact the hostel office.
                         </p>
                       </div>
+                    ) : paymentStatus === 'EXPIRED' ? (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center space-y-2">
+                        <AlertCircle className="mx-auto h-6 w-6 text-rose-600" />
+                        <p className="text-xs font-black text-rose-700">Dynamic Payment QR Expired</p>
+                        <p className="text-[11px] text-rose-600 font-semibold">The 15-minute validity duration for this QR code has elapsed.</p>
+                        <Button
+                          type="button"
+                          onClick={handleOpenPaymentModal}
+                          className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs h-10"
+                        >
+                          Generate New Dynamic QR
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Live Polling & Timer Banner */}
+                        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-center space-y-1">
+                          <div className="flex items-center justify-center gap-2 text-amber-800 font-black text-xs">
+                            <Loader2 className="h-4 w-4 animate-spin text-amber-600 shrink-0" />
+                            <span>Waiting for payment confirmation...</span>
+                          </div>
+                          <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-amber-700 font-mono">
+                            <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                            <span>
+                              QR Expiry:{' '}
+                              {Math.floor(remainingTimeSeconds / 60)
+                                .toString()
+                                .padStart(2, '0')}
+                              :
+                              {(remainingTimeSeconds % 60).toString().padStart(2, '0')}
+                            </span>
+                          </div>
+                        </div>
 
-                      <div className="space-y-1.5">
-                        <Label htmlFor="proofInput" className="text-xs font-bold text-black">
-                          Upload Payment Screenshot / Proof (Optional)
-                        </Label>
-                        <div className="flex items-center gap-3">
-                          <Input
-                            id="proofInput"
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            onChange={handleFileChange}
-                            className="text-xs file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6]"
-                          />
-                          {proofPreview && (
-                            <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
-                              <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
+                        {/* Responsive QR Code Container */}
+                        <div className="p-3 bg-white rounded-2xl border border-[#CBD5E1] shadow-sm inline-flex items-center justify-center max-w-[200px] w-40 h-40 sm:w-48 sm:h-48 mx-auto">
+                          {zeroGatewayData?.paymentDetails?.upi?.qrDataUrl ? (
+                            <img
+                              src={zeroGatewayData.paymentDetails.upi.qrDataUrl}
+                              alt="Dynamic Hostel UPI QR"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-400 font-bold text-center text-xs">
+                              QR Unavailable
                             </div>
                           )}
                         </div>
+
+                        {/* UPI Details & Intent Link */}
+                        <div className="space-y-2.5 max-w-sm mx-auto w-full">
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-2.5 sm:p-3">
+                            <div className="text-left min-w-0 flex-1">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Hostel UPI ID (VPA)</p>
+                              <p className="font-mono text-xs sm:text-sm font-black text-black break-all">
+                                {zeroGatewayData.paymentDetails.upi.vpaAddress}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.upi.vpaAddress, 'UPI ID')}
+                              className="h-8 shrink-0 text-[11px] font-bold gap-1 px-2.5"
+                            >
+                              {copiedField === 'UPI ID' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                              {copiedField === 'UPI ID' ? 'Copied' : 'Copy'}
+                            </Button>
+                          </div>
+
+                          {zeroGatewayData?.paymentDetails?.upi?.intentUrl && (
+                            <a
+                              href={zeroGatewayData.paymentDetails.upi.intentUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#087A45] hover:bg-[#066337] px-3.5 py-2.5 text-xs sm:text-sm font-black text-white shadow-sm transition-all text-center leading-tight"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              <span>Open Installed UPI App (GPay / PhonePe / Paytm)</span>
+                            </a>
+                          )}
+                        </div>
+
+                        {/* UTR Submission Form for UPI */}
+                        <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-3 border-t border-[#CBD5E1] text-left">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                            Step 2: Confirm UPI Payment Reference
+                          </h4>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="utrInputUpi" className="text-xs font-bold text-black">
+                              12-Digit UTR / Bank Reference Number *
+                            </Label>
+                            <Input
+                              id="utrInputUpi"
+                              placeholder="e.g. 423910849201"
+                              value={utrNumber}
+                              onChange={(e) => setUtrNumber(e.target.value)}
+                              className="font-mono text-xs sm:text-sm font-bold bg-white h-10 w-full"
+                              required
+                            />
+                            <p className="text-[11px] text-slate-500 font-semibold">
+                              12-digit UTR/RRN from your UPI payment receipt screen
+                            </p>
+                          </div>
+                          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleCancelPayment}
+                              className="w-full sm:w-auto h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50 px-5"
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              disabled={submittingPayment || !utrNumber.trim()}
+                              className="w-full sm:flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                            >
+                              {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                              Confirm UPI Payment
+                            </Button>
+                          </div>
+                        </form>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 2 & 3: CREDIT / DEBIT CARD PAYMENT */}
+                {(activeTab === 'DEBIT_CARD' || activeTab === 'CREDIT_CARD' || activeTab === 'CARD') && (
+                  !zeroGatewayData?.isGatewayConfigured ? (
+                    <div className="space-y-4 text-center py-3">
+                      <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4 sm:p-5 space-y-2.5">
+                        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                          <CreditCard className="h-6 w-6" />
+                        </div>
+                        <p className="text-sm font-black text-black">
+                          Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Gateway Not Configured
+                        </p>
+                        <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                          Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card processing requires a connected payment gateway (e.g. Razorpay or Cashfree). Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('UPI');
+                          setPaymentMethod('UPI');
+                        }}
+                        className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                      </Button>
+                    </div>
+                  ) : (
+                    <form onSubmit={(e) => handlePayWithCard(e, activeTab === 'CREDIT_CARD' ? 'CREDIT_CARD' : 'DEBIT_CARD')} className="space-y-3.5 text-left pt-1">
+                      <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 sm:p-3.5 space-y-1">
+                        <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-1">
+                          <span className="text-xs font-black text-black flex items-center gap-1.5">
+                            <CreditCard className="h-4 w-4 text-[#E87545] shrink-0" /> Secure {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Checkout
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-[#087A45] bg-[#E8F5ED] border border-[#B4E2C7] px-2 py-0.5 rounded-md self-start xs:self-auto">
+                            256-Bit SSL Encrypted
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">Supports Visa, MasterCard, RuPay, and Maestro {activeTab === 'CREDIT_CARD' ? 'credit' : 'debit'} cards.</p>
                       </div>
 
-                      <div className="flex items-center gap-2 pt-2">
-                        <Button
-                          type="submit"
-                          disabled={submittingPayment || !utrNumber.trim()}
-                          className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                        >
-                          {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                          Submit Payment For Verification
-                        </Button>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cardNumInput" className="text-xs font-bold text-black">
+                          Card Number *
+                        </Label>
+                        <Input
+                          id="cardNumInput"
+                          placeholder="4532 0123 4567 8910"
+                          value={cardNumber}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, '').substring(0, 19);
+                            setCardNumber(v.replace(/(\d{4})(?=\d)/g, '$1 '));
+                          }}
+                          className="font-mono text-xs sm:text-sm font-bold bg-white h-10 w-full"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cardHolderInput" className="text-xs font-bold text-black">
+                          Cardholder Name *
+                        </Label>
+                        <Input
+                          id="cardHolderInput"
+                          placeholder="e.g. Rahul Kumar"
+                          value={cardHolder}
+                          onChange={(e) => setCardHolder(e.target.value)}
+                          className="text-xs sm:text-sm font-bold bg-white uppercase h-10 w-full"
+                          required
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="cardExpiryInput" className="text-xs font-bold text-black">
+                            Expiry (MM/YY) *
+                          </Label>
+                          <Input
+                            id="cardExpiryInput"
+                            placeholder="12/28"
+                            maxLength={5}
+                            value={cardExpiry}
+                            onChange={(e) => {
+                              let v = e.target.value.replace(/\D/g, '').substring(0, 4);
+                              if (v.length >= 3) v = `${v.substring(0, 2)}/${v.substring(2)}`;
+                              setCardExpiry(v);
+                            }}
+                            className="font-mono text-xs sm:text-sm font-bold bg-white h-10 w-full"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="cardCvvInput" className="text-xs font-bold text-black">
+                            CVV / CVC *
+                          </Label>
+                          <Input
+                            id="cardCvvInput"
+                            type="password"
+                            placeholder="•••"
+                            maxLength={4}
+                            value={cardCvv}
+                            onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
+                            className="font-mono text-xs sm:text-sm font-bold bg-white h-10 w-full"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-2">
                         <Button
                           type="button"
                           variant="outline"
                           onClick={handleCancelPayment}
-                          className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                          className="w-full sm:w-auto h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50 px-5"
                         >
                           Cancel
                         </Button>
+                        <Button
+                          type="submit"
+                          disabled={processingCard}
+                          className="w-full sm:flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                        >
+                          {processingCard ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Pay {formatCurrency(payAmountNumber)} via {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card
+                        </Button>
                       </div>
                     </form>
-                  </div>
-                )
-              )}
-            </div>
-          ) : null}
+                  )
+                )}
+
+                {/* TAB 4: NET BANKING */}
+                {activeTab === 'NET_BANKING' && (
+                  !zeroGatewayData?.isGatewayConfigured ? (
+                    <div className="space-y-4 text-center py-3">
+                      <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4 sm:p-5 space-y-2.5">
+                        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                          <Landmark className="h-6 w-6" />
+                        </div>
+                        <p className="text-sm font-black text-black">Net Banking Gateway Not Configured</p>
+                        <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                          Online Net Banking processing requires a connected payment gateway. Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('UPI');
+                          setPaymentMethod('UPI');
+                        }}
+                        className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                      </Button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handlePayWithNetBanking} className="space-y-3.5 text-left pt-1">
+                      <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 space-y-1">
+                        <p className="text-xs font-black text-black">Select Your Bank</p>
+                        <p className="text-[11px] text-slate-500">You will be securely redirected to authenticate with your bank.</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {[
+                          { code: 'SBI', name: 'State Bank of India' },
+                          { code: 'HDFC', name: 'HDFC Bank' },
+                          { code: 'ICICI', name: 'ICICI Bank' },
+                          { code: 'AXIS', name: 'Axis Bank' },
+                          { code: 'PNB', name: 'Punjab National' },
+                          { code: 'BOB', name: 'Bank of Baroda' },
+                        ].map((bank) => (
+                          <button
+                            key={bank.code}
+                            type="button"
+                            onClick={() => setSelectedBank(bank.code)}
+                            className={`rounded-xl border p-2.5 text-left transition-all ${
+                              selectedBank === bank.code
+                                ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545] font-black'
+                                : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F8FAFC]'
+                            }`}
+                          >
+                            <p className="text-xs font-black">{bank.code}</p>
+                            <p className="text-[10px] text-slate-500 truncate">{bank.name}</p>
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleCancelPayment}
+                          className="w-full sm:w-auto h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50 px-5"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="submit"
+                          disabled={processingNetBanking}
+                          className="w-full sm:flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white truncate"
+                        >
+                          {processingNetBanking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Proceed to {selectedBank} Net Banking
+                        </Button>
+                      </div>
+                    </form>
+                  )
+                )}
+
+                {/* TAB 5: DIRECT BANK TRANSFER */}
+                {activeTab === 'BANK' && (
+                  !zeroGatewayData?.paymentDetails?.bank?.accountNumber ? (
+                    <div className="space-y-4 text-center py-3">
+                      <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4 sm:p-5 space-y-2.5">
+                        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                          <Building2 className="h-6 w-6" />
+                        </div>
+                        <p className="text-sm font-black text-black">Direct Bank Transfer Not Configured</p>
+                        <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                          Your hostel owner has not configured bank account details (Account Number / IFSC) for direct bank transfers. The hostel has enabled <strong>UPI / Dynamic QR Code</strong> payments.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('UPI');
+                          setPaymentMethod('UPI');
+                        }}
+                        className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5 text-left">
+                      <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 sm:p-4">
+                        <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
+                        <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
+                          <div className="space-y-0.5 min-w-0">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Beneficiary Name</p>
+                            <p className="font-bold text-black break-words">{zeroGatewayData.paymentDetails.bank.beneficiaryName}</p>
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Bank Name</p>
+                            <p className="font-bold text-black break-words">{zeroGatewayData.paymentDetails.bank.bankName || 'Hostel Bank Account'}</p>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 rounded-lg bg-white border border-[#CBD5E1] p-2.5 sm:col-span-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Account Number</p>
+                              <p className="font-mono font-black text-black text-xs sm:text-sm break-all">{zeroGatewayData.paymentDetails.bank.accountNumber}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.accountNumber, 'Account Number')}
+                              className="h-8 shrink-0 text-[11px] font-bold gap-1 px-2.5"
+                            >
+                              {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                              {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 rounded-lg bg-white border border-[#CBD5E1] p-2.5 sm:col-span-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">IFSC Code</p>
+                              <p className="font-mono font-black text-black text-xs sm:text-sm break-all">{zeroGatewayData.paymentDetails.bank.ifscCode}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.ifscCode, 'IFSC Code')}
+                              className="h-8 shrink-0 text-[11px] font-bold gap-1 px-2.5"
+                            >
+                              {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                              {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Payment Reference Submission */}
+                      <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                          Step 2: Submit Bank Reference / UTR For Verification
+                        </h4>
+
+                        <div className="space-y-1.5">
+                          <Label htmlFor="utrInput" className="text-xs font-bold text-black">
+                            UTR / Bank Transaction Reference Number *
+                          </Label>
+                          <Input
+                            id="utrInput"
+                            placeholder="e.g. 423910849201 or UTR1293049182"
+                            value={utrNumber}
+                            onChange={(e) => setUtrNumber(e.target.value)}
+                            className="font-mono text-xs sm:text-sm font-bold bg-white h-10 w-full"
+                            required
+                          />
+                          <p className="text-[11px] text-slate-500 font-semibold">
+                            12-digit UTR/RRN from your banking app transfer receipt
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label htmlFor="proofInput" className="text-xs font-bold text-black">
+                            Upload Payment Screenshot / Proof (Optional)
+                          </Label>
+                          <div className="flex items-center gap-2.5">
+                            <Input
+                              id="proofInput"
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              onChange={handleFileChange}
+                              className="text-xs file:mr-2.5 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6] flex-1 min-w-0"
+                            />
+                            {proofPreview && (
+                              <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
+                                <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleCancelPayment}
+                            className="w-full sm:w-auto h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50 px-5"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={submittingPayment || !utrNumber.trim()}
+                            className="w-full sm:flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                          >
+                            {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Submit Payment For Verification
+                          </Button>
+                        </div>
+                      </form>
+                    </div>
+                  )
+                )}
+              </>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 
