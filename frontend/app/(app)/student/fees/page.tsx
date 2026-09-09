@@ -1049,9 +1049,9 @@ export default function StudentFeesPage() {
             <div className="py-6 text-center space-y-4">
               <div className="rounded-xl border border-[#FDE68A] bg-[#FEF3C7] p-5 text-center space-y-2">
                 <AlertCircle className="mx-auto h-7 w-7 text-[#C94F18]" />
-                <p className="text-sm font-black text-[#C94F18]">Payment Details Not Configured</p>
+                <p className="text-sm font-black text-[#C94F18]">Payment Configuration Not Completed</p>
                 <p className="text-xs text-[#C94F18] font-semibold leading-relaxed">
-                  {zeroGatewayData.message}
+                  {zeroGatewayData.message || 'Payment configuration not completed. Your hostel administration has not configured their payment details (UPI ID / Bank Account). Please contact the hostel office.'}
                 </p>
               </div>
               <Button

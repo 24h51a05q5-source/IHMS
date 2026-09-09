@@ -78,15 +78,9 @@ export class ZeroGatewayPaymentService {
       throw new AppError('Student profile not found in your organization.', 404);
     }
 
-    let hostelId = student.hostel_id;
+    const hostelId = student.hostel_id;
     if (!hostelId) {
-      const defaultHostel = await queryOne<any>(
-        `SELECT id, name, hostel_name FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1`,
-        [orgId]
-      );
-      if (defaultHostel) {
-        hostelId = defaultHostel.id;
-      }
+      throw new AppError('Student is not assigned to any hostel branch. Cannot determine payment destination.', 400);
     }
 
     const hostelName = student.hostel_name || student.alt_hostel_name || 'Hostel';
@@ -125,7 +119,7 @@ export class ZeroGatewayPaymentService {
       return {
         configured: false,
         isGatewayConfigured,
-        message: 'Online payment is not configured by the hostel.',
+        message: 'Payment configuration not completed. Your hostel administration has not configured payment details (UPI ID or Bank Account). Please contact the hostel office.',
         student: {
           id: student.id,
           customerCode: student.customer_code,
@@ -327,6 +321,23 @@ export class ZeroGatewayPaymentService {
 
     if (!student) {
       throw new AppError('Student record not found.', 404);
+    }
+
+    if (!student.hostel_id) {
+      throw new AppError('Student is not assigned to any hostel branch.', 400);
+    }
+
+    // Verify the hostel has actually configured and activated the payment channel
+    const config = await hostelPaymentConfigService.getByHostelId(orgId, student.hostel_id);
+    const isUpiActive = Boolean(config?.upiConfig?.vpaAddress && (config.upiConfig.status === 'ACTIVE' || config.upiConfig.status === 'VERIFIED' || config.upiConfig.status === 'OWNER_CONFIRMED'));
+    const isBankActive = Boolean(config?.bankConfig?.accountNumber && (config.bankConfig.status === 'ACTIVE' || config.bankConfig.status === 'VERIFIED' || config.bankConfig.status === 'OWNER_CONFIRMED'));
+
+    const pmtMethod = paymentMethod || PaymentMethod.UPI;
+    if (pmtMethod === PaymentMethod.UPI && !isUpiActive) {
+      throw new AppError('Payment configuration not completed. UPI payments are not enabled for this hostel.', 400);
+    }
+    if ((pmtMethod === 'BANK_TRANSFER' || pmtMethod === 'IMPS' || pmtMethod === 'NEFT' || pmtMethod === 'RTGS') && !isBankActive) {
+      throw new AppError('Payment configuration not completed. Direct Bank Transfer is not enabled for this hostel.', 400);
     }
 
     const maxPayable = Number(student.financial_outstanding_balance || 0);

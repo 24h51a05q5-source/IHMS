@@ -275,19 +275,8 @@ export class HostelPaymentConfigService {
       [orgId, hostelId]
     );
 
-    // Fallback: if not configured for this specific branch, check for any existing config in the organization to pre-populate
-    let orgFallback = null;
-    if (!existingBranch && orgId) {
-      orgFallback = await queryOne<any>(
-        `SELECT * FROM hostel_payment_configs
-         WHERE organization_id = $1
-         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
-         LIMIT 1`,
-        [orgId]
-      );
-    }
-
-    const existing = existingBranch || orgFallback;
+    // Strict branch isolation: do NOT fall back to other branches in the organization
+    const existing = existingBranch;
 
     // Validate format FIRST so malformed inputs immediately return HTTP 400 Bad Request
     let upiStatus: PaymentConfigStatus = existingBranch?.upi_status || 'NOT_CONFIGURED';

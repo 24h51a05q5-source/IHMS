@@ -47,8 +47,8 @@ export default function SettingsPage() {
       feesApi
         .getHostelPaymentConfig(currentBranch.id)
         .then((res: any) => {
-          const cfg = res?.data || res;
-          if (cfg) {
+          const cfg = res?.data !== undefined ? res.data : res;
+          if (cfg && (cfg.upiConfig || cfg.bankConfig || cfg.upi_vpa || cfg.bank_account_number)) {
             const upi = cfg.upiConfig?.vpaAddress || cfg.upi_vpa || '';
             setUpiVpa(upi || '');
             setConfirmUpiVpa(upi || '');
@@ -72,9 +72,26 @@ export default function SettingsPage() {
               setBeneficiaryName('');
               setBankName('');
             }
+          } else {
+            // New or unconfigured hostel must have completely empty fields
+            setUpiVpa('');
+            setConfirmUpiVpa('');
+            setBankAccountNum('');
+            setConfirmBankAccountNum('');
+            setBankIfsc('');
+            setBeneficiaryName('');
+            setBankName('');
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          setUpiVpa('');
+          setConfirmUpiVpa('');
+          setBankAccountNum('');
+          setConfirmBankAccountNum('');
+          setBankIfsc('');
+          setBeneficiaryName('');
+          setBankName('');
+        });
     }
   }, [currentBranch?.id, user?.role]);
 
