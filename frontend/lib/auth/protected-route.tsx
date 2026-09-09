@@ -22,15 +22,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
     if (!pathname) return;
 
-    // Mandatory Terms & Conditions acceptance enforcement
+    // Mandatory Terms & Conditions acceptance enforcement (unaccepted users must visit /terms)
     if (!user.termsAccepted && pathname !== '/terms') {
       router.replace('/terms');
-      return;
-    }
-
-    // If user already accepted terms and visits /terms, route to their dashboard
-    if (user.termsAccepted && pathname === '/terms') {
-      router.replace(user.role === 'STUDENT' ? '/student/dashboard' : '/dashboard');
       return;
     }
 

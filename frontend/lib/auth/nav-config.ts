@@ -29,6 +29,7 @@ export const OWNER_NAV: NavItem[] = [
 
   { section: 'SYSTEM', label: 'Notifications', href: '/notifications', icon: 'Bell', roles: 'ALL', badge: 'notifications' },
   { section: 'SYSTEM', label: 'Help & Support', href: '/support', icon: 'LifeBuoy', roles: 'ALL' },
+  { section: 'SYSTEM', label: 'Terms & Conditions', href: '/terms', icon: 'FileText', roles: 'ALL' },
   { section: 'SYSTEM', label: 'Settings', href: '/settings', icon: 'Settings', roles: 'ALL' },
 ];
 
@@ -43,6 +44,7 @@ export const STUDENT_NAV: NavItem[] = [
   { section: 'SERVICES', label: 'Announcements', href: '/student/announcements', icon: 'Megaphone', roles: ['STUDENT'] },
   { section: 'SERVICES', label: 'Help & Support', href: '/student/support', icon: 'LifeBuoy', roles: ['STUDENT'] },
   { section: 'SERVICES', label: 'Notifications', href: '/student/notifications', icon: 'Bell', roles: ['STUDENT'], badge: 'notifications' },
+  { section: 'SERVICES', label: 'Terms & Conditions', href: '/terms', icon: 'FileText', roles: ['STUDENT'] },
 ];
 
 export const PARENT_NAV: NavItem[] = [

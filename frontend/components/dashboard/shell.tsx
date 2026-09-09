@@ -41,6 +41,7 @@ const SHG_ICON_COLORS: Record<string, string> = {
   HelpCircle: 'text-[#2563EB]',
   Headphones: 'text-[#2563EB]',
   User: 'text-[#2563EB]',
+  FileText: 'text-[#2563EB]',
 };
 
 // Helper to guarantee a real hostel name is never 'main'

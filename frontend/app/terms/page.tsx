@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import type { TermsContent, TermsSection } from '@/lib/types';
 import { FullScreenLoader } from '@/components/dashboard/loader';
+import { cn } from '@/lib/utils';
 
 export default function TermsAndConditionsPage() {
   const router = useRouter();
@@ -72,8 +73,19 @@ export default function TermsAndConditionsPage() {
     Boolean(user?.termsAccepted) &&
     user?.acceptedTermsVersion === (termsData?.version || '1.0');
 
+  // If already accepted previously, reflect that agreement in the checkbox state
+  useEffect(() => {
+    if (isAlreadyAccepted) {
+      setHasAgreed(true);
+    }
+  }, [isAlreadyAccepted]);
+
   const handleAcceptTerms = async () => {
-    if (!hasAgreed || submitting) return;
+    if (!hasAgreed) {
+      toast.error('Please check the box to agree to the Terms & Conditions before proceeding.');
+      return;
+    }
+    if (submitting) return;
     try {
       setSubmitting(true);
       const version = termsData?.version || '1.0';
@@ -219,34 +231,34 @@ export default function TermsAndConditionsPage() {
 
           {/* Acceptance Section */}
           <div className="pt-6 border-t border-slate-200 dark:border-slate-800">
-            {isAlreadyAccepted ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/60 dark:bg-emerald-950/20 p-6 sm:p-8 space-y-4">
-                <div className="flex items-start gap-3.5">
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-6 sm:p-8 space-y-6 shadow-sm">
+              {/* Status Header: Accepted vs Mandatory Review */}
+              {isAlreadyAccepted ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/30 p-4 sm:p-5 flex items-start gap-3.5">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
                     <CheckCircle2 className="h-5 w-5" />
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                       Terms & Conditions Accepted
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
+                        Version {termsData?.version || '1.0'}
+                      </span>
                     </h3>
-                    <p className="mt-1 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                      You have previously reviewed and agreed to the IHMS Terms & Conditions (Version {termsData?.version || '1.0'}). Your access is active and in good standing.
+                    <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                      You have previously reviewed and accepted these Terms & Conditions
+                      {user?.termsAcceptedAt
+                        ? ` on ${new Date(user.termsAcceptedAt).toLocaleDateString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })}`
+                        : ''}
+                      . Your residency account is verified and in good standing.
                     </p>
                   </div>
                 </div>
-
-                <div className="flex justify-end pt-2">
-                  <Button
-                    type="button"
-                    onClick={handleReturnToDashboard}
-                    className="w-full sm:w-auto min-h-[44px] h-11 px-6 rounded-xl bg-[#E87545] hover:bg-[#D66434] text-white font-semibold text-sm shadow-sm gap-2"
-                  >
-                    Return to Dashboard <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-6 sm:p-8 space-y-6 shadow-sm">
+              ) : (
                 <div className="flex items-start gap-3.5">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E87545] text-white">
                     <ShieldCheck className="h-5 w-5" />
@@ -256,49 +268,82 @@ export default function TermsAndConditionsPage() {
                       Mandatory Review & Acceptance
                     </h3>
                     <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                      Please review the Terms & Conditions above before continuing.
+                      Please review the Terms & Conditions above before continuing. You must check the agreement box to proceed.
                     </p>
                   </div>
                 </div>
+              )}
 
-                {/* Checkbox */}
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 transition-colors hover:border-slate-300 dark:hover:border-slate-600">
-                  <label className="flex items-start gap-3.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      id="terms-agree-checkbox"
-                      checked={hasAgreed}
-                      onChange={(e) => setHasAgreed(e.target.checked)}
-                      className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-[#E87545] focus:ring-[#E87545] cursor-pointer"
-                    />
-                    <div className="text-sm sm:text-base text-slate-800 dark:text-slate-200">
-                      <span className="font-semibold">
-                        I have read and agree to the IHMS Terms & Conditions.
-                      </span>
-                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                        By checking this box, you confirm that you accept all rights, obligations, and policies set forth in this agreement.
-                      </p>
-                    </div>
-                  </label>
-                </div>
+              {/* Acceptance Checkbox */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 sm:p-5 transition-colors hover:border-slate-300 dark:hover:border-slate-600">
+                <label
+                  htmlFor="terms-agree-checkbox"
+                  className="flex items-start gap-3.5 cursor-pointer select-none"
+                >
+                  <input
+                    type="checkbox"
+                    id="terms-agree-checkbox"
+                    name="termsAccepted"
+                    aria-label="I have read and agree to the Terms & Conditions"
+                    checked={hasAgreed}
+                    onChange={(e) => setHasAgreed(e.target.checked)}
+                    className="mt-1 h-5 w-5 shrink-0 rounded border-slate-300 text-[#E87545] focus:ring-[#E87545] cursor-pointer accent-[#E87545]"
+                  />
+                  <div className="flex-1 text-sm sm:text-base text-slate-800 dark:text-slate-200">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      I have read and agree to the Terms & Conditions
+                    </span>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {isAlreadyAccepted && hasAgreed
+                        ? `Accepted for Version ${termsData?.version || '1.0'}${
+                            user?.termsAcceptedAt
+                              ? ` on ${new Date(user.termsAcceptedAt).toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}`
+                              : ''
+                          }. You can review your residency agreement anytime.`
+                        : 'By checking this box, you confirm that you accept all rights, obligations, and policies set forth in this agreement.'}
+                    </p>
+                  </div>
+                </label>
+              </div>
 
-                {/* Action Buttons (Stacked on Mobile, Side-by-Side on Desktop) */}
-                <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleDeclineTerms}
-                    disabled={declining || submitting}
-                    className="w-full sm:w-auto min-h-[44px] h-11 px-5 border-slate-300 dark:border-slate-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-700 font-semibold text-sm rounded-xl gap-2 transition-colors"
-                  >
-                    <LogOut className="h-4 w-4" /> Decline & Exit
-                  </Button>
+              {/* Action Buttons (Stacked on Mobile, Side-by-Side on Desktop) */}
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDeclineTerms}
+                  disabled={declining || submitting}
+                  className="w-full sm:w-auto min-h-[44px] h-11 px-5 border-slate-300 dark:border-slate-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-700 font-semibold text-sm rounded-xl gap-2 transition-colors"
+                >
+                  <LogOut className="h-4 w-4" /> Decline & Exit
+                </Button>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  {isAlreadyAccepted && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleReturnToDashboard}
+                      className="w-full sm:w-auto min-h-[44px] h-11 px-6 rounded-xl border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-sm shadow-sm gap-2"
+                    >
+                      Return to Dashboard <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  )}
 
                   <Button
                     type="button"
                     onClick={handleAcceptTerms}
-                    disabled={!hasAgreed || submitting}
-                    className="w-full sm:w-auto min-h-[44px] h-11 px-8 rounded-xl bg-[#E87545] hover:bg-[#D66434] text-white font-semibold text-sm shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed gap-2"
+                    disabled={submitting}
+                    className={cn(
+                      'w-full sm:w-auto min-h-[44px] h-11 px-8 rounded-xl font-semibold text-sm shadow-sm transition-all gap-2',
+                      hasAgreed
+                        ? 'bg-[#E87545] hover:bg-[#D66434] text-white cursor-pointer'
+                        : 'bg-slate-200 text-slate-500 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 cursor-pointer'
+                    )}
                   >
                     {submitting ? (
                       <>
@@ -306,13 +351,14 @@ export default function TermsAndConditionsPage() {
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="h-4 w-4" /> Accept & Continue
+                        <CheckCircle2 className="h-4 w-4" />
+                        {isAlreadyAccepted ? 'Re-confirm & Save' : 'Accept & Continue'}
                       </>
                     )}
                   </Button>
                 </div>
               </div>
-            )}
+            </div>
           </div>
 
           {/* Footer note */}
