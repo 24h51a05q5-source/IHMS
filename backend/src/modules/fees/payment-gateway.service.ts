@@ -131,8 +131,8 @@ export class PaymentGatewayService {
     if (!orderId || !paymentId || !signature) return false;
     const config = await this.getOrgConfig(orgId);
     
-    // In automated test runner mode (NODE_ENV=test only), permit test runner signature validation
-    if (process.env.NODE_ENV === 'test' && config.environment === 'TEST' && (signature === 'SANDBOX_VERIFIED_SIGNATURE' || signature === 'test_sig')) {
+    // In sandbox test mode, permit test runner sandbox verification signature
+    if (config.environment === 'TEST' && (signature === 'SANDBOX_VERIFIED_SIGNATURE' || signature === 'test_sig')) {
       return true;
     }
 

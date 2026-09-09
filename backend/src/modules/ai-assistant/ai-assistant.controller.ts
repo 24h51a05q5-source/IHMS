@@ -1,5 +1,6 @@
 import { Router, Response, Request } from 'express';
 import { AppError } from '../../common/filters/http-exception.filter';
+import { authenticate } from '../../common/guards/auth.guard';
 import { aiAssistantOrchestratorService } from './ai-assistant-orchestrator.service';
 import { aiAssistantLearningService } from './ai-assistant-learning.service';
 import { AuthenticatedOwnerContext } from './ai-assistant.types';
@@ -35,7 +36,7 @@ function requireOwnerOrManagement(req: Request, _res: Response, next: any) {
   next();
 }
 
-aiAssistantRouter.use(requireOwnerOrManagement);
+aiAssistantRouter.use(authenticate, requireOwnerOrManagement);
 
 function getOwnerContext(req: Request): AuthenticatedOwnerContext {
   const u = req.user!;
