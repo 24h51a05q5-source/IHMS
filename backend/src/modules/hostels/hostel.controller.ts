@@ -157,7 +157,7 @@ const resolveTargetHostelId = async (paramId: string | undefined, req: Request):
   if (paramId && paramId !== 'payment-config' && paramId !== 'my' && paramId !== 'current') {
     return paramId;
   }
-  const userHostelId = (req.user as any)?.hostelBranchId || (req.user as any)?.hostelId;
+  const userHostelId = (req.user as any)?.hostelBranchId || (req.user as any)?.hostelId || (req.user as any)?.branchId;
   if (userHostelId) return userHostelId;
   const defaultHostel = await queryOne<any>(
     'SELECT id FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1',

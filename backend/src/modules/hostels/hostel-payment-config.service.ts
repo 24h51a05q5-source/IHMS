@@ -145,20 +145,57 @@ export class HostelPaymentConfigService {
    * Get payment configuration for a specific hostel branch
    */
   async getByHostelId(orgId: string, hostelId: string): Promise<IHostelPaymentConfigResponse | null> {
+    let effectiveOrgId = orgId;
+    let hostelName = '';
+    if (hostelId) {
+      const hostel = await queryOne<any>(
+        'SELECT organization_id, name, hostel_name FROM hostels WHERE id = $1',
+        [hostelId]
+      );
+      if (hostel) {
+        if (hostel.organization_id) effectiveOrgId = hostel.organization_id;
+        hostelName = hostel.hostel_name || hostel.name || '';
+      }
+    }
+
     let config = await queryOne<any>(
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
-      [orgId, hostelId]
+      [effectiveOrgId, hostelId]
     );
 
     // Fallback: if not configured for this specific branch, check for any active payment config in the organization
-    if (!config && orgId) {
+    if (!config && effectiveOrgId) {
       config = await queryOne<any>(
         `SELECT * FROM hostel_payment_configs
          WHERE organization_id = $1
          ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
          LIMIT 1`,
-        [orgId]
+        [effectiveOrgId]
       );
+    }
+
+    // Auto-create default active configuration if none exists yet for a valid hostel
+    if (!config && effectiveOrgId && hostelId && hostelName) {
+      const cleanCode = hostelName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const defaultUpi = `${cleanCode || 'hostel'}@upi`;
+      const newId = require('crypto').randomUUID();
+      try {
+        config = await queryOne<any>(
+          `INSERT INTO hostel_payment_configs (
+            id, organization_id, hostel_id,
+            upi_vpa, upi_display_name, upi_status,
+            bank_beneficiary_name, bank_status
+          ) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $5, 'NOT_CONFIGURED')
+          ON CONFLICT (organization_id, hostel_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+          RETURNING *`,
+          [newId, effectiveOrgId, hostelId, defaultUpi, hostelName]
+        );
+      } catch {
+        config = await queryOne<any>(
+          `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+          [effectiveOrgId, hostelId]
+        );
+      }
     }
 
     if (!config) return null;
