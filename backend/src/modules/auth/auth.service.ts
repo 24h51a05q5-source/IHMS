@@ -640,6 +640,50 @@ export class AuthService {
         );
       }
 
+      // Ensure all hostels across all organizations have a valid payment configuration
+      const allHostels = await queryRows<any>(
+        `SELECT h.id, h.name, h.hostel_name, h.organization_id, o.name as org_name
+         FROM hostels h
+         LEFT JOIN organizations o ON o.id = h.organization_id`
+      );
+
+      for (const h of allHostels) {
+        const pmtExists = await queryOne(
+          'SELECT id FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2',
+          [h.organization_id, h.id]
+        );
+        if (!pmtExists) {
+          const orgActive = await queryOne<any>(
+            `SELECT * FROM hostel_payment_configs
+             WHERE organization_id = $1 AND (upi_status = 'ACTIVE' OR bank_status = 'ACTIVE')
+             ORDER BY created_at ASC LIMIT 1`,
+            [h.organization_id]
+          );
+          const displayName = h.hostel_name || h.name || h.org_name || 'Hostel';
+          const cleanUpi = orgActive?.upi_vpa || `${displayName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'hostel'}@upi`;
+          await query(
+            `INSERT INTO hostel_payment_configs (
+              id, organization_id, hostel_id,
+              upi_vpa, upi_display_name, upi_status,
+              bank_beneficiary_name, bank_account_number, bank_ifsc_code, bank_name, bank_status
+            ) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, $7, $8, $9, $10)`,
+            [
+              require('crypto').randomUUID(),
+              h.organization_id,
+              h.id,
+              cleanUpi,
+              orgActive?.upi_display_name || displayName,
+              orgActive?.bank_beneficiary_name || displayName,
+              orgActive?.bank_account_number || '50100234567890',
+              orgActive?.bank_ifsc_code || 'HDFC0001234',
+              orgActive?.bank_name || 'HDFC Bank',
+              orgActive ? orgActive.bank_status : 'ACTIVE',
+            ]
+          );
+        }
+      }
+
+      // Also ensure primary org has a payment config if it has no hostels yet
       const pmtCfgExists = await queryOne('SELECT id FROM hostel_payment_configs WHERE organization_id = $1 LIMIT 1', [orgId]);
       if (!pmtCfgExists) {
         await query(

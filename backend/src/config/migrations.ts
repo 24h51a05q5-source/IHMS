@@ -896,6 +896,28 @@ export async function runMigrations(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_user ON terms_acceptances(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_terms_acceptances_ver ON terms_acceptances(terms_version)`,
+    `CREATE TABLE IF NOT EXISTS owner_ai_preferences (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      pref_key TEXT NOT NULL,
+      pref_value TEXT NOT NULL,
+      category TEXT DEFAULT 'GENERAL',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_ai_prefs ON owner_ai_preferences(organization_id, owner_id, pref_key)`,
+    `CREATE TABLE IF NOT EXISTS ai_confirmation_tokens (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      action_payload TEXT NOT NULL,
+      status TEXT DEFAULT 'PENDING',
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ai_confirm_tokens ON ai_confirmation_tokens(organization_id, owner_id, status)`,
   ];
 
   for (const stmt of statements) {
