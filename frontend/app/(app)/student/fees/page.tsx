@@ -282,13 +282,24 @@ export default function StudentFeesPage() {
         setUtrNumber('');
         setProofFile(null);
         setProofPreview(null);
-        setActiveTab(
-          paymentMethod === 'BANK_TRANSFER' ? 'BANK' :
-          paymentMethod === 'CREDIT_CARD' ? 'CREDIT_CARD' :
-          paymentMethod === 'DEBIT_CARD' || paymentMethod === 'CARD' ? 'DEBIT_CARD' :
-          paymentMethod === 'NET_BANKING' ? 'NET_BANKING' :
-          'UPI'
-        );
+        const hasUpi = Boolean(paymentData.paymentDetails?.upi?.vpaAddress);
+        const hasBank = Boolean(paymentData.paymentDetails?.bank?.accountNumber);
+
+        let initialTab: 'UPI' | 'BANK' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'NET_BANKING' = 'UPI';
+        if (paymentMethod === 'BANK_TRANSFER' && hasBank) {
+          initialTab = 'BANK';
+        } else if (paymentMethod === 'CREDIT_CARD') {
+          initialTab = 'CREDIT_CARD';
+        } else if (paymentMethod === 'DEBIT_CARD' || paymentMethod === 'CARD') {
+          initialTab = 'DEBIT_CARD';
+        } else if (paymentMethod === 'NET_BANKING') {
+          initialTab = 'NET_BANKING';
+        } else if (hasUpi) {
+          initialTab = 'UPI';
+        } else if (hasBank) {
+          initialTab = 'BANK';
+        }
+        setActiveTab(initialTab);
         setZeroGatewayModalOpen(true);
       } else {
         toast.error('Online payment is not configured by the hostel.');
@@ -1070,88 +1081,106 @@ export default function StudentFeesPage() {
               </div>
 
               {/* Payment Methods Switcher */}
-              <div className="grid grid-cols-5 border-b border-[#CBD5E1] text-[11px] font-black">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('UPI');
-                    setPaymentMethod('UPI');
-                  }}
-                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
-                    activeTab === 'UPI'
-                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                      : 'border-transparent text-slate-500 hover:text-black'
-                  }`}
-                >
-                  <QrCode className="inline-block h-3.5 w-3.5 mr-1" />
-                  UPI / QR
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('DEBIT_CARD');
-                    setPaymentMethod('DEBIT_CARD');
-                  }}
-                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
-                    activeTab === 'DEBIT_CARD'
-                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                      : 'border-transparent text-slate-500 hover:text-black'
-                  }`}
-                >
-                  <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
-                  Debit Card
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('CREDIT_CARD');
-                    setPaymentMethod('CREDIT_CARD');
-                  }}
-                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
-                    activeTab === 'CREDIT_CARD'
-                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                      : 'border-transparent text-slate-500 hover:text-black'
-                  }`}
-                >
-                  <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
-                  Credit Card
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('NET_BANKING');
-                    setPaymentMethod('NET_BANKING');
-                  }}
-                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
-                    activeTab === 'NET_BANKING'
-                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                      : 'border-transparent text-slate-500 hover:text-black'
-                  }`}
-                >
-                  <Landmark className="inline-block h-3.5 w-3.5 mr-1" />
-                  Net Banking
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('BANK');
-                    setPaymentMethod('BANK_TRANSFER');
-                  }}
-                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
-                    activeTab === 'BANK'
-                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
-                      : 'border-transparent text-slate-500 hover:text-black'
-                  }`}
-                >
-                  <Building2 className="inline-block h-3.5 w-3.5 mr-1" />
-                  Bank IMPS
-                </button>
-              </div>
+              {(() => {
+                const hasUpi = Boolean(zeroGatewayData?.paymentDetails?.upi?.vpaAddress);
+                const hasBank = Boolean(zeroGatewayData?.paymentDetails?.bank?.accountNumber);
+                const isGwConfigured = Boolean(zeroGatewayData?.isGatewayConfigured);
+
+                return (
+                  <div className="flex items-stretch border-b border-[#CBD5E1] text-[11px] font-black overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('UPI');
+                        setPaymentMethod('UPI');
+                      }}
+                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
+                        activeTab === 'UPI'
+                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                          : 'border-transparent text-slate-500 hover:text-black'
+                      }`}
+                    >
+                      <QrCode className="inline-block h-3.5 w-3.5 mr-1" />
+                      UPI / QR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('DEBIT_CARD');
+                        setPaymentMethod('DEBIT_CARD');
+                      }}
+                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
+                        activeTab === 'DEBIT_CARD'
+                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                          : 'border-transparent text-slate-500 hover:text-black'
+                      }`}
+                    >
+                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
+                      Debit Card {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('CREDIT_CARD');
+                        setPaymentMethod('CREDIT_CARD');
+                      }}
+                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
+                        activeTab === 'CREDIT_CARD'
+                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                          : 'border-transparent text-slate-500 hover:text-black'
+                      }`}
+                    >
+                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
+                      Credit Card {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('NET_BANKING');
+                        setPaymentMethod('NET_BANKING');
+                      }}
+                      className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
+                        activeTab === 'NET_BANKING'
+                          ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                          : 'border-transparent text-slate-500 hover:text-black'
+                      }`}
+                    >
+                      <Landmark className="inline-block h-3.5 w-3.5 mr-1" />
+                      Net Banking {!isGwConfigured && <span className="text-[9px] text-slate-400 font-normal">(Gateway)</span>}
+                    </button>
+                    {hasBank && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('BANK');
+                          setPaymentMethod('BANK_TRANSFER');
+                        }}
+                        className={`flex-1 min-w-[90px] py-2 text-center border-b-2 transition-all truncate px-1.5 ${
+                          activeTab === 'BANK'
+                            ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                            : 'border-transparent text-slate-500 hover:text-black'
+                        }`}
+                      >
+                        <Building2 className="inline-block h-3.5 w-3.5 mr-1" />
+                        Bank IMPS
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* TAB 1: UPI & DYNAMIC QR CODE */}
               {activeTab === 'UPI' && (
                 <div className="space-y-4 text-center">
-                  {paymentStatus === 'EXPIRED' ? (
+                  {!zeroGatewayData?.paymentDetails?.upi?.vpaAddress ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-6 text-center space-y-2">
+                      <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
+                      <p className="text-sm font-black text-amber-900">UPI Payment Not Configured</p>
+                      <p className="text-xs text-amber-800 font-medium max-w-sm mx-auto">
+                        Your hostel administration has not configured a UPI ID / VPA for fee collection. Please contact the hostel office.
+                      </p>
+                    </div>
+                  ) : paymentStatus === 'EXPIRED' ? (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center space-y-2">
                       <AlertCircle className="mx-auto h-6 w-6 text-rose-600" />
                       <p className="text-xs font-black text-rose-700">Dynamic Payment QR Expired</p>
@@ -1204,14 +1233,14 @@ export default function StudentFeesPage() {
                           <div className="text-left">
                             <p className="text-[10px] font-bold text-slate-500">Hostel UPI ID (VPA)</p>
                             <p className="font-mono text-xs font-black text-black">
-                              {zeroGatewayData?.paymentDetails?.upi?.vpaAddress || 'ihms.settlement@upi'}
+                              {zeroGatewayData.paymentDetails.upi.vpaAddress}
                             </p>
                           </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.upi?.vpaAddress || 'ihms.settlement@upi', 'UPI ID')}
+                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.upi.vpaAddress, 'UPI ID')}
                             className="h-7 text-[11px] font-bold gap-1"
                           >
                             {copiedField === 'UPI ID' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
@@ -1231,46 +1260,46 @@ export default function StudentFeesPage() {
                           </a>
                         )}
                       </div>
+
+                      {/* UTR Submission Form for UPI */}
+                      <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1] text-left">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                          Step 2: Confirm UPI Payment Reference
+                        </h4>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="utrInputUpi" className="text-xs font-bold text-black">
+                            12-Digit UTR / Bank Reference Number *
+                          </Label>
+                          <Input
+                            id="utrInputUpi"
+                            placeholder="e.g. 423910849201"
+                            value={utrNumber}
+                            onChange={(e) => setUtrNumber(e.target.value)}
+                            className="font-mono text-xs font-bold bg-white"
+                            required
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <Button
+                            type="submit"
+                            disabled={submittingPayment || !utrNumber.trim()}
+                            className="flex-1 h-10 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                          >
+                            {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Confirm UPI Payment
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleCancelPayment}
+                            className="h-10 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
                     </>
                   )}
-
-                  {/* UTR Submission Form for UPI */}
-                  <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1] text-left">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-black">
-                      Step 2: Confirm UPI Payment Reference
-                    </h4>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="utrInputUpi" className="text-xs font-bold text-black">
-                        12-Digit UTR / Bank Reference Number *
-                      </Label>
-                      <Input
-                        id="utrInputUpi"
-                        placeholder="e.g. 423910849201"
-                        value={utrNumber}
-                        onChange={(e) => setUtrNumber(e.target.value)}
-                        className="font-mono text-xs font-bold bg-white"
-                        required
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        type="submit"
-                        disabled={submittingPayment || !utrNumber.trim()}
-                        className="flex-1 h-10 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                      >
-                        {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Confirm UPI Payment
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleCancelPayment}
-                        className="h-10 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
                 </div>
               )}
 

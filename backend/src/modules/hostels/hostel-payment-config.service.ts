@@ -145,22 +145,18 @@ export class HostelPaymentConfigService {
    * Get payment configuration for a specific hostel branch
    */
   async getByHostelId(orgId: string, hostelId: string): Promise<IHostelPaymentConfigResponse | null> {
-    let config = await queryOne<any>(
-      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
-      [orgId, hostelId]
-    );
-
-    // Fallback: if not configured for this specific branch, check for any active payment config in the organization
-    if (!config && orgId) {
-      config = await queryOne<any>(
-        `SELECT * FROM hostel_payment_configs
-         WHERE organization_id = $1
-         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
-         LIMIT 1`,
-        [orgId]
-      );
+    let effectiveOrgId = orgId;
+    if (!effectiveOrgId && hostelId) {
+      const hRow = await queryOne<any>('SELECT organization_id FROM hostels WHERE id = $1', [hostelId]);
+      if (hRow?.organization_id) effectiveOrgId = hRow.organization_id;
     }
 
+    const config = await queryOne<any>(
+      `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
+      [effectiveOrgId, hostelId]
+    );
+
+    // Strict hostel isolation: do NOT fall back to another hostel branch!
     if (!config) return null;
 
     const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
@@ -334,7 +330,7 @@ export class HostelPaymentConfigService {
         throw new AppError('UPI ID / VPA is required.', 400);
       }
       if (!HostelPaymentConfigService.validateVpa(vpa)) {
-        throw new AppError(`Invalid UPI ID format "${vpa}". Expected format: hostelname@upi`, 400);
+        throw new AppError(`Invalid UPI ID format "${vpa}". Please enter a valid UPI ID (e.g. yourname@okaxis, 9876543210@ybl, yourname@paytm, etc.).`, 400);
       }
 
       pendingUpiVpa = vpa;
@@ -510,16 +506,6 @@ export class HostelPaymentConfigService {
       [orgId, hostelId]
     );
 
-    if (!existing && orgId) {
-      existing = await queryOne<any>(
-        `SELECT * FROM hostel_payment_configs
-         WHERE organization_id = $1
-         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
-         LIMIT 1`,
-        [orgId]
-      );
-    }
-
     if (!existing) {
       throw new AppError('Payment configuration not found for activation.', 404);
     }
@@ -599,16 +585,6 @@ export class HostelPaymentConfigService {
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
       [orgId, hostelId]
     );
-
-    if (!existing && orgId) {
-      existing = await queryOne<any>(
-        `SELECT * FROM hostel_payment_configs
-         WHERE organization_id = $1
-         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
-         LIMIT 1`,
-        [orgId]
-      );
-    }
 
     if (!existing) {
       throw new AppError('Payment configuration not found.', 404);
