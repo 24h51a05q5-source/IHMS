@@ -520,13 +520,36 @@ router.post('/payments/verify', async (req: Request, res: Response, next: NextFu
   }
 });
 
+// POST /payments/:id/confirm
+router.post('/payments/:id/confirm', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const paymentId = req.params.id;
+    const payload = req.body?.gatewayPayload || req.body || {};
+    const result = await feeService.verifyAndConfirmPayment(req.user!.organizationId, {
+      paymentId,
+      gatewayOrderId: payload.gatewayOrderId || payload.orderId || payload.razorpay_order_id,
+      gatewayPaymentId: payload.gatewayPaymentId || payload.paymentId || payload.razorpay_payment_id,
+      gatewaySignature: payload.gatewaySignature || payload.signature || payload.razorpay_signature,
+    });
+    res.json({
+      success: true,
+      data: result,
+      message: 'Payment confirmed successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /payments/dynamic-qr (Initiate dynamic UPI QR payment request)
 router.post('/payments/dynamic-qr', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
     const isStaff = req.user!.role !== UserRole.STUDENT;
     const studentId = isStaff && req.body.studentId ? req.body.studentId : (req.user!.studentId || req.user!.id);
-    const amount = req.body.amount ? Number(req.body.amount) : undefined;
+    const amount = (req.body.amount !== undefined && req.body.amount !== null && req.body.amount !== '')
+      ? Number(req.body.amount)
+      : undefined;
     const installmentId = req.body.installmentId;
     const result = await zeroGatewayPaymentService.createDynamicQRPayment(
       req.user!.organizationId,

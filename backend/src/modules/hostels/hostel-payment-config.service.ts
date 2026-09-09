@@ -231,14 +231,27 @@ export class HostelPaymentConfigService {
     const hasBank = Boolean(input.accountNumber || input.bankConfig?.accountNumber || (input as any).bankAccountNumber);
 
     if (hasUpi && hasBank) {
-      await this.initiateVerification(orgId, hostelId, ownerId, 'UPI', input);
+      await this.initiateVerification(orgId, hostelId, ownerId, 'UPI', input, true);
       await this.confirmAndActivate(orgId, hostelId, ownerId, 'UPI');
-      await this.initiateVerification(orgId, hostelId, ownerId, 'BANK', input);
+      await this.initiateVerification(orgId, hostelId, ownerId, 'BANK', input, true);
       return this.confirmAndActivate(orgId, hostelId, ownerId, 'BANK');
     }
 
+    if ((input as any).clearBank || input.bankConfig === null || ((input as any).bankConfig && (input as any).bankConfig.accountNumber === '')) {
+      await query(
+        `UPDATE hostel_payment_configs
+         SET bank_status = 'NOT_CONFIGURED', bank_account_number = NULL, bank_ifsc_code = NULL,
+             bank_beneficiary_name = NULL, bank_name = NULL,
+             pending_bank_account_number = NULL, pending_bank_ifsc_code = NULL,
+             pending_bank_beneficiary_name = NULL, pending_bank_name = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE hostel_id = $1 AND organization_id = $2`,
+        [hostelId, orgId]
+      );
+    }
+
     const method = input.method || (hasUpi ? 'UPI' : 'BANK');
-    await this.initiateVerification(orgId, hostelId, ownerId, method, input);
+    await this.initiateVerification(orgId, hostelId, ownerId, method, input, true);
     return this.confirmAndActivate(orgId, hostelId, ownerId, method);
   }
 
@@ -250,7 +263,8 @@ export class HostelPaymentConfigService {
     hostelId: string,
     ownerId: string,
     method: 'UPI' | 'BANK',
-    input: IHostelPaymentConfigInput
+    input: IHostelPaymentConfigInput,
+    skipRateLimit: boolean = false
   ): Promise<IHostelPaymentConfigResponse> {
     const hostel = await queryOne<any>(
       `SELECT id, hostel_name, name FROM hostels WHERE id = $1 AND organization_id = $2`,
@@ -260,36 +274,62 @@ export class HostelPaymentConfigService {
       throw new AppError('Hostel branch not found in your organization.', 404);
     }
 
-    let existing = await queryOne<any>(
+    const existingBranch = await queryOne<any>(
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
       [orgId, hostelId]
     );
 
-    this.checkRateLimit(existing);
-
-    const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
-    const nowIso = new Date().toISOString();
-    const lastAt = existing?.verification_last_attempt_at ? new Date(existing.verification_last_attempt_at).getTime() : 0;
-    const fifteenMinutes = 15 * 60 * 1000;
-    let newCount = (existing?.verification_rate_limit_count || 0) + 1;
-    if (Date.now() - lastAt > fifteenMinutes) {
-      newCount = 1;
+    // Fallback: if not configured for this specific branch, check for any existing config in the organization to pre-populate
+    let orgFallback = null;
+    if (!existingBranch && orgId) {
+      orgFallback = await queryOne<any>(
+        `SELECT * FROM hostel_payment_configs
+         WHERE organization_id = $1
+         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
+         LIMIT 1`,
+        [orgId]
+      );
     }
 
-    let upiStatus: PaymentConfigStatus = existing?.upi_status || 'NOT_CONFIGURED';
-    let bankStatus: PaymentConfigStatus = existing?.bank_status || 'NOT_CONFIGURED';
+    const existing = existingBranch || orgFallback;
+
+    // Validate format FIRST so malformed inputs immediately return HTTP 400 Bad Request
+    let upiStatus: PaymentConfigStatus = existingBranch?.upi_status || 'NOT_CONFIGURED';
+    let bankStatus: PaymentConfigStatus = existingBranch?.bank_status || 'NOT_CONFIGURED';
     let verifiedBeneficiary: string | undefined = undefined;
 
-    let pendingUpiVpa = existing?.pending_upi_vpa || null;
-    let pendingUpiName = existing?.pending_upi_display_name || null;
-    let pendingBeneficiaryName = existing?.pending_bank_beneficiary_name || null;
-    let pendingAccountNumber = existing?.pending_bank_account_number || null;
-    let pendingIfscCode = existing?.pending_bank_ifsc_code || null;
-    let pendingBankName = existing?.pending_bank_name || null;
+    let pendingUpiVpa = existingBranch?.pending_upi_vpa || null;
+    let pendingUpiName = existingBranch?.pending_upi_display_name || null;
+    let pendingBeneficiaryName = existingBranch?.pending_bank_beneficiary_name || null;
+    let pendingAccountNumber = existingBranch?.pending_bank_account_number || null;
+    let pendingIfscCode = existingBranch?.pending_bank_ifsc_code || null;
+    let pendingBankName = existingBranch?.pending_bank_name || null;
+
+    const isAutoAvailable = Boolean(process.env.PAYMENT_VERIFICATION_API_KEY);
 
     if (method === 'UPI') {
-      const vpa = (input.upiConfig?.vpaAddress || input.vpaAddress || (input as any).upiVpa || (input as any).upi_vpa || '').trim();
-      const name = (input.upiConfig?.displayName || input.displayName || (input as any).upiDisplayName || '').trim() || hostel.hostel_name || hostel.name || '';
+      const vpa = (
+        input?.upiConfig?.vpaAddress ||
+        input?.vpaAddress ||
+        (input as any)?.upiVpa ||
+        (input as any)?.upi_vpa ||
+        (input as any)?.vpa ||
+        (input as any)?.upiId ||
+        (input as any)?.upi_id ||
+        existing?.pending_upi_vpa ||
+        existing?.upi_vpa ||
+        ''
+      ).trim();
+      const name = (
+        input?.upiConfig?.displayName ||
+        input?.displayName ||
+        (input as any)?.upiDisplayName ||
+        (input as any)?.upi_display_name ||
+        existing?.pending_upi_display_name ||
+        existing?.upi_display_name ||
+        ''
+      ).trim() || hostel.hostel_name || hostel.name || '';
+
       if (!vpa) {
         throw new AppError('UPI ID / VPA is required.', 400);
       }
@@ -308,11 +348,44 @@ export class HostelPaymentConfigService {
         verifiedBeneficiary = name;
       }
     } else {
-      const beneficiary = (input.bankConfig?.beneficiaryName || input.beneficiaryName || (input as any).bankBeneficiaryName || '').trim();
-      const acc = (input.bankConfig?.accountNumber || input.accountNumber || (input as any).bankAccountNumber || '').trim();
-      const confirmAcc = (input.bankConfig?.confirmAccountNumber || input.confirmAccountNumber || (input as any).confirmBankAccountNumber || '').trim();
-      const ifsc = (input.bankConfig?.ifscCode || input.ifscCode || (input as any).bankIfscCode || '').trim().toUpperCase();
-      const bank = (input.bankConfig?.bankName || input.bankName || (input as any).bankName || '').trim();
+      const beneficiary = (
+        input?.bankConfig?.beneficiaryName ||
+        input?.beneficiaryName ||
+        (input as any)?.bankBeneficiaryName ||
+        existing?.pending_bank_beneficiary_name ||
+        existing?.bank_beneficiary_name ||
+        ''
+      ).trim();
+      const acc = (
+        input?.bankConfig?.accountNumber ||
+        input?.accountNumber ||
+        (input as any)?.bankAccountNumber ||
+        existing?.pending_bank_account_number ||
+        existing?.bank_account_number ||
+        ''
+      ).trim();
+      const confirmAcc = (
+        input?.bankConfig?.confirmAccountNumber ||
+        input?.confirmAccountNumber ||
+        (input as any)?.confirmBankAccountNumber ||
+        acc
+      ).trim();
+      const ifsc = (
+        input?.bankConfig?.ifscCode ||
+        input?.ifscCode ||
+        (input as any)?.bankIfscCode ||
+        existing?.pending_bank_ifsc_code ||
+        existing?.bank_ifsc_code ||
+        ''
+      ).trim().toUpperCase();
+      const bank = (
+        input?.bankConfig?.bankName ||
+        input?.bankName ||
+        (input as any)?.bankName ||
+        existing?.pending_bank_name ||
+        existing?.bank_name ||
+        ''
+      ).trim();
 
       if (!beneficiary) throw new AppError('Beneficiary account holder name is required.', 400);
       if (!acc) throw new AppError('Bank account number is required.', 400);
@@ -339,6 +412,18 @@ export class HostelPaymentConfigService {
       }
     }
 
+    if (!skipRateLimit) {
+      this.checkRateLimit(existingBranch || existing);
+    }
+
+    const nowIso = new Date().toISOString();
+    const lastAt = existing?.verification_last_attempt_at ? new Date(existing.verification_last_attempt_at).getTime() : 0;
+    const fifteenMinutes = 15 * 60 * 1000;
+    let newCount = skipRateLimit ? Number(existing?.verification_rate_limit_count || 0) : ((existing?.verification_rate_limit_count || 0) + 1);
+    if (!skipRateLimit && Date.now() - lastAt > fifteenMinutes) {
+      newCount = 1;
+    }
+
     const audit = this.parseAuditLog(existing?.audit_log);
     audit.push({
       timestamp: nowIso,
@@ -347,8 +432,8 @@ export class HostelPaymentConfigService {
       details: method === 'UPI' ? `Target VPA: ${pendingUpiVpa}` : `Target Account: ${HostelPaymentConfigService.maskAccountNumber(pendingAccountNumber || '')}`,
     });
 
-    let configId = existing?.id;
-    if (!existing) {
+    let configId = existingBranch?.id;
+    if (!existingBranch) {
       configId = require('crypto').randomUUID();
       await query(
         `INSERT INTO hostel_payment_configs (
@@ -420,10 +505,20 @@ export class HostelPaymentConfigService {
     ownerId: string,
     method: 'UPI' | 'BANK'
   ): Promise<IHostelPaymentConfigResponse> {
-    const existing = await queryOne<any>(
+    let existing = await queryOne<any>(
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
       [orgId, hostelId]
     );
+
+    if (!existing && orgId) {
+      existing = await queryOne<any>(
+        `SELECT * FROM hostel_payment_configs
+         WHERE organization_id = $1
+         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
+         LIMIT 1`,
+        [orgId]
+      );
+    }
 
     if (!existing) {
       throw new AppError('Payment configuration not found for activation.', 404);
@@ -451,6 +546,7 @@ export class HostelPaymentConfigService {
         `UPDATE hostel_payment_configs
          SET upi_vpa = $1, upi_display_name = $2, upi_status = 'ACTIVE',
              pending_upi_vpa = NULL, pending_upi_display_name = NULL,
+             verification_rate_limit_count = 0,
              audit_log = $3, updated_at = CURRENT_TIMESTAMP
          WHERE id = $4 AND organization_id = $5`,
         [newVpa, newName, JSON.stringify(audit), existing.id, orgId]
@@ -478,6 +574,7 @@ export class HostelPaymentConfigService {
              bank_ifsc_code = $3, bank_name = $4, bank_status = 'ACTIVE',
              pending_bank_beneficiary_name = NULL, pending_bank_account_number = NULL,
              pending_bank_ifsc_code = NULL, pending_bank_name = NULL,
+             verification_rate_limit_count = 0,
              audit_log = $5, updated_at = CURRENT_TIMESTAMP
          WHERE id = $6 AND organization_id = $7`,
         [newBeneficiary, newAcc, newIfsc, newBank, JSON.stringify(audit), existing.id, orgId]
@@ -498,10 +595,20 @@ export class HostelPaymentConfigService {
     ownerId: string,
     method: 'UPI' | 'BANK'
   ): Promise<IHostelPaymentConfigResponse> {
-    const existing = await queryOne<any>(
+    let existing = await queryOne<any>(
       `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND hostel_id = $2`,
       [orgId, hostelId]
     );
+
+    if (!existing && orgId) {
+      existing = await queryOne<any>(
+        `SELECT * FROM hostel_payment_configs
+         WHERE organization_id = $1
+         ORDER BY (CASE WHEN upi_status = 'ACTIVE' OR bank_status = 'ACTIVE' THEN 0 ELSE 1 END), created_at ASC
+         LIMIT 1`,
+        [orgId]
+      );
+    }
 
     if (!existing) {
       throw new AppError('Payment configuration not found.', 404);

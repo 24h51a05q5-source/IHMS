@@ -104,7 +104,7 @@ export default function StudentFeesPage() {
   // Payment Form State
   const [paymentOption, setPaymentOption] = useState<'FULL_DUE' | 'CUSTOM'>('FULL_DUE');
   const [customAmount, setCustomAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'CARD' | 'NET_BANKING' | 'BANK_TRANSFER'>('UPI');
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'CARD' | 'NET_BANKING' | 'BANK_TRANSFER'>('UPI');
   const [selectedInstallmentId, setSelectedInstallmentId] = useState<string | null>(
     () => cachedFees?.currentDueInstallment?.id || null
   );
@@ -113,7 +113,7 @@ export default function StudentFeesPage() {
   const [zeroGatewayModalOpen, setZeroGatewayModalOpen] = useState(false);
   const [loadingPaymentDetails, setLoadingPaymentDetails] = useState(false);
   const [zeroGatewayData, setZeroGatewayData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'UPI' | 'CARD' | 'NET_BANKING' | 'BANK'>('UPI');
+  const [activeTab, setActiveTab] = useState<'UPI' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'CARD' | 'NET_BANKING' | 'BANK'>('UPI');
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string>('PENDING');
   const [remainingTimeSeconds, setRemainingTimeSeconds] = useState<number>(900);
@@ -282,7 +282,13 @@ export default function StudentFeesPage() {
         setUtrNumber('');
         setProofFile(null);
         setProofPreview(null);
-        setActiveTab(paymentMethod === 'BANK_TRANSFER' ? 'BANK' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod === 'NET_BANKING' ? 'NET_BANKING' : 'UPI');
+        setActiveTab(
+          paymentMethod === 'BANK_TRANSFER' ? 'BANK' :
+          paymentMethod === 'CREDIT_CARD' ? 'CREDIT_CARD' :
+          paymentMethod === 'DEBIT_CARD' || paymentMethod === 'CARD' ? 'DEBIT_CARD' :
+          paymentMethod === 'NET_BANKING' ? 'NET_BANKING' :
+          'UPI'
+        );
         setZeroGatewayModalOpen(true);
       } else {
         toast.error('Online payment is not configured by the hostel.');
@@ -350,8 +356,15 @@ export default function StudentFeesPage() {
     }
   };
 
-  const handlePayWithCard = async (e: React.FormEvent) => {
+  const handlePayWithCard = async (e: React.FormEvent, cardType: 'DEBIT_CARD' | 'CREDIT_CARD' = 'DEBIT_CARD') => {
     e.preventDefault();
+    const cardLabel = cardType === 'CREDIT_CARD' ? 'Credit' : 'Debit';
+    if (!zeroGatewayData?.isGatewayConfigured) {
+      toast.error(`Online ${cardLabel} Card payment gateway is not configured for this hostel. Please use UPI / QR to pay.`);
+      setActiveTab('UPI');
+      setPaymentMethod('UPI');
+      return;
+    }
     const cleanNum = cardNumber.replace(/\s+/g, '');
     if (cleanNum.length < 13 || cleanNum.length > 19) {
       toast.error('Please enter a valid card number (13-19 digits).');
@@ -372,37 +385,15 @@ export default function StudentFeesPage() {
 
     setProcessingCard(true);
     try {
-      // 1. Initiate online payment order with CARD method
       const order = await studentsApi.initiatePayment({
         amount: payAmountNumber,
         installmentId: selectedInstallmentId || currentDueInst?.id,
-        paymentMethod: 'CARD',
+        paymentMethod: cardType,
       });
 
-      const orderData = (order as any)?.data || order;
-      const paymentId = orderData.paymentId;
-      const gatewayOrderId = orderData.gatewayOrderId;
-
-      // 2. Gateway cryptographic verification
-      const res = await studentsApi.verifyPayment({
-        paymentId,
-        gatewayOrderId,
-        gatewayPaymentId: `card_pay_${Date.now()}`,
-        gatewaySignature: 'SANDBOX_VERIFIED_SIGNATURE',
-      });
-
-      const resultData = (res as any)?.data || res;
-      setZeroGatewayModalOpen(false);
-      toast.success('Card payment processed and verified successfully! Digital receipt generated.');
-      if (resultData?.receipt) {
-        setActiveReceipt(resultData.receipt);
-        setReceiptModalOpen(true);
-      } else {
-        openReceiptForPayment(paymentId);
-      }
-      await load();
+      toast.info('Gateway order created. Please complete verification with your provider.');
     } catch (err: any) {
-      toast.error(err?.message || 'Card payment processing failed. Please verify card details or retry.');
+      toast.error(err?.message || `${cardLabel} Card payment processing failed.`);
     } finally {
       setProcessingCard(false);
     }
@@ -410,6 +401,12 @@ export default function StudentFeesPage() {
 
   const handlePayWithNetBanking = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!zeroGatewayData?.isGatewayConfigured) {
+      toast.error('Online Net Banking payment gateway is not configured for this hostel. Please use UPI / QR to pay.');
+      setActiveTab('UPI');
+      setPaymentMethod('UPI');
+      return;
+    }
     if (!selectedBank) {
       toast.error('Please select your bank for Net Banking.');
       return;
@@ -417,35 +414,13 @@ export default function StudentFeesPage() {
 
     setProcessingNetBanking(true);
     try {
-      // 1. Initiate online payment order with NET_BANKING method
       const order = await studentsApi.initiatePayment({
         amount: payAmountNumber,
         installmentId: selectedInstallmentId || currentDueInst?.id,
         paymentMethod: 'NET_BANKING',
       });
 
-      const orderData = (order as any)?.data || order;
-      const paymentId = orderData.paymentId;
-      const gatewayOrderId = orderData.gatewayOrderId;
-
-      // 2. Gateway cryptographic verification
-      const res = await studentsApi.verifyPayment({
-        paymentId,
-        gatewayOrderId,
-        gatewayPaymentId: `nb_${selectedBank.toLowerCase()}_${Date.now()}`,
-        gatewaySignature: 'SANDBOX_VERIFIED_SIGNATURE',
-      });
-
-      const resultData = (res as any)?.data || res;
-      setZeroGatewayModalOpen(false);
-      toast.success(`Net Banking payment via ${selectedBank} verified successfully!`);
-      if (resultData?.receipt) {
-        setActiveReceipt(resultData.receipt);
-        setReceiptModalOpen(true);
-      } else {
-        openReceiptForPayment(paymentId);
-      }
-      await load();
+      toast.info(`Redirecting to ${selectedBank} Net Banking gateway...`);
     } catch (err: any) {
       toast.error(err?.message || 'Net Banking transaction failed. Please try again.');
     } finally {
@@ -805,7 +780,7 @@ export default function StudentFeesPage() {
 
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold text-slate-700">Preferred Payment Method</Label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                     <button
                       type="button"
                       onClick={() => setPaymentMethod('UPI')}
@@ -819,14 +794,25 @@ export default function StudentFeesPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPaymentMethod('CARD')}
+                      onClick={() => setPaymentMethod('DEBIT_CARD')}
                       className={`rounded-xl border py-2 text-center font-black transition-all ${
-                        paymentMethod === 'CARD'
+                        paymentMethod === 'DEBIT_CARD'
                           ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
                           : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
                       }`}
                     >
-                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Debit / Credit Card
+                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Debit Card
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('CREDIT_CARD')}
+                      className={`rounded-xl border py-2 text-center font-black transition-all ${
+                        paymentMethod === 'CREDIT_CARD'
+                          ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
+                          : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
+                      }`}
+                    >
+                      <CreditCard className="inline-block h-3.5 w-3.5 mr-1" /> Credit Card
                     </button>
                     <button
                       type="button"
@@ -842,7 +828,7 @@ export default function StudentFeesPage() {
                     <button
                       type="button"
                       onClick={() => setPaymentMethod('BANK_TRANSFER')}
-                      className={`rounded-xl border py-2 text-center font-black transition-all ${
+                      className={`rounded-xl border py-2 text-center font-black transition-all sm:col-span-2 ${
                         paymentMethod === 'BANK_TRANSFER'
                           ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545]'
                           : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F3F1EC]'
@@ -1084,14 +1070,14 @@ export default function StudentFeesPage() {
               </div>
 
               {/* Payment Methods Switcher */}
-              <div className="grid grid-cols-4 border-b border-[#CBD5E1] text-[11px] font-black">
+              <div className="grid grid-cols-5 border-b border-[#CBD5E1] text-[11px] font-black">
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab('UPI');
                     setPaymentMethod('UPI');
                   }}
-                  className={`py-2 text-center border-b-2 transition-all ${
+                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
                     activeTab === 'UPI'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
@@ -1103,17 +1089,32 @@ export default function StudentFeesPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('CARD');
-                    setPaymentMethod('CARD');
+                    setActiveTab('DEBIT_CARD');
+                    setPaymentMethod('DEBIT_CARD');
                   }}
-                  className={`py-2 text-center border-b-2 transition-all ${
-                    activeTab === 'CARD'
+                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
+                    activeTab === 'DEBIT_CARD'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
                   }`}
                 >
                   <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
-                  Card
+                  Debit Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('CREDIT_CARD');
+                    setPaymentMethod('CREDIT_CARD');
+                  }}
+                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
+                    activeTab === 'CREDIT_CARD'
+                      ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
+                      : 'border-transparent text-slate-500 hover:text-black'
+                  }`}
+                >
+                  <CreditCard className="inline-block h-3.5 w-3.5 mr-1" />
+                  Credit Card
                 </button>
                 <button
                   type="button"
@@ -1121,7 +1122,7 @@ export default function StudentFeesPage() {
                     setActiveTab('NET_BANKING');
                     setPaymentMethod('NET_BANKING');
                   }}
-                  className={`py-2 text-center border-b-2 transition-all ${
+                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
                     activeTab === 'NET_BANKING'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
@@ -1136,7 +1137,7 @@ export default function StudentFeesPage() {
                     setActiveTab('BANK');
                     setPaymentMethod('BANK_TRANSFER');
                   }}
-                  className={`py-2 text-center border-b-2 transition-all ${
+                  className={`py-2 text-center border-b-2 transition-all truncate px-1 ${
                     activeTab === 'BANK'
                       ? 'border-[#E87545] text-[#E87545] bg-[#FFF3EB]/40'
                       : 'border-transparent text-slate-500 hover:text-black'
@@ -1273,265 +1274,121 @@ export default function StudentFeesPage() {
                 </div>
               )}
 
-              {/* TAB 2: CREDIT / DEBIT CARD PAYMENT */}
-              {activeTab === 'CARD' && (
-                <form onSubmit={handlePayWithCard} className="space-y-3.5 text-left pt-1">
-                  <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-black flex items-center gap-1.5">
-                        <CreditCard className="h-4 w-4 text-[#E87545]" /> Secure Card Checkout
-                      </span>
-                      <span className="text-[10px] font-mono font-bold text-[#087A45] bg-[#E8F5ED] border border-[#B4E2C7] px-2 py-0.5 rounded-md">
-                        256-Bit SSL Encrypted
-                      </span>
+              {/* TAB 2 & 3: CREDIT / DEBIT CARD PAYMENT */}
+              {(activeTab === 'DEBIT_CARD' || activeTab === 'CREDIT_CARD' || activeTab === 'CARD') && (
+                !zeroGatewayData?.isGatewayConfigured ? (
+                  <div className="space-y-4 text-center py-4">
+                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
+                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                        <CreditCard className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm font-black text-black">
+                        Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Gateway Not Configured
+                      </p>
+                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                        Online {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card processing requires a connected payment gateway (e.g. Razorpay or Cashfree). Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-500">Supports Visa, MasterCard, RuPay, and Maestro debit and credit cards.</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cardNumInput" className="text-xs font-bold text-black">
-                      Card Number *
-                    </Label>
-                    <Input
-                      id="cardNumInput"
-                      placeholder="4532 0123 4567 8910"
-                      value={cardNumber}
-                      onChange={(e) => {
-                        const v = e.target.value.replace(/\D/g, '').substring(0, 19);
-                        setCardNumber(v.replace(/(\d{4})(?=\d)/g, '$1 '));
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('UPI');
+                        setPaymentMethod('UPI');
                       }}
-                      className="font-mono text-xs font-bold bg-white"
-                      required
-                    />
+                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                    >
+                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                    </Button>
                   </div>
+                ) : (
+                  <form onSubmit={(e) => handlePayWithCard(e, activeTab === 'CREDIT_CARD' ? 'CREDIT_CARD' : 'DEBIT_CARD')} className="space-y-3.5 text-left pt-1">
+                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-black flex items-center gap-1.5">
+                          <CreditCard className="h-4 w-4 text-[#E87545]" /> Secure {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card Checkout
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-[#087A45] bg-[#E8F5ED] border border-[#B4E2C7] px-2 py-0.5 rounded-md">
+                          256-Bit SSL Encrypted
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">Supports Visa, MasterCard, RuPay, and Maestro {activeTab === 'CREDIT_CARD' ? 'credit' : 'debit'} cards.</p>
+                    </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cardHolderInput" className="text-xs font-bold text-black">
-                      Cardholder Name *
-                    </Label>
-                    <Input
-                      id="cardHolderInput"
-                      placeholder="e.g. Rahul Kumar"
-                      value={cardHolder}
-                      onChange={(e) => setCardHolder(e.target.value)}
-                      className="text-xs font-bold bg-white uppercase"
-                      required
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="cardExpiryInput" className="text-xs font-bold text-black">
-                        Expiry (MM/YY) *
+                      <Label htmlFor="cardNumInput" className="text-xs font-bold text-black">
+                        Card Number *
                       </Label>
                       <Input
-                        id="cardExpiryInput"
-                        placeholder="12/28"
-                        maxLength={5}
-                        value={cardExpiry}
+                        id="cardNumInput"
+                        placeholder="4532 0123 4567 8910"
+                        value={cardNumber}
                         onChange={(e) => {
-                          let v = e.target.value.replace(/\D/g, '').substring(0, 4);
-                          if (v.length >= 3) v = `${v.substring(0, 2)}/${v.substring(2)}`;
-                          setCardExpiry(v);
+                          const v = e.target.value.replace(/\D/g, '').substring(0, 19);
+                          setCardNumber(v.replace(/(\d{4})(?=\d)/g, '$1 '));
                         }}
                         className="font-mono text-xs font-bold bg-white"
                         required
                       />
                     </div>
+
                     <div className="space-y-1.5">
-                      <Label htmlFor="cardCvvInput" className="text-xs font-bold text-black">
-                        CVV / CVC *
+                      <Label htmlFor="cardHolderInput" className="text-xs font-bold text-black">
+                        Cardholder Name *
                       </Label>
                       <Input
-                        id="cardCvvInput"
-                        type="password"
-                        placeholder="•••"
-                        maxLength={4}
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                        className="font-mono text-xs font-bold bg-white"
+                        id="cardHolderInput"
+                        placeholder="e.g. Rahul Kumar"
+                        value={cardHolder}
+                        onChange={(e) => setCardHolder(e.target.value)}
+                        className="text-xs font-bold bg-white uppercase"
                         required
                       />
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button
-                      type="submit"
-                      disabled={processingCard}
-                      className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                    >
-                      {processingCard ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      Pay {formatCurrency(payAmountNumber)} via Card
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleCancelPayment}
-                      className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {/* TAB 3: NET BANKING */}
-              {activeTab === 'NET_BANKING' && (
-                <form onSubmit={handlePayWithNetBanking} className="space-y-3.5 text-left pt-1">
-                  <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 space-y-1">
-                    <p className="text-xs font-black text-black">Select Your Bank</p>
-                    <p className="text-[11px] text-slate-500">You will be securely redirected to authenticate with your bank.</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {[
-                      { code: 'SBI', name: 'State Bank of India' },
-                      { code: 'HDFC', name: 'HDFC Bank' },
-                      { code: 'ICICI', name: 'ICICI Bank' },
-                      { code: 'AXIS', name: 'Axis Bank' },
-                      { code: 'PNB', name: 'Punjab National' },
-                      { code: 'BOB', name: 'Bank of Baroda' },
-                    ].map((bank) => (
-                      <button
-                        key={bank.code}
-                        type="button"
-                        onClick={() => setSelectedBank(bank.code)}
-                        className={`rounded-xl border p-2.5 text-left transition-all ${
-                          selectedBank === bank.code
-                            ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545] font-black'
-                            : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F8FAFC]'
-                        }`}
-                      >
-                        <p className="text-xs font-black">{bank.code}</p>
-                        <p className="text-[10px] text-slate-500 truncate">{bank.name}</p>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button
-                      type="submit"
-                      disabled={processingNetBanking}
-                      className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
-                    >
-                      {processingNetBanking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      Proceed to {selectedBank} Net Banking
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleCancelPayment}
-                      className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </form>
-              )}
-
-              {/* TAB 4: DIRECT BANK TRANSFER */}
-              {activeTab === 'BANK' && (
-                <div className="space-y-3.5 text-left">
-                  <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4">
-                    <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
-                    <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-bold text-slate-500">Beneficiary Name</p>
-                        <p className="font-bold text-black">{zeroGatewayData?.paymentDetails?.bank?.beneficiaryName || 'Hostel Operations'}</p>
-                      </div>
-                      <div className="space-y-0.5">
-                        <p className="text-[10px] font-bold text-slate-500">Bank Name</p>
-                        <p className="font-bold text-black">{zeroGatewayData?.paymentDetails?.bank?.bankName || 'HDFC Bank'}</p>
-                      </div>
-
-                      <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500">Account Number</p>
-                          <p className="font-mono font-black text-black text-sm">{zeroGatewayData?.paymentDetails?.bank?.accountNumber || '50200012345678'}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.bank?.accountNumber || '50200012345678', 'Account Number')}
-                          className="h-7 text-[11px] font-bold gap-1"
-                        >
-                          {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                          {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500">IFSC Code</p>
-                          <p className="font-mono font-black text-black text-sm">{zeroGatewayData?.paymentDetails?.bank?.ifscCode || 'HDFC0001234'}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => copyToClipboard(zeroGatewayData?.paymentDetails?.bank?.ifscCode || 'HDFC0001234', 'IFSC Code')}
-                          className="h-7 text-[11px] font-bold gap-1"
-                        >
-                          {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
-                          {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Payment Reference Submission */}
-                  <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
-                    <h4 className="text-xs font-black uppercase tracking-wider text-black">
-                      Step 2: Submit Bank Reference / UTR For Verification
-                    </h4>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="utrInput" className="text-xs font-bold text-black">
-                        UTR / Bank Transaction Reference Number *
-                      </Label>
-                      <Input
-                        id="utrInput"
-                        placeholder="e.g. 423910849201 or UTR1293049182"
-                        value={utrNumber}
-                        onChange={(e) => setUtrNumber(e.target.value)}
-                        className="font-mono text-xs font-bold bg-white"
-                        required
-                      />
-                      <p className="text-[11px] text-slate-500 font-semibold">
-                        12-digit UTR/RRN from your banking app transfer receipt
-                      </p>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="proofInput" className="text-xs font-bold text-black">
-                        Upload Payment Screenshot / Proof (Optional)
-                      </Label>
-                      <div className="flex items-center gap-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cardExpiryInput" className="text-xs font-bold text-black">
+                          Expiry (MM/YY) *
+                        </Label>
                         <Input
-                          id="proofInput"
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={handleFileChange}
-                          className="text-xs file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6]"
+                          id="cardExpiryInput"
+                          placeholder="12/28"
+                          maxLength={5}
+                          value={cardExpiry}
+                          onChange={(e) => {
+                            let v = e.target.value.replace(/\D/g, '').substring(0, 4);
+                            if (v.length >= 3) v = `${v.substring(0, 2)}/${v.substring(2)}`;
+                            setCardExpiry(v);
+                          }}
+                          className="font-mono text-xs font-bold bg-white"
+                          required
                         />
-                        {proofPreview && (
-                          <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
-                            <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
-                          </div>
-                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cardCvvInput" className="text-xs font-bold text-black">
+                          CVV / CVC *
+                        </Label>
+                        <Input
+                          id="cardCvvInput"
+                          type="password"
+                          placeholder="•••"
+                          maxLength={4}
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').substring(0, 4))}
+                          className="font-mono text-xs font-bold bg-white"
+                          required
+                        />
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 pt-2">
                       <Button
                         type="submit"
-                        disabled={submittingPayment || !utrNumber.trim()}
+                        disabled={processingCard}
                         className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
                       >
-                        {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Submit Payment For Verification
+                        {processingCard ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Pay {formatCurrency(payAmountNumber)} via {activeTab === 'CREDIT_CARD' ? 'Credit' : 'Debit'} Card
                       </Button>
                       <Button
                         type="button"
@@ -1543,7 +1400,225 @@ export default function StudentFeesPage() {
                       </Button>
                     </div>
                   </form>
-                </div>
+                )
+              )}
+
+              {/* TAB 3: NET BANKING */}
+              {activeTab === 'NET_BANKING' && (
+                !zeroGatewayData?.isGatewayConfigured ? (
+                  <div className="space-y-4 text-center py-4">
+                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
+                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                        <Landmark className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm font-black text-black">Net Banking Gateway Not Configured</p>
+                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                        Online Net Banking processing requires a connected payment gateway. Your hostel administration currently accepts direct zero-fee payments via <strong>UPI / Dynamic QR Code</strong>.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('UPI');
+                        setPaymentMethod('UPI');
+                      }}
+                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                    >
+                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                    </Button>
+                  </div>
+                ) : (
+                  <form onSubmit={handlePayWithNetBanking} className="space-y-3.5 text-left pt-1">
+                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3 space-y-1">
+                      <p className="text-xs font-black text-black">Select Your Bank</p>
+                      <p className="text-[11px] text-slate-500">You will be securely redirected to authenticate with your bank.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[
+                        { code: 'SBI', name: 'State Bank of India' },
+                        { code: 'HDFC', name: 'HDFC Bank' },
+                        { code: 'ICICI', name: 'ICICI Bank' },
+                        { code: 'AXIS', name: 'Axis Bank' },
+                        { code: 'PNB', name: 'Punjab National' },
+                        { code: 'BOB', name: 'Bank of Baroda' },
+                      ].map((bank) => (
+                        <button
+                          key={bank.code}
+                          type="button"
+                          onClick={() => setSelectedBank(bank.code)}
+                          className={`rounded-xl border p-2.5 text-left transition-all ${
+                            selectedBank === bank.code
+                              ? 'border-[#E87545] bg-[#FFF3EB] text-[#E87545] font-black'
+                              : 'border-[#CBD5E1] bg-white text-slate-700 hover:bg-[#F8FAFC]'
+                          }`}
+                        >
+                          <p className="text-xs font-black">{bank.code}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{bank.name}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button
+                        type="submit"
+                        disabled={processingNetBanking}
+                        className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                      >
+                        {processingNetBanking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Proceed to {selectedBank} Net Banking
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleCancelPayment}
+                        className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                )
+              )}
+
+              {/* TAB 4: DIRECT BANK TRANSFER */}
+              {activeTab === 'BANK' && (
+                !zeroGatewayData?.paymentDetails?.bank?.accountNumber ? (
+                  <div className="space-y-4 text-center py-4">
+                    <div className="rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-5 space-y-2.5">
+                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF3EB] text-[#E87545] border border-[#FDE6D6]">
+                        <Building2 className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm font-black text-black">Direct Bank Transfer Not Configured</p>
+                      <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                        Your hostel owner has not configured bank account details (Account Number / IFSC) for direct bank transfers. The hostel has enabled <strong>UPI / Dynamic QR Code</strong> payments.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('UPI');
+                        setPaymentMethod('UPI');
+                      }}
+                      className="w-full h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                    >
+                      <QrCode className="mr-2 h-4 w-4" /> Pay via UPI / Dynamic QR Code
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5 text-left">
+                    <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-4">
+                      <p className="text-xs font-black text-black">Hostel Owner Bank Account Details (IMPS / NEFT / RTGS)</p>
+                      <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] font-bold text-slate-500">Beneficiary Name</p>
+                          <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.beneficiaryName}</p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] font-bold text-slate-500">Bank Name</p>
+                          <p className="font-bold text-black">{zeroGatewayData.paymentDetails.bank.bankName || 'Hostel Bank Account'}</p>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-500">Account Number</p>
+                            <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.accountNumber}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.accountNumber, 'Account Number')}
+                            className="h-7 text-[11px] font-bold gap-1"
+                          >
+                            {copiedField === 'Account Number' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                            {copiedField === 'Account Number' ? 'Copied' : 'Copy'}
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-lg bg-white border border-[#CBD5E1] p-2 sm:col-span-2">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-500">IFSC Code</p>
+                            <p className="font-mono font-black text-black text-sm">{zeroGatewayData.paymentDetails.bank.ifscCode}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToClipboard(zeroGatewayData.paymentDetails.bank.ifscCode, 'IFSC Code')}
+                            className="h-7 text-[11px] font-bold gap-1"
+                          >
+                            {copiedField === 'IFSC Code' ? <Check className="h-3 w-3 text-[#087A45]" /> : <Copy className="h-3 w-3" />}
+                            {copiedField === 'IFSC Code' ? 'Copied' : 'Copy'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Payment Reference Submission */}
+                    <form onSubmit={handleSubmitPaymentRef} className="space-y-3 pt-2 border-t border-[#CBD5E1]">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                        Step 2: Submit Bank Reference / UTR For Verification
+                      </h4>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="utrInput" className="text-xs font-bold text-black">
+                          UTR / Bank Transaction Reference Number *
+                        </Label>
+                        <Input
+                          id="utrInput"
+                          placeholder="e.g. 423910849201 or UTR1293049182"
+                          value={utrNumber}
+                          onChange={(e) => setUtrNumber(e.target.value)}
+                          className="font-mono text-xs font-bold bg-white"
+                          required
+                        />
+                        <p className="text-[11px] text-slate-500 font-semibold">
+                          12-digit UTR/RRN from your banking app transfer receipt
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="proofInput" className="text-xs font-bold text-black">
+                          Upload Payment Screenshot / Proof (Optional)
+                        </Label>
+                        <div className="flex items-center gap-3">
+                          <Input
+                            id="proofInput"
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={handleFileChange}
+                            className="text-xs file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[#FFF3EB] file:text-[#E87545] hover:file:bg-[#FDE6D6]"
+                          />
+                          {proofPreview && (
+                            <div className="h-10 w-10 shrink-0 rounded-lg border border-[#CBD5E1] overflow-hidden bg-slate-100">
+                              <img src={proofPreview} alt="Proof preview" className="h-full w-full object-cover" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <Button
+                          type="submit"
+                          disabled={submittingPayment || !utrNumber.trim()}
+                          className="flex-1 h-11 font-black text-xs uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white"
+                        >
+                          {submittingPayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Submit Payment For Verification
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleCancelPayment}
+                          className="h-11 text-xs font-bold text-rose-600 border-rose-200 hover:bg-rose-50"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                )
               )}
             </div>
           ) : null}

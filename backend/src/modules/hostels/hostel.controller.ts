@@ -153,14 +153,24 @@ const handleUpdate = async (req: Request, res: Response, next: NextFunction) => 
 router.patch('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 router.put('/:id', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpdate);
 
-// GET /hostels/:id/payment-config or /hostels/payment-config (Allowed for students, staff, and owners to read settlement details)
+const resolveTargetHostelId = async (paramId: string | undefined, req: Request): Promise<string> => {
+  if (paramId && paramId !== 'payment-config' && paramId !== 'my' && paramId !== 'current') {
+    return paramId;
+  }
+  const userHostelId = (req.user as any)?.hostelBranchId || (req.user as any)?.hostelId;
+  if (userHostelId) return userHostelId;
+  const defaultHostel = await queryOne<any>(
+    'SELECT id FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1',
+    [req.user!.organizationId]
+  );
+  return defaultHostel?.id || paramId || '';
+};
+
+// GET /hostels/:id/payment-config or /hostels/payment-config
 const handleGetPaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
-    const paramId = req.params.id;
-    const targetHostelId = (!paramId || paramId === 'my' || paramId === 'current')
-      ? ((req.user as any).hostelBranchId || (req.user as any).hostelId || paramId)
-      : paramId;
+    const targetHostelId = await resolveTargetHostelId(req.params.id, req);
 
     const config = await hostelPaymentConfigService.getByHostelId(req.user!.organizationId, targetHostelId);
     res.json({
@@ -171,67 +181,83 @@ const handleGetPaymentConfig = async (req: Request, res: Response, next: NextFun
   } catch (err) { next(err); }
 };
 
-router.get('/payment-config', handleGetPaymentConfig);
-router.get('/:id/payment-config', handleGetPaymentConfig);
+router.get('/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT), handleGetPaymentConfig);
+router.get('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT), handleGetPaymentConfig);
 
-// PUT /hostels/:id/payment-config
-router.put('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+// PUT /hostels/:id/payment-config or /hostels/payment-config
+const handleUpsertPaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
+    const targetHostelId = await resolveTargetHostelId(req.params.id, req);
     const config = await hostelPaymentConfigService.upsertConfig(
       req.user!.organizationId,
-      req.params.id,
+      targetHostelId,
       (req.user as any).ownerId || req.user!.id,
       req.body
     );
     res.json({ success: true, data: config, message: 'Hostel payment configuration saved successfully.' });
   } catch (err) { next(err); }
-});
+};
 
-// POST /hostels/:id/payment-config/verify
-router.post('/:id/payment-config/verify', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+router.put('/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpsertPaymentConfig);
+router.put('/:id/payment-config', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleUpsertPaymentConfig);
+
+// POST /hostels/:id/payment-config/verify or /hostels/payment-config/verify
+const handleVerifyPaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
-    const method = req.body.method || 'UPI';
+    const targetHostelId = await resolveTargetHostelId(req.params.id, req);
+    const method = req.body?.method || 'UPI';
     const config = await hostelPaymentConfigService.initiateVerification(
       req.user!.organizationId,
-      req.params.id,
+      targetHostelId,
       (req.user as any).ownerId || req.user!.id,
       method,
       req.body
     );
     res.json({ success: true, data: config, message: 'Account verification initiated successfully.' });
   } catch (err) { next(err); }
-});
+};
 
-// POST /hostels/:id/payment-config/confirm-activate
-router.post('/:id/payment-config/confirm-activate', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/payment-config/verify', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleVerifyPaymentConfig);
+router.post('/:id/payment-config/verify', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleVerifyPaymentConfig);
+
+// POST /hostels/:id/payment-config/confirm-activate or /hostels/payment-config/confirm-activate
+const handleConfirmActivatePaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
-    const method = req.body.method || 'UPI';
+    const targetHostelId = await resolveTargetHostelId(req.params.id, req);
+    const method = req.body?.method || 'UPI';
     const config = await hostelPaymentConfigService.confirmAndActivate(
       req.user!.organizationId,
-      req.params.id,
+      targetHostelId,
       (req.user as any).ownerId || req.user!.id,
       method
     );
     res.json({ success: true, data: config, message: 'Payment configuration confirmed and activated.' });
   } catch (err) { next(err); }
-});
+};
 
-// POST /hostels/:id/payment-config/cancel-pending
-router.post('/:id/payment-config/cancel-pending', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/payment-config/confirm-activate', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleConfirmActivatePaymentConfig);
+router.post('/:id/payment-config/confirm-activate', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleConfirmActivatePaymentConfig);
+
+// POST /hostels/:id/payment-config/cancel-pending or /hostels/payment-config/cancel-pending
+const handleCancelPendingPaymentConfig = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { hostelPaymentConfigService } = await import('./hostel-payment-config.service');
-    const method = req.body.method || 'UPI';
+    const targetHostelId = await resolveTargetHostelId(req.params.id, req);
+    const method = req.body?.method || 'UPI';
     const config = await hostelPaymentConfigService.cancelPendingChanges(
       req.user!.organizationId,
-      req.params.id,
+      targetHostelId,
       (req.user as any).ownerId || req.user!.id,
       method
     );
     res.json({ success: true, data: config, message: 'Pending changes discarded.' });
   } catch (err) { next(err); }
-});
+};
+
+router.post('/payment-config/cancel-pending', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleCancelPendingPaymentConfig);
+router.post('/:id/payment-config/cancel-pending', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handleCancelPendingPaymentConfig);
 
 export const hostelRouter = router;

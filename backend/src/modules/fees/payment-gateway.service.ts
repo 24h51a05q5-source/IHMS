@@ -106,6 +106,20 @@ export class PaymentGatewayService {
   }
 
   /**
+   * Determine whether a real external payment gateway (Razorpay/Cashfree/PhonePe) is actively configured
+   */
+  isGatewayConfigured(config: IPaymentConfig): boolean {
+    if (!config) return false;
+    const hasValidKey = Boolean(
+      config.keyId &&
+      config.keySecret &&
+      !config.keyId.startsWith('rzp_test_ihms_live_2026') &&
+      !config.keySecret.includes('ihms_sec_k8923f_prod_secret')
+    );
+    return hasValidKey && config.onboardingStatus === 'CONNECTED';
+  }
+
+  /**
    * Verify Gateway HMAC-SHA256 Signature for client callbacks
    */
   async verifySignature(
@@ -117,8 +131,8 @@ export class PaymentGatewayService {
     if (!orderId || !paymentId || !signature) return false;
     const config = await this.getOrgConfig(orgId);
     
-    // In sandbox test mode, permit test runner validation
-    if (config.environment === 'TEST' && (signature === 'SANDBOX_VERIFIED_SIGNATURE' || signature === 'test_sig')) {
+    // In automated test runner mode (NODE_ENV=test only), permit test runner signature validation
+    if (process.env.NODE_ENV === 'test' && config.environment === 'TEST' && (signature === 'SANDBOX_VERIFIED_SIGNATURE' || signature === 'test_sig')) {
       return true;
     }
 

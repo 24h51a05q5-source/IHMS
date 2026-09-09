@@ -8,9 +8,11 @@ import { emitRealTimeEvent } from '../../events/events.gateway';
 import { PaymentMethod } from '../../config/constants';
 import { PaymentProviderFactory } from './provider-factory';
 import { notificationService } from '../notifications/notification.service';
+import { paymentGatewayService } from './payment-gateway.service';
 
 export interface IInitiateZeroGatewayPaymentResponse {
   configured: boolean;
+  isGatewayConfigured?: boolean;
   message?: string;
   paymentId?: string;
   paymentNumber?: string;
@@ -116,10 +118,13 @@ export class ZeroGatewayPaymentService {
     }
 
     const isConfigured = Boolean(isUpiActive || isBankActive);
+    const gwConfig = await paymentGatewayService.getOrgConfig(orgId);
+    const isGatewayConfigured = paymentGatewayService.isGatewayConfigured(gwConfig);
 
     if (!config || !isConfigured) {
       return {
         configured: false,
+        isGatewayConfigured,
         message: 'Online payment is not configured by the hostel.',
         student: {
           id: student.id,
@@ -137,6 +142,11 @@ export class ZeroGatewayPaymentService {
       };
     }
 
+    // Enforce positive requestedAmount if specified
+    if (requestedAmount !== undefined && requestedAmount !== null && Number(requestedAmount) <= 0) {
+      throw new AppError('Payment amount must be greater than ₹0.', 400);
+    }
+
     // Amount determination (calculated on backend, not trusting frontend input blindly)
     const outstanding = Number(student.financial_outstanding_balance || 0);
     const amountToPay = requestedAmount && requestedAmount > 0 ? Number(requestedAmount) : outstanding;
@@ -145,6 +155,7 @@ export class ZeroGatewayPaymentService {
     if (!amountToPay || amountToPay <= 0) {
       return {
         configured: true,
+        isGatewayConfigured,
         student: {
           id: student.id,
           customerCode: student.customer_code,
@@ -212,6 +223,7 @@ export class ZeroGatewayPaymentService {
 
     return {
       configured: true,
+      isGatewayConfigured,
       paymentId,
       paymentNumber,
       student: {

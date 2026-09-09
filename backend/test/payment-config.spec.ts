@@ -1,4 +1,4 @@
-﻿import { connectDatabase, disconnectDatabase, query } from '../src/config/database';
+import { connectDatabase, disconnectDatabase, query } from '../src/config/database';
 import { hostelPaymentConfigService } from '../src/modules/hostels/hostel-payment-config.service';
 
 describe('IHMS Payment Settings UPI ID Validation & Save Flow', () => {
@@ -116,4 +116,20 @@ describe('IHMS Payment Settings UPI ID Validation & Save Flow', () => {
     expect(bankConfirmed.bank_account_number).toBe('123456789012');
     expect(bankConfirmed.bank_ifsc_code).toBe('SBIN0001234');
   });
+
+  it('8. should successfully verify existing UPI configuration when vpaAddress is omitted in the verify request', async () => {
+    // When verify is called with empty body or only { method: 'UPI' }
+    const verifyRes = await hostelPaymentConfigService.initiateVerification(orgId, hostelId, ownerId, 'UPI', {});
+    expect(verifyRes).toBeDefined();
+    // Stored active UPI was reused instead of throwing "UPI ID / VPA is required."
+    expect(verifyRes.upiConfig.pendingVpaAddress || verifyRes.upiConfig.vpaAddress).toBe('hostelalpha@okhdfcbank');
+  });
+
+  it('9. should successfully verify existing Bank configuration when bank details are omitted in the verify request', async () => {
+    // When verify is called with empty body or only { method: 'BANK' }
+    const verifyRes = await hostelPaymentConfigService.initiateVerification(orgId, hostelId, ownerId, 'BANK', {});
+    expect(verifyRes).toBeDefined();
+    expect(verifyRes.bankConfig.pendingAccountNumber || verifyRes.bankConfig.accountNumber).toBe('123456789012');
+  });
 });
+

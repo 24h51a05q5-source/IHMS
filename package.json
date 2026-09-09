@@ -8,6 +8,8 @@
     "mobile"
   ],
   "scripts": {
+    "dev": "node scripts/dev.js",
+    "start": "node scripts/dev.js",
     "dev:backend": "npm --workspace=backend run start:dev",
     "dev:frontend": "npm --workspace=frontend run dev",
     "dev:mobile": "npm --workspace=mobile run start",

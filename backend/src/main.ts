@@ -156,6 +156,15 @@ app.use('/api/payments', (req, res, next) => {
   feeRouter(req, res, next);
 });
 
+app.use('/receipts', (req, res, next) => {
+  req.url = '/receipts' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+app.use('/api/receipts', (req, res, next) => {
+  req.url = '/receipts' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+
 app.use('/finance', financeRouter);
 app.use('/api/finance', financeRouter);
 
@@ -212,6 +221,15 @@ app.use('/api/student/announcements', (req, res, next) => {
 
 app.use('/notifications', notificationRouter);
 app.use('/api/notifications', notificationRouter);
+
+app.use('/unread-count', (req, res, next) => {
+  req.url = '/unread-count' + (req.url === '/' ? '' : req.url);
+  notificationRouter(req, res, next);
+});
+app.use('/api/unread-count', (req, res, next) => {
+  req.url = '/unread-count' + (req.url === '/' ? '' : req.url);
+  notificationRouter(req, res, next);
+});
 
 app.use('/users', userRouter);
 app.use('/api/users', userRouter);

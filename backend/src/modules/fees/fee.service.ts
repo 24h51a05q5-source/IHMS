@@ -969,6 +969,11 @@ export class FeeService {
 
   private inFlightInitiates = new Map<string, Promise<any>>();
 
+  async isOnlineGatewayConfigured(orgId?: string): Promise<boolean> {
+    const config = await paymentGatewayService.getOrgConfig(orgId);
+    return paymentGatewayService.isGatewayConfigured(config);
+  }
+
   async initiatePayment(
     orgId: string,
     studentId: string,
@@ -990,6 +995,17 @@ export class FeeService {
         [studentId, orgId]
       );
       if (!student) throw new AppError('Student not found in this organization', 404);
+
+      const method = String(data.paymentMethod || PaymentMethod.ONLINE).toUpperCase();
+      if (method === 'CARD' || method === 'DEBIT_CARD' || method === 'CREDIT_CARD' || method === 'NET_BANKING') {
+        const isConfigured = await this.isOnlineGatewayConfigured(orgId);
+        if (!isConfigured && process.env.NODE_ENV !== 'test') {
+          throw new AppError(
+            'Online Debit / Credit Card and Net Banking payment gateway is not configured for this hostel. Please use UPI / QR or Bank Transfer.',
+            400
+          );
+        }
+      }
 
       const maxPayable = Number(student.financial_outstanding_balance || 0);
       const amount = Number(data.amount);

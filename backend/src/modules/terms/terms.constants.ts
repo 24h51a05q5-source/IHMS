@@ -159,14 +159,10 @@ Continued use of the IHMS platform following the publication of updated Terms co
     id: 'owner-contact-info',
     title: '15. Legal and Contact Information',
     summary: 'Official corporate, legal, and operational support contacts.',
-    content: `For legal inquiries, operational compliance queries, or contractual communications concerning these Terms & Conditions, you may reach our administrative and legal team at:
+    content: `For legal inquiries, operational compliance queries, or contractual communications concerning these Terms & Conditions, you may reach our team at:
 
 Integrated Hostel Management System (IHMS)
-Grievance & Legal Affairs Department
-Plot 42, Hitech City Main Road, Madhapur, Hyderabad, Telangana 500081, India
-Official Email: legal@ihms.com
-Enterprise Operations: enterprise@ihms.com
-Helpdesk: +91 98480 12345 (Monday – Saturday, 09:30 AM to 06:30 PM IST)`,
+Email: ihmserp00@gmail.com`,
     applicableTo: 'OWNER',
     order: 15,
   },
@@ -323,15 +319,11 @@ Continued use of the IHMS student portal constitutes your agreement to the updat
   {
     id: 'student-contact-info',
     title: '15. Contact and Support Information',
-    summary: 'Student helpdesk, warden contacts, emergency helplines, and support hours.',
-    content: `If you have questions regarding these Terms, require assistance with your account, or need support with emergency contacts, you may contact:
+    summary: 'Official support and contact information.',
+    content: `If you have questions regarding these Terms, require assistance with your account, or need support, you may contact:
 
 Integrated Hostel Management System (IHMS)
-Student Welfare & Grievance Support Desk
-Plot 42, Hitech City Main Road, Madhapur, Hyderabad, Telangana 500081, India
-Student Support Email: support@ihms.com
-Emergency Helpline: +91 98480 12345
-Helpdesk Hours: 24x7 Emergency Assistance / Routine Support: Monday – Saturday (09:00 AM – 08:00 PM IST)`,
+Email: ihmserp00@gmail.com`,
     applicableTo: 'STUDENT',
     order: 15,
   },
@@ -421,7 +413,7 @@ Users (both Students and Owners) are exclusively responsible for maintaining the
 Accounts are non-transferable. You agree not to disclose your password or grant account access to any third party. Any action, transaction, or communication initiated under your login credentials shall be legally deemed to have been authorized by you.
 
 5.3 Prompt Incident Reporting:
-Users must immediately notify IHMS administration at security@ihms.com if they suspect or identify any unauthorized access, compromised passwords, or security breaches relating to their account.`,
+Users must immediately notify IHMS administration at ihmserp00@gmail.com if they suspect or identify any unauthorized access, compromised passwords, or security breaches relating to their account.`,
     applicableTo: 'ALL',
     order: 5,
   },
@@ -487,16 +479,11 @@ In the event of any controversy, controversy claim, or disagreement, the parties
   {
     id: 'contact-info',
     title: '10. Legal Contact & Grievance Redressal',
-    summary: 'Official contact details for legal inquiries, compliance notices, and grievance officers.',
-    content: `For legal notices, compliance queries, privacy inquiries, or grievance redressal regarding these Terms & Conditions, you may contact our designated legal officer:
+    summary: 'Official contact details for legal inquiries, compliance notices, and grievance communications.',
+    content: `For legal notices, compliance queries, privacy inquiries, or grievance communications regarding these Terms & Conditions, you may contact:
 
-Grievance Redressal & Legal Cell
 Integrated Hostel Management System (IHMS)
-Address: Plot 42, Hitech City Main Road, Madhapur, Hyderabad, Telangana 500081, India
-Legal Email: legal@ihms.com
-General Support: support@ihms.com
-Helpline: +91 98480 12345
-Operating Hours: Monday – Saturday (09:30 AM to 06:30 PM IST)`,
+Email: ihmserp00@gmail.com`,
     applicableTo: 'ALL',
     order: 10,
   },
