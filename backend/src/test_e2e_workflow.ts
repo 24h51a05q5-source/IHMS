@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import bcrypt from 'bcryptjs';
 import { connectDatabase, query, queryOne, queryRows, disconnectDatabase } from './config/database';
 import { authService } from './modules/auth/auth.service';

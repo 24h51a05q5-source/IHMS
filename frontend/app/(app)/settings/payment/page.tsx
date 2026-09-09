@@ -202,7 +202,7 @@ export default function PaymentGatewaySettingsPage() {
         return;
       }
       if (!/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(vpaClean)) {
-        toast.error('Invalid UPI ID format. Expected format e.g. hostelname@upi');
+        toast.error('Invalid UPI ID format. Expected format e.g. 9848012345@ybl, name@okaxis, hostel@paytm');
         return;
       }
 
@@ -501,7 +501,7 @@ export default function PaymentGatewaySettingsPage() {
                     </Label>
                     <Input
                       id="vpaAddress"
-                      placeholder="e.g. myhostel@upi"
+                      placeholder="e.g. 9848012345@ybl or hostel@okaxis"
                       value={vpaAddress}
                       onChange={(e) => setVpaAddress(e.target.value)}
                       className="font-mono text-xs font-bold bg-white"

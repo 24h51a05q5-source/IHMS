@@ -27,7 +27,10 @@ export class StandardProviderAdapter implements IPaymentProviderAdapter {
   async createDynamicQr(input: CreateDynamicQrInput): Promise<CreateDynamicQrOutput> {
     const expirySec = input.expirySeconds || 900;
     const expiresAt = new Date(Date.now() + expirySec * 1000);
-    const vpa = input.vpaAddress || 'hostel.settlement@upi';
+    const vpa = (input.vpaAddress || '').trim();
+    if (!vpa) {
+      throw new Error('Cannot generate Dynamic UPI QR: No valid UPI VPA configured for this hostel.');
+    }
     const payeeName = input.payeeName || 'Hostel Fee Account';
     const amountStr = Number(input.amount).toFixed(2);
     const note = input.description || input.paymentId;

@@ -49,22 +49,29 @@ export default function SettingsPage() {
         .then((res: any) => {
           const cfg = res?.data || res;
           if (cfg) {
-            const upi = cfg.upiConfig?.vpaAddress || cfg.upiConfig?.pendingVpaAddress || cfg.upi_vpa || '';
-            if (upi) {
-              setUpiVpa(upi);
-              setConfirmUpiVpa(upi);
-            }
-            const bankAcc = cfg.bankConfig?.accountNumber || cfg.bankConfig?.pendingAccountNumber || cfg.bank_account_number || '';
-            if (bankAcc) {
+            const upi = cfg.upiConfig?.vpaAddress || cfg.upi_vpa || '';
+            setUpiVpa(upi || '');
+            setConfirmUpiVpa(upi || '');
+
+            const isBankConfigured = Boolean(
+              cfg.bankConfig?.accountNumber &&
+              cfg.bankConfig?.status &&
+              cfg.bankConfig.status !== 'NOT_CONFIGURED'
+            );
+            if (isBankConfigured) {
+              const bankAcc = cfg.bankConfig?.accountNumber || '';
               setBankAccountNum(bankAcc);
               setConfirmBankAccountNum(bankAcc);
+              setBankIfsc(cfg.bankConfig?.ifscCode || cfg.bank_ifsc_code || '');
+              setBeneficiaryName(cfg.bankConfig?.beneficiaryName || cfg.verified_beneficiary_name || '');
+              setBankName(cfg.bankConfig?.bankName || cfg.bank_name || '');
+            } else {
+              setBankAccountNum('');
+              setConfirmBankAccountNum('');
+              setBankIfsc('');
+              setBeneficiaryName('');
+              setBankName('');
             }
-            const ifsc = cfg.bankConfig?.ifscCode || cfg.bankConfig?.pendingIfscCode || cfg.bank_ifsc_code || '';
-            if (ifsc) setBankIfsc(ifsc);
-            const bName = cfg.bankConfig?.beneficiaryName || cfg.bankConfig?.pendingBeneficiaryName || cfg.verified_beneficiary_name || cfg.pending_beneficiary_name || '';
-            if (bName) setBeneficiaryName(bName);
-            const bBank = cfg.bankConfig?.bankName || cfg.bankConfig?.pendingBankName || cfg.bank_name || cfg.pending_bank_name || '';
-            if (bBank) setBankName(bBank);
           }
         })
         .catch(() => {});
@@ -78,87 +85,104 @@ export default function SettingsPage() {
       return;
     }
 
-    // 4. Trim leading/trailing spaces before validation
     const trimmedUpi = (upiVpa || '').trim();
     const trimmedConfirmUpi = (confirmUpiVpa || '').trim();
-
-    // 5. Validate that UPI ID and Confirm UPI ID are not empty
-    if (!trimmedUpi) {
-      toast.error('UPI ID / VPA is required.');
-      return;
-    }
-    if (!trimmedConfirmUpi) {
-      toast.error('Please confirm your UPI ID.');
-      return;
-    }
-
-    // 6. Validate that both UPI IDs match
-    if (trimmedUpi !== trimmedConfirmUpi) {
-      toast.error(t('settings.upiMismatch', 'UPI IDs do not match'));
-      return;
-    }
-
     const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
-    if (!upiRegex.test(trimmedUpi)) {
-      toast.error(t('settings.invalidUpiId', 'Invalid UPI ID format (e.g. name@bank)'));
-      return;
+
+    // 1. Validate UPI if provided
+    if (trimmedUpi) {
+      if (!trimmedConfirmUpi) {
+        toast.error('Please confirm your UPI ID in the second field.');
+        return;
+      }
+      if (trimmedUpi.toLowerCase() !== trimmedConfirmUpi.toLowerCase()) {
+        toast.error('UPI ID and Confirm UPI ID do not match. Please verify both fields.');
+        return;
+      }
+      if (!upiRegex.test(trimmedUpi)) {
+        toast.error('Invalid UPI ID format. Please enter a valid UPI ID (e.g. 9848012345@ybl, yourname@okaxis, hostel@paytm).');
+        return;
+      }
     }
 
-    if (bankAccountNum || confirmBankAccountNum) {
+    // 2. Validate Bank details ONLY if any bank field was filled
+    const hasBankInput = Boolean(
+      bankAccountNum.trim() ||
+      confirmBankAccountNum.trim() ||
+      bankIfsc.trim() ||
+      beneficiaryName.trim()
+    );
+
+    if (hasBankInput) {
+      if (!beneficiaryName.trim()) {
+        toast.error('Account Holder Name is required for Bank Settlement.');
+        return;
+      }
+      if (!bankAccountNum.trim()) {
+        toast.error('Account Number is required for Bank Settlement.');
+        return;
+      }
+      if (!confirmBankAccountNum.trim()) {
+        toast.error('Please re-enter and confirm your Account Number.');
+        return;
+      }
       if (bankAccountNum.trim() !== confirmBankAccountNum.trim()) {
-        toast.error(t('settings.accountMismatch', 'Account numbers do not match'));
+        toast.error('Account numbers do not match. Please re-check both account fields.');
         return;
       }
-      if (bankAccountNum.trim().length < 8 || bankAccountNum.trim().length > 20) {
-        toast.error('Account number must be between 8 and 20 digits.');
+      if (bankAccountNum.trim().length < 8 || bankAccountNum.trim().length > 20 || !/^\d+$/.test(bankAccountNum.trim())) {
+        toast.error('Account number must be between 8 and 20 numeric digits.');
         return;
       }
-    }
-
-    if (bankIfsc) {
+      if (!bankIfsc.trim()) {
+        toast.error('Bank IFSC Code is required (e.g. SBIN0001234).');
+        return;
+      }
       const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
       if (!ifscRegex.test(bankIfsc.trim().toUpperCase())) {
-        toast.error(t('settings.invalidIfsc', 'Invalid IFSC code format (e.g. SBIN0001234)'));
+        toast.error('Invalid IFSC code format. Expected 11 characters (e.g. SBIN0001234).');
         return;
       }
+    }
+
+    if (!trimmedUpi && !hasBankInput) {
+      toast.error('Please configure at least a UPI ID or Bank Account for student fee collection.');
+      return;
     }
 
     setSavingPaymentConfig(true);
     try {
-      if (trimmedUpi) {
-        await feesApi.initiateHostelPaymentVerification(currentBranch.id, 'UPI', {
-          upiConfig: {
-            vpaAddress: trimmedUpi,
-            displayName: hostelName || 'Hostel Owner',
-          },
-          vpaAddress: trimmedUpi,
-          displayName: hostelName || 'Hostel Owner',
-        });
-        await feesApi.confirmAndActivateHostelPaymentConfig(currentBranch.id, 'UPI');
-      }
+      const payload: any = {
+        vpaAddress: trimmedUpi || null,
+        displayName: hostelName || 'Hostel Owner',
+        upiConfig: trimmedUpi
+          ? {
+              vpaAddress: trimmedUpi,
+              displayName: hostelName || 'Hostel Owner',
+            }
+          : null,
+      };
 
-      if (bankAccountNum.trim() && beneficiaryName.trim() && bankIfsc.trim()) {
-        await feesApi.initiateHostelPaymentVerification(currentBranch.id, 'BANK', {
-          bankConfig: {
-            beneficiaryName: beneficiaryName.trim(),
-            accountNumber: bankAccountNum.trim(),
-            confirmAccountNumber: confirmBankAccountNum.trim(),
-            ifscCode: bankIfsc.trim().toUpperCase(),
-            bankName: bankName.trim(),
-          },
+      if (hasBankInput && bankAccountNum.trim()) {
+        payload.accountNumber = bankAccountNum.trim();
+        payload.bankConfig = {
           beneficiaryName: beneficiaryName.trim(),
           accountNumber: bankAccountNum.trim(),
           confirmAccountNumber: confirmBankAccountNum.trim(),
           ifscCode: bankIfsc.trim().toUpperCase(),
           bankName: bankName.trim(),
-        });
-        await feesApi.confirmAndActivateHostelPaymentConfig(currentBranch.id, 'BANK');
+        };
+      } else {
+        payload.clearBank = true;
+        payload.bankConfig = null;
       }
+
+      await feesApi.updateHostelPaymentConfig(currentBranch.id, payload);
 
       setUpiVpa(trimmedUpi);
       setConfirmUpiVpa(trimmedUpi);
 
-      toast.success(t('settings.paymentConfigSaved', 'Payment configuration saved successfully'));
+      toast.success('Hostel payment configuration saved and activated successfully!');
     } catch (err: any) {
       toast.error(err?.message || 'Failed to save payment configuration.');
     } finally {
@@ -377,9 +401,11 @@ export default function SettingsPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 {/* UPI Details */}
                 <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 sm:p-4">
-                  <div className="flex items-center gap-2 font-bold text-xs text-[#111827]">
-                    <QrCode className="h-4 w-4 text-[#E87545]" />
-                    <span>UPI / Dynamic QR Settlement</span>
+                  <div className="flex items-center justify-between font-bold text-xs text-[#111827]">
+                    <div className="flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-[#E87545]" />
+                      <span>UPI / Dynamic QR Settlement</span>
+                    </div>
                   </div>
 
                   <div className="space-y-1">
@@ -388,9 +414,10 @@ export default function SettingsPage() {
                       id="upiVpa"
                       value={upiVpa}
                       onChange={(e) => setUpiVpa(e.target.value)}
-                      placeholder="e.g. hostelowner@upi"
+                      placeholder="e.g. 9848012345@ybl or hostel@okaxis"
                       className="bg-white border border-[#CBD5E1] font-mono text-xs font-bold"
                     />
+                    <p className="text-[10px] text-slate-500 font-medium">Supports PhonePe, Google Pay, Paytm, BHIM, and bank UPI IDs.</p>
                   </div>
 
                   <div className="space-y-1">
@@ -402,14 +429,27 @@ export default function SettingsPage() {
                       placeholder="Re-enter UPI ID"
                       className="bg-white border border-[#CBD5E1] font-mono text-xs"
                     />
+                    {confirmUpiVpa && upiVpa && (
+                      confirmUpiVpa.trim().toLowerCase() === upiVpa.trim().toLowerCase() ? (
+                        <p className="text-[11px] font-bold text-emerald-600 flex items-center gap-1 mt-1">
+                          <Check className="h-3 w-3" /> UPI IDs match
+                        </p>
+                      ) : (
+                        <p className="text-[11px] font-bold text-amber-600 flex items-center gap-1 mt-1">
+                          ⚠️ UPI IDs do not match yet
+                        </p>
+                      )
+                    )}
                   </div>
                 </div>
 
                 {/* Bank Account Details */}
                 <div className="space-y-3 rounded-xl border border-[#CBD5E1] bg-[#FAFAF7] p-3.5 sm:p-4">
-                  <div className="flex items-center gap-2 font-bold text-xs text-[#111827]">
-                    <Landmark className="h-4 w-4 text-[#2563EB]" />
-                    <span>Direct Bank Transfer Settlement</span>
+                  <div className="flex items-center justify-between font-bold text-xs text-[#111827]">
+                    <div className="flex items-center gap-2">
+                      <Landmark className="h-4 w-4 text-[#2563EB]" />
+                      <span>Direct Bank Transfer Settlement (Optional)</span>
+                    </div>
                   </div>
 
                   <div className="space-y-1">
@@ -444,6 +484,17 @@ export default function SettingsPage() {
                       />
                     </div>
                   </div>
+                  {confirmBankAccountNum && bankAccountNum && (
+                    confirmBankAccountNum.trim() === bankAccountNum.trim() ? (
+                      <p className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Account numbers match
+                      </p>
+                    ) : (
+                      <p className="text-[11px] font-bold text-amber-600 flex items-center gap-1">
+                        ⚠️ Account numbers do not match yet
+                      </p>
+                    )
+                  )}
 
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="space-y-1">

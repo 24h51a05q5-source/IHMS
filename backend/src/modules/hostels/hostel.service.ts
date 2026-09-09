@@ -79,37 +79,6 @@ export class HostelService {
       ]
     );
 
-    // Auto-inherit or initialize payment configuration for newly created branch
-    try {
-      const existingConfig = await queryOne<any>(
-        `SELECT * FROM hostel_payment_configs WHERE organization_id = $1 AND (upi_status = 'ACTIVE' OR bank_status = 'ACTIVE') ORDER BY created_at ASC LIMIT 1`,
-        [orgId]
-      );
-      const cleanUpi = existingConfig?.upi_vpa || `${hostelName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'hostel'}@upi`;
-      await query(
-        `INSERT INTO hostel_payment_configs (
-          id, organization_id, hostel_id,
-          upi_vpa, upi_display_name, upi_status,
-          bank_beneficiary_name, bank_account_number, bank_ifsc_code, bank_name, bank_status
-        ) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, $7, $8, $9, $10)
-        ON CONFLICT (organization_id, hostel_id) DO NOTHING`,
-        [
-          require('crypto').randomUUID(),
-          orgId,
-          id,
-          cleanUpi,
-          existingConfig?.upi_display_name || hostelName,
-          existingConfig?.bank_beneficiary_name || hostelName,
-          existingConfig?.bank_account_number || null,
-          existingConfig?.bank_ifsc_code || null,
-          existingConfig?.bank_name || null,
-          existingConfig?.bank_status || 'NOT_CONFIGURED',
-        ]
-      );
-    } catch (e: any) {
-      // Non-fatal
-    }
-
     return branch;
   }
 

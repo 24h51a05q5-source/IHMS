@@ -238,26 +238,7 @@ export async function runSeed() {
     [s4Id, s4IhmsId, orgId, b1Id]
   );
 
-  console.log('[Seed] Configuring Hostel Direct Payment (UPI & Bank)...');
-  await query(
-    `INSERT INTO hostel_payment_configs (
-      id, organization_id, hostel_id, owner_id,
-      upi_vpa, upi_display_name, upi_status,
-      bank_beneficiary_name, bank_account_number, bank_ifsc_code, bank_name, bank_status
-    ) VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, $8, $9, $10, 'ACTIVE')`,
-    [
-      require('crypto').randomUUID(),
-      orgId,
-      b1Id,
-      ownerUserId,
-      'greenvalley@upi',
-      'Green Valley Hostels Pvt Ltd',
-      'Green Valley Hostels Pvt Ltd',
-      '50100234567890',
-      'HDFC0001234',
-      'HDFC Bank'
-    ]
-  );
+  // Do not seed fake or default payment credentials. Payment settings belong to each hostel owner.
 
   console.log('[Seed] Creating Fee Demands, Payments, Receipts, and Ledgers...');
   const dem1Id = require('crypto').randomUUID();

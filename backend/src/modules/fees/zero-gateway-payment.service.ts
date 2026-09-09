@@ -173,6 +173,10 @@ export class ZeroGatewayPaymentService {
       };
     }
 
+    if (!isUpiActive || !config.upiConfig?.vpaAddress) {
+      throw new AppError('UPI / Dynamic QR payment is not configured or enabled for this hostel. Please contact hostel administration.', 400);
+    }
+
     // Generate unique internal IHMS payment reference
     const paymentId = crypto.randomUUID();
     const paymentNumber = `IHMS-PAY-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
