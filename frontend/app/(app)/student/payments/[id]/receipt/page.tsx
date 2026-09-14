@@ -21,6 +21,7 @@ import { CardSkeleton } from '@/components/dashboard/loader';
 import { ErrorState } from '@/components/dashboard/states';
 import { apiClient } from '@/lib/api/client';
 import { paymentsApi } from '@/lib/api/payments.api';
+import { formatStudentId } from '@/lib/utils';
 import type { PaymentReceipt, ApiError } from '@/lib/types';
 
 export default function StudentPaymentReceiptPage() {
@@ -144,9 +145,9 @@ export default function StudentPaymentReceiptPage() {
               <p className="font-black text-black text-sm mt-0.5">{receipt.studentName}</p>
             </div>
             <div>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Student ID / Code</span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Student ID</span>
               <p className="font-mono font-black text-[#E87545] text-sm mt-0.5">
-                {receipt.customerCode || receipt.studentId}
+                {formatStudentId(receipt.customerCode || receipt.studentId || receipt)}
               </p>
             </div>
             <div>

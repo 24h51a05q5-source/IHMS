@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { studentsApi } from '@/lib/api/students.api';
 import { getCachedData } from '@/lib/api/client';
+import { formatStudentId } from '@/lib/utils';
 import type { StudentDetail, ApiError } from '@/lib/types';
 
 export default function StudentProfilePage() {
@@ -91,7 +92,7 @@ export default function StudentProfilePage() {
     <div className="space-y-3.5 sm:space-y-5">
       <PageHeader
         title="My Profile"
-        description={`Student ID: ${profile.studentId || profile.customerCode}`}
+        description={`Student ID: ${formatStudentId(profile.studentId || profile.customerCode || profile)}`}
         actions={
           <Button
             onClick={() => {
@@ -120,7 +121,7 @@ export default function StudentProfilePage() {
                 .toUpperCase()}
             </div>
             <h2 className="mt-3 text-base sm:text-lg font-bold text-[#111827]">{profile.name}</h2>
-            <p className="font-mono text-xs font-medium text-[#E87545] mt-0.5">{profile.studentId || profile.customerCode}</p>
+            <p className="font-mono text-xs font-medium text-[#E87545] mt-0.5">{formatStudentId(profile.studentId || profile.customerCode || profile)}</p>
             <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
               <Badge variant={profile.portalAccess === 'ENABLED' ? 'success' : 'error'}>
                 Portal {profile.portalAccess}

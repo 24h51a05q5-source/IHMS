@@ -28,9 +28,9 @@ export class PaymentGatewayService {
   private readonly defaultWebhookSecret: string;
 
   constructor() {
-    this.defaultKeyId = process.env.PAYMENT_GATEWAY_KEY_ID || '';
-    this.defaultSecretKey = process.env.PAYMENT_GATEWAY_SECRET || '';
-    this.defaultWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || '';
+    this.defaultKeyId = process.env.CASHFREE_APP_ID || process.env.PAYMENT_GATEWAY_KEY_ID || 'TEST_CF_APP_ihms_live_2026';
+    this.defaultSecretKey = process.env.CASHFREE_SECRET_KEY || process.env.PAYMENT_GATEWAY_SECRET || 'cf_sec_k8923f_prod_secret';
+    this.defaultWebhookSecret = process.env.CASHFREE_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET || 'whsec_ihms_secure_cashfree_key_2026';
   }
 
   /**
@@ -45,7 +45,7 @@ export class PaymentGatewayService {
         );
         if (row && row.key_id && row.key_id.trim() !== '') {
           return {
-            provider: row.provider || 'RAZORPAY',
+            provider: row.provider || 'CASHFREE',
             environment: row.environment || 'TEST',
             keyId: row.key_id,
             keySecret: row.key_secret || this.defaultSecretKey,
@@ -62,7 +62,7 @@ export class PaymentGatewayService {
 
     const hasDefault = Boolean(this.defaultKeyId && this.defaultSecretKey);
     return {
-      provider: process.env.PAYMENT_GATEWAY_PROVIDER || 'RAZORPAY',
+      provider: process.env.PAYMENT_GATEWAY_PROVIDER || 'CASHFREE',
       environment: (process.env.PAYMENT_ENVIRONMENT as any) || 'TEST',
       keyId: this.defaultKeyId || '',
       keySecret: this.defaultSecretKey || '',
@@ -120,7 +120,9 @@ export class PaymentGatewayService {
       config.keySecret &&
       config.keySecret.trim() !== '' &&
       !config.keyId.startsWith('rzp_test_ihms_live_2026') &&
-      !config.keySecret.includes('ihms_sec_k8923f_prod_secret')
+      !config.keyId.startsWith('TEST_CF_APP_ihms_live_2026') &&
+      !config.keySecret.includes('ihms_sec_k8923f_prod_secret') &&
+      !config.keySecret.includes('cf_sec_k8923f_prod_secret')
     );
     return hasValidKey && (config.onboardingStatus === 'CONNECTED' || config.onboardingStatus === 'ACTIVE');
   }

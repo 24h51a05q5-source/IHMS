@@ -3,8 +3,10 @@ import jwt from 'jsonwebtoken';
 import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
 import { UserRole } from '../../config/constants';
-import { generateOwnerId, generateHostelOrgId, generateIhmsId, maskEmail } from '../../common/utils/code-generator';
+import { generateOwnerId, generateHostelOrgId, generateIhmsId, generateSystematicHostelCode, maskEmail } from '../../common/utils/code-generator';
 import { emailService } from '../../common/utils/email.service';
+import { CURRENT_TERMS_VERSION } from '../terms/terms.constants';
+import { sanitizeStudentDisplayId } from '../students/student.service';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ihms-super-secret-jwt-key-production-2026';
 const JWT_EXPIRES_IN = '24h';
@@ -38,19 +40,29 @@ export class AuthService {
     }
     const hostelName = cleanHostelName(org?.name) || cleanHostelName(user.hostel_name || user.hostelName) || cleanHostelName(hostelBranchName) || '';
 
+    const isStudent = mappedRole === 'STUDENT' || rawRole === 'STUDENT';
+    const studentDisplayId = isStudent
+      ? sanitizeStudentDisplayId(user.student_id || user.studentId || user.customer_code || user.customerCode || user.ihms_id, 'IHMSAA0001')
+      : undefined;
+
+    const rawMaster = user.ihms_id || user.ihmsId || user.owner_id || user.ownerId;
+    const masterDisplayId = isStudent
+      ? undefined
+      : (/^IHMS[A-Z]{2}\d{4}$/i.test(String(rawMaster || '')) ? String(rawMaster).toUpperCase() : 'IHMSAA0001');
+
     const payload = {
       id: user.id,
       sub: user.id,
       userId: user.user_id || user.userId,
       organizationId: user.organization_id || user.organizationId,
       branchId: user.branch_id || user.branchId,
-      studentId: user.student_id || user.studentId,
+      studentId: isStudent ? studentDisplayId : (user.student_id || user.studentId),
       role: mappedRole,
       rawRole,
       email: user.email,
       name: user.name,
-      ownerId: user.owner_id || user.ownerId || user.staff_code || user.staffCode,
-      customerCode: user.customer_code || user.customerCode,
+      ownerId: isStudent ? undefined : masterDisplayId,
+      customerCode: isStudent ? studentDisplayId : (user.customer_code || user.customerCode),
       mustChangePassword: user.must_change_password || user.mustChangePassword || false,
       termsAccepted: Boolean(user.terms_accepted ?? user.termsAccepted),
       acceptedTermsVersion: user.accepted_terms_version || user.acceptedTermsVersion || null,
@@ -72,11 +84,12 @@ export class AuthService {
         hostelName,
         organizationName: hostelName,
         hostelBranchId: user.branch_id || user.branchId,
-        studentId: user.student_id || user.studentId,
-        ownerId: user.owner_id || user.ownerId || user.staff_code || user.staffCode,
-        customerCode: user.customer_code || user.customerCode,
-        ihmsId: user.ihms_id || user.ihmsId,
-        ihms_id: user.ihms_id || user.ihmsId,
+        studentId: isStudent ? studentDisplayId : (user.student_id || user.studentId),
+        ownerId: isStudent ? undefined : masterDisplayId,
+        customerCode: isStudent ? studentDisplayId : (user.customer_code || user.customerCode),
+        ihmsId: (isStudent ? studentDisplayId : masterDisplayId) || user.ihms_id || user.ihmsId,
+        ihms_id: (isStudent ? studentDisplayId : masterDisplayId) || user.ihms_id || user.ihmsId,
+        masterId: isStudent ? undefined : masterDisplayId,
         mustChangePassword: user.must_change_password || user.mustChangePassword || false,
         termsAccepted: Boolean(user.terms_accepted ?? user.termsAccepted),
         acceptedTermsVersion: user.accepted_terms_version || user.acceptedTermsVersion || null,
@@ -91,7 +104,7 @@ export class AuthService {
 
     const existingOwner = await queryOne<any>(
       `SELECT u.*, o.name as org_name, o.org_code, o.address as org_address,
-              h.name as hostel_branch_name, h.city as branch_city, h.state as branch_state, h.branch_name
+              h.name as hostel_branch_name, h.city as branch_city, h.state as branch_state, h.branch_name, h.branch_code, h.hostel_id
        FROM users u
        LEFT JOIN organizations o ON o.id = u.organization_id
        LEFT JOIN hostels h ON h.organization_id = u.organization_id
@@ -101,13 +114,11 @@ export class AuthService {
 
     if (!existingOwner) return null;
 
-    let ownerIdFormatted = existingOwner.user_id || existingOwner.staff_code || existingOwner.ihms_id;
-    if (!ownerIdFormatted || !ownerIdFormatted.startsWith('IHM-')) {
-      ownerIdFormatted = await generateIhmsId('H', existingOwner.hostel_name || 'AA', 'Main', existingOwner.organization_id || 'GLOBAL');
-      await query('UPDATE users SET user_id = $1, staff_code = $1, ihms_id = $1 WHERE id = $2', [ownerIdFormatted, existingOwner.id]);
+    let masterId = existingOwner.branch_code || existingOwner.hostel_id || existingOwner.org_code || existingOwner.user_id || existingOwner.ihms_id;
+    if (!masterId || (!masterId.startsWith('IHMS') && !masterId.startsWith('IHM-'))) {
+      masterId = existingOwner.branch_code || 'IHMSAA0001';
     }
 
-    const orgIdFormatted = existingOwner.org_code || `IHMS-HST-${(existingOwner.organization_id || '').slice(-6).toUpperCase()}`;
     const orgName = existingOwner.org_name || existingOwner.hostel_name || 'Hostel Organization';
     const branchName = existingOwner.branch_name || 'Main';
     const location = [existingOwner.branch_city || existingOwner.org_address || 'Hyderabad', existingOwner.branch_state || 'Telangana'].filter(Boolean).join(', ') || 'Hyderabad, Telangana';
@@ -115,9 +126,12 @@ export class AuthService {
 
     return {
       accountAlreadyExists: true,
+      masterId,
+      ownerId: masterId,
       organizationName: orgName,
-      organizationId: orgIdFormatted,
-      ownerId: ownerIdFormatted,
+      organizationId: masterId,
+      orgCode: masterId,
+      hostelCode: masterId,
       branchName,
       location,
       maskedEmail: masked,
@@ -144,6 +158,8 @@ export class AuthService {
     pincode?: string;
     phone?: string;
     email?: string;
+    agreeToTerms?: boolean;
+    termsAccepted?: boolean;
   }) {
     const targetEmail = String(
       data.ownerEmail ||
@@ -223,8 +239,11 @@ export class AuthService {
     }
 
     return transaction(async (client) => {
+      // 1. Generate ONE Unified Master ID: e.g. IHMSAA0001
+      const masterId = await generateSystematicHostelCode();
+
       const orgId = require('crypto').randomUUID();
-      const orgCode = await generateHostelOrgId();
+      const orgCode = masterId;
 
       await client.query(
         `INSERT INTO organizations (id, org_code, name, email, phone, address, currency, status)
@@ -242,7 +261,7 @@ export class AuthService {
       );
 
       const branchId = require('crypto').randomUUID();
-      const branchCode = 'HYD001';
+      const branchCode = masterId;
       await client.query(
         `INSERT INTO hostels (
           id, hostel_id, branch_code, owner_id, organization_id, hostel_name, name,
@@ -251,8 +270,8 @@ export class AuthService {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           branchId,
-          branchCode,
-          branchCode,
+          masterId,
+          masterId,
           orgId,
           orgId,
           registeredHostelName,
@@ -273,15 +292,23 @@ export class AuthService {
       );
 
       const ownerUserId = require('crypto').randomUUID();
-      const ownerIhmsId = await generateIhmsId('H', registeredHostelName, 'Main', orgId);
-      const ownerId = ownerIhmsId;
+      const ownerIhmsId = masterId;
+      const ownerId = masterId;
       const passwordHash = await bcrypt.hash(ownerPassword, 10);
+
+      const ownerTermsAccepted = Boolean(
+        data.agreeToTerms ||
+        data.termsAccepted ||
+        (data as any).agree_to_terms ||
+        (data as any).terms_accepted
+      );
 
       const ownerRes = await client.query(
         `INSERT INTO users (
           id, user_id, ihms_id, name, email, password_hash, role, phone,
-          organization_id, branch_id, staff_code, hostel_name, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE')
+          organization_id, branch_id, staff_code, hostel_name,
+          terms_accepted, accepted_terms_version, terms_accepted_at, tc_accepted_at, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'ACTIVE')
         RETURNING *`,
         [
           ownerUserId,
@@ -295,15 +322,19 @@ export class AuthService {
           orgId,
           branchId,
           ownerId,
-          registeredHostelName
+          registeredHostelName,
+          ownerTermsAccepted,
+          ownerTermsAccepted ? CURRENT_TERMS_VERSION : null,
+          ownerTermsAccepted ? new Date() : null,
+          ownerTermsAccepted ? new Date() : null,
         ]
       );
       const owner = ownerRes.rows[0];
 
       const ownerProfileId = require('crypto').randomUUID();
       await client.query(
-        `INSERT INTO owners (id, user_id, ihms_id, organization_id, full_name, owner_name, email, phone, business_name, registered_hostel_name, address, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACTIVE')`,
+        `INSERT INTO owners (id, user_id, ihms_id, organization_id, full_name, owner_name, email, phone, business_name, registered_hostel_name, address, tc_accepted_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE')`,
         [
           ownerProfileId,
           ownerUserId,
@@ -315,9 +346,26 @@ export class AuthService {
           phone,
           registeredHostelName,
           registeredHostelName,
-          fullAddress
+          fullAddress,
+          ownerTermsAccepted ? new Date() : null,
         ]
       );
+
+      if (ownerTermsAccepted) {
+        await client.query(
+          `INSERT INTO terms_acceptances (
+            id, user_id, role, terms_version, ip_address, user_agent, status, accepted_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'ACCEPTED', CURRENT_TIMESTAMP)`,
+          [
+            require('crypto').randomUUID(),
+            ownerUserId,
+            'OWNER',
+            CURRENT_TERMS_VERSION,
+            '127.0.0.1',
+            'Owner Registration Flow',
+          ]
+        );
+      }
 
       // Auto-initialize default 7-day Mess Menu for the new hostel branch
       const now = new Date();
@@ -404,12 +452,30 @@ export class AuthService {
         ]
       );
 
+      // Initialize Cashfree Sub-Merchant Vendor for Hosted KYC Onboarding (Phase 1)
+      try {
+        const { cashfreeService } = await import('../fees/cashfree.service');
+        await cashfreeService.createVendor({
+          hostelId: branchId,
+          organizationId: orgId,
+          ownerName: owner.name,
+          email: owner.email,
+          phone: owner.phone,
+          registeredHostelName,
+        });
+      } catch (err: any) {
+        console.warn(`[RegisterOwner] Cashfree vendor auto-initialization note: ${err.message}`);
+      }
+
       const tokens = await this.generateTokens(owner);
       return {
         ...tokens,
-        ownerId,
-        organizationId: orgId,
+        masterId,
+        ownerId: masterId,
+        organizationId: orgCode,
+        rawOrganizationId: orgId,
         organizationCode: orgCode,
+        orgCode: orgCode,
         hostelBranchId: branchId,
         hostelCode: branchCode,
         hostelName: registeredHostelName,
@@ -439,9 +505,29 @@ export class AuthService {
     // 1. ADMIN / STAFF LOGIN
     if (loginType === 'ADMIN') {
       let user = await queryOne<any>(
-        `SELECT * FROM users
-         WHERE (LOWER(email) = $1 OR UPPER(ihms_id) = $2)
-           AND role != 'STUDENT'`,
+        `SELECT u.* FROM users u
+         LEFT JOIN organizations o ON o.id = u.organization_id
+         LEFT JOIN hostels h ON h.id = u.branch_id
+         WHERE (
+           LOWER(u.email) = $1
+           OR UPPER(u.ihms_id) = $2
+           OR UPPER(u.user_id) = $2
+           OR UPPER(u.staff_code) = $2
+           OR (
+             (u.role = 'OWNER' OR u.role = 'ORGANIZATION_OWNER')
+             AND (UPPER(o.org_code) = $2 OR UPPER(h.branch_code) = $2 OR UPPER(h.hostel_id) = $2)
+           )
+         )
+         AND u.role != 'STUDENT'
+         ORDER BY
+           CASE
+             WHEN LOWER(u.email) = $1 THEN 1
+             WHEN UPPER(u.ihms_id) = $2 THEN 2
+             WHEN UPPER(u.user_id) = $2 THEN 3
+             WHEN UPPER(u.staff_code) = $2 THEN 4
+             ELSE 5
+           END ASC, u.created_at DESC
+         LIMIT 1`,
         [normalizedEmail, normalizedCode]
       );
 
@@ -487,10 +573,10 @@ export class AuthService {
       if (!user) {
         user = await queryOne<any>(
           `SELECT * FROM users
-           WHERE (LOWER(email) = $1 OR UPPER(ihms_id) = $2)
+           WHERE (LOWER(email) = $1 OR UPPER(ihms_id) = $2 OR UPPER(user_id) = $2 OR UPPER(customer_code) = $2)
              AND role = 'STUDENT'
            ORDER BY created_at DESC LIMIT 1`,
-          [(student.email || '').toLowerCase(), (student.ihms_id || '').toUpperCase()]
+          [(student.email || '').toLowerCase(), (student.custom_id || student.ihms_id || '').toUpperCase()]
         );
       }
 
@@ -514,7 +600,7 @@ export class AuthService {
     // 3. AUTO / FALLBACK
     const autoStudent = await queryOne<any>(
       `SELECT * FROM students
-       WHERE UPPER(ihms_id) = $1 OR LOWER(email) = $2`,
+       WHERE UPPER(ihms_id) = $1 OR UPPER(custom_id) = $1 OR UPPER(customer_code) = $1 OR LOWER(email) = $2`,
       [normalizedCode, normalizedEmail]
     );
 
@@ -525,9 +611,9 @@ export class AuthService {
 
       let user = await queryOne<any>(
         `SELECT * FROM users
-         WHERE (id = $1 OR UPPER(ihms_id) = $2 OR LOWER(email) = $3)
+         WHERE (id = $1 OR UPPER(ihms_id) = $2 OR UPPER(user_id) = $2 OR UPPER(customer_code) = $2 OR LOWER(email) = $3)
            AND role = 'STUDENT'`,
-        [autoStudent.user_id, (autoStudent.ihms_id || '').toUpperCase(), autoStudent.email.toLowerCase()]
+        [autoStudent.user_id, (autoStudent.custom_id || autoStudent.ihms_id || '').toUpperCase(), autoStudent.email.toLowerCase()]
       );
 
       if (!user || user.status === 'DISABLED' || user.status === 'INACTIVE') {
@@ -545,7 +631,7 @@ export class AuthService {
 
     let user = await queryOne<any>(
       `SELECT * FROM users
-       WHERE LOWER(email) = $1 OR UPPER(ihms_id) = $2`,
+       WHERE LOWER(email) = $1 OR UPPER(ihms_id) = $2 OR UPPER(user_id) = $2 OR UPPER(customer_code) = $2`,
       [normalizedEmail, normalizedCode]
     );
 
@@ -621,21 +707,21 @@ export class AuthService {
 
         await query(
           `INSERT INTO students (
-            id, user_id, organization_id, hostel_id, customer_code, student_id, ihms_id, full_name, email,
+            id, user_id, organization_id, hostel_id, customer_code, student_id, ihms_id, custom_id, full_name, email,
             portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-          ) VALUES ($1, $2, $3, $4, 'IHM-GV-MN-S-0001', 'IHM-GV-MN-S-0001', 'IHM-GV-MN-S-0001', 'Rahul Kumar', 'student@ihms.com', true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE')`,
+          ) VALUES ($1, $2, $3, $4, 'HST-001', 'HST-001', 'IHM-GV-MN-S-0001', 'HST-001', 'Rahul Kumar', 'student@ihms.com', true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE')`,
           [studentUuid, userUuid, orgId, hostelId]
         );
       }
 
-      const stu2026003Exists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'IHM-GV-MN-S-0003' OR UPPER(ihms_id) = 'IHM-GV-MN-S-0003'");
+      const stu2026003Exists = await queryOne("SELECT id FROM students WHERE UPPER(customer_code) = 'HST-003' OR UPPER(customer_code) = 'IHM-GV-MN-S-0003' OR UPPER(ihms_id) = 'IHM-GV-MN-S-0003'");
       if (!stu2026003Exists) {
         const studentUuid = require('crypto').randomUUID();
         await query(
           `INSERT INTO students (
-            id, organization_id, hostel_id, customer_code, student_id, ihms_id, full_name, email,
+            id, organization_id, hostel_id, customer_code, student_id, ihms_id, custom_id, full_name, email,
             portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-          ) VALUES ($1, $2, $3, 'IHM-GV-MN-S-0003', 'IHM-GV-MN-S-0003', 'IHM-GV-MN-S-0003', 'Rahul Varma', 'stu2026003@ihms.com', true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+          ) VALUES ($1, $2, $3, 'HST-003', 'HST-003', 'IHM-GV-MN-S-0003', 'HST-003', 'Rahul Varma', 'stu2026003@ihms.com', true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
           [studentUuid, orgId, hostelId]
         );
       }
@@ -1042,14 +1128,18 @@ export class AuthService {
 
     const normalizedClean = cleanId.replace(/[\s-]/g, '').toUpperCase();
 
-    // 1. Direct query on students table (case-insensitive email & normalized ihms_id)
+    // 1. Direct query on students table (case-insensitive email & normalized ihms_id / custom_id)
     let student = await queryOne<any>(
       `SELECT s.*, o.name as org_name
        FROM students s
        LEFT JOIN organizations o ON o.id = s.organization_id
        WHERE LOWER(s.email) = LOWER($1)
           OR UPPER(s.ihms_id) = UPPER($1)
+          OR UPPER(s.custom_id) = UPPER($1)
+          OR UPPER(s.customer_code) = UPPER($1)
           OR REPLACE(REPLACE(UPPER(COALESCE(s.ihms_id, '')), '-', ''), ' ', '') = $2
+          OR REPLACE(REPLACE(UPPER(COALESCE(s.custom_id, '')), '-', ''), ' ', '') = $2
+          OR REPLACE(REPLACE(UPPER(COALESCE(s.customer_code, '')), '-', ''), ' ', '') = $2
        ORDER BY s.created_at DESC LIMIT 1`,
       [cleanId, normalizedClean]
     );
@@ -1060,7 +1150,10 @@ export class AuthService {
         `SELECT * FROM users
          WHERE (LOWER(email) = LOWER($1)
              OR UPPER(ihms_id) = UPPER($1)
-             OR REPLACE(REPLACE(UPPER(COALESCE(ihms_id, '')), '-', ''), ' ', '') = $2)
+             OR UPPER(user_id) = UPPER($1)
+             OR UPPER(customer_code) = UPPER($1)
+             OR REPLACE(REPLACE(UPPER(COALESCE(ihms_id, '')), '-', ''), ' ', '') = $2
+             OR REPLACE(REPLACE(UPPER(COALESCE(user_id, '')), '-', ''), ' ', '') = $2)
            AND role = 'STUDENT'
          LIMIT 1`,
         [cleanId, normalizedClean]
@@ -1451,7 +1544,10 @@ export class AuthService {
     return this.sendStudentActivationOtp(identifier);
   }
 
-  async activateStudentAccount(activationToken: string, newPassword: string, confirmPassword?: string) {
+  async activateStudentAccount(activationToken: string, newPassword: string, confirmPassword?: string, agreeToTerms?: boolean) {
+    if (agreeToTerms === false) {
+      throw new AppError('You must accept the Terms & Conditions to activate your student account.', 400);
+    }
     if (!activationToken || typeof activationToken !== 'string') {
       throw new AppError('Activation token is required.', 400);
     }
@@ -1500,6 +1596,7 @@ export class AuthService {
     const sPhone = student.phone || '';
 
     let finalUser: any = null;
+    const studentTermsAccepted = Boolean(agreeToTerms ?? true);
 
     await transaction(async (client) => {
       // Find existing user if any
@@ -1530,10 +1627,28 @@ export class AuthService {
                name = $6,
                email = $7,
                phone = $8,
+               terms_accepted = $9,
+               accepted_terms_version = $10,
+               terms_accepted_at = $11,
+               tc_accepted_at = $12,
                updated_at = NOW()
-           WHERE id = $9
+           WHERE id = $13
            RETURNING *`,
-          [passwordHash, orgId, sBranchId, student.id, sCustomerCode, sFullName, sEmail, sPhone, existingUser.id]
+          [
+            passwordHash,
+            orgId,
+            sBranchId,
+            student.id,
+            sCustomerCode,
+            sFullName,
+            sEmail,
+            sPhone,
+            studentTermsAccepted,
+            studentTermsAccepted ? CURRENT_TERMS_VERSION : null,
+            studentTermsAccepted ? new Date() : null,
+            studentTermsAccepted ? new Date() : null,
+            existingUser.id,
+          ]
         );
         finalUser = updatedUser.rows[0];
       } else {
@@ -1543,10 +1658,26 @@ export class AuthService {
         const newUserRes = await client.query(
           `INSERT INTO users (
             id, user_id, organization_id, branch_id, student_id, name, email,
-            password_hash, role, phone, customer_code, must_change_password, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'STUDENT', $9, $10, false, 'ACTIVE')
+            password_hash, role, phone, customer_code, must_change_password,
+            terms_accepted, accepted_terms_version, terms_accepted_at, tc_accepted_at, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'STUDENT', $9, $10, false, $11, $12, $13, $14, 'ACTIVE')
           RETURNING *`,
-          [newUserId, targetUserId, orgId, sBranchId, student.id, sFullName, sEmail, passwordHash, sPhone, sCustomerCode]
+          [
+            newUserId,
+            targetUserId,
+            orgId,
+            sBranchId,
+            student.id,
+            sFullName,
+            sEmail,
+            passwordHash,
+            sPhone,
+            sCustomerCode,
+            studentTermsAccepted,
+            studentTermsAccepted ? CURRENT_TERMS_VERSION : null,
+            studentTermsAccepted ? new Date() : null,
+            studentTermsAccepted ? new Date() : null,
+          ]
         );
         finalUser = newUserRes.rows[0];
       }
@@ -1559,11 +1690,28 @@ export class AuthService {
              portal_status = 'ACTIVE',
              activation_status = 'ACTIVATED',
              password_set = true,
-             user_id = $1,
+             tc_accepted_at = $1,
+             user_id = $2,
              updated_at = NOW()
-         WHERE id = $2`,
-        [finalUser.id, student.id]
+         WHERE id = $3`,
+        [studentTermsAccepted ? new Date() : null, finalUser.id, student.id]
       );
+
+      if (studentTermsAccepted) {
+        await client.query(
+          `INSERT INTO terms_acceptances (
+            id, user_id, role, terms_version, ip_address, user_agent, status, accepted_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'ACCEPTED', CURRENT_TIMESTAMP)`,
+          [
+            crypto.randomUUID(),
+            finalUser.id,
+            'STUDENT',
+            CURRENT_TERMS_VERSION,
+            '127.0.0.1',
+            'Student Activation Flow',
+          ]
+        );
+      }
 
       // Mark token and activation OTPs as used
       await client.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [tokenRecord.id]);

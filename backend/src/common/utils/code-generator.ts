@@ -27,6 +27,94 @@ export async function generateBusinessCode(
   return `${prefix}-${seqStr}`;
 }
 
+/**
+ * Formats a sequence number into a strict 10-character systematic Hostel ID:
+ * Format: IHMS[Series: AA..ZZ][0001..9999]
+ * Vehicle registration series rollover: AA -> AB -> ... -> AZ -> BA -> ... -> ZZ
+ */
+export function formatHostelCode(seq: number): string {
+  const safeSeq = Math.max(1, Math.floor(seq || 1));
+  const index = safeSeq - 1;
+  const num = (index % 9999) + 1;
+  const numStr = String(num).padStart(4, '0');
+  const seriesIndex = Math.floor(index / 9999);
+  const letter1 = String.fromCharCode(65 + (Math.floor(seriesIndex / 26) % 26));
+  const letter2 = String.fromCharCode(65 + (seriesIndex % 26));
+  return `IHMS${letter1}${letter2}${numStr}`;
+}
+
+/**
+ * Parses an existing systematic Hostel Code into its integer sequence number.
+ */
+export function parseHostelCodeSequence(code: string): number {
+  const match = (code || '').trim().match(/^IHMS([A-Z])([A-Z])(\d{4})$/i);
+  if (!match) return 0;
+  const l1 = match[1].toUpperCase().charCodeAt(0) - 65;
+  const l2 = match[2].toUpperCase().charCodeAt(0) - 65;
+  const num = parseInt(match[3], 10);
+  const seriesIndex = (l1 * 26) + l2;
+  return (seriesIndex * 9999) + num;
+}
+
+/**
+ * Generates the next systematic Hostel ID / Owner Code (e.g. IHMSAA0001)
+ */
+export async function generateSystematicHostelCode(organizationId: string = 'GLOBAL'): Promise<string> {
+  let currentMax = 0;
+  try {
+    const resHostel = await query(
+      `SELECT branch_code FROM hostels WHERE branch_code LIKE 'IHMS%' ORDER BY branch_code DESC LIMIT 10`
+    );
+    for (const row of resHostel.rows) {
+      const code = String(row.branch_code || '').trim();
+      if (/^IHMS[A-Z]{2}\d{4}$/i.test(code)) {
+        currentMax = Math.max(currentMax, parseHostelCodeSequence(code));
+      }
+    }
+  } catch (e) {
+    // Ignore error if table not yet migrated
+  }
+
+  try {
+    const resOrg = await query(
+      `SELECT org_code FROM organizations WHERE org_code LIKE 'IHMS%' ORDER BY org_code DESC LIMIT 10`
+    );
+    for (const row of resOrg.rows) {
+      const code = String(row.org_code || '').trim();
+      if (/^IHMS[A-Z]{2}\d{4}$/i.test(code)) {
+        currentMax = Math.max(currentMax, parseHostelCodeSequence(code));
+      }
+    }
+  } catch (e) {
+    // Ignore error
+  }
+
+  let nextSeq = currentMax + 1;
+  try {
+    const counterRow = await query(
+      `SELECT seq FROM counters WHERE organization_id = 'SYSTEM' AND prefix = 'IHMS_HOSTEL_MASTER'`
+    );
+    if (counterRow.rows.length > 0) {
+      const dbSeq = Number(counterRow.rows[0].seq || 0);
+      nextSeq = Math.max(nextSeq, dbSeq + 1);
+      await query(
+        `UPDATE counters SET seq = $1 WHERE organization_id = 'SYSTEM' AND prefix = 'IHMS_HOSTEL_MASTER'`,
+        [nextSeq]
+      );
+    } else {
+      await query(
+        `INSERT INTO counters (id, organization_id, prefix, seq)
+         VALUES ('SYSTEM_IHMS_HOSTEL_MASTER', 'SYSTEM', 'IHMS_HOSTEL_MASTER', $1)`,
+        [nextSeq]
+      );
+    }
+  } catch (e) {
+    // fallback if counters table issue
+  }
+
+  return formatHostelCode(nextSeq);
+}
+
 export async function generateStudentId(
   organizationId: string = 'GLOBAL',
   hostelNameOrCode?: string,

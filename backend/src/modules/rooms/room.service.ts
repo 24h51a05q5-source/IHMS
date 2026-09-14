@@ -374,6 +374,10 @@ export class RoomService {
     const bed = await queryOne<any>('SELECT * FROM beds WHERE id = $1 AND organization_id = $2', [bedId, orgId]);
     if (!bed) throw new AppError('Bed not found', 404);
 
+    if (data.status === BedStatus.MAINTENANCE && (bed.status === BedStatus.OCCUPIED || Boolean(bed.current_student_id))) {
+      throw new AppError('Cannot mark an occupied bed as Maintenance. Please vacate or reassign the student first.', 400);
+    }
+
     if (data.status === BedStatus.AVAILABLE && bed.status === BedStatus.OCCUPIED) {
       if (bed.current_student_id) {
         await query('UPDATE students SET bed_id = NULL, room_id = NULL WHERE id = $1', [bed.current_student_id]);
@@ -399,7 +403,22 @@ export class RoomService {
       );
     }
 
-    return queryOne('SELECT * FROM beds WHERE id = $1 AND organization_id = $2', [bedId, orgId]);
+    const updated = await queryOne<any>('SELECT * FROM beds WHERE id = $1 AND organization_id = $2', [bedId, orgId]);
+    if (updated) {
+      emitRealTimeEvent(
+        'bed.status_changed',
+        { bedId: updated.id, bedCode: updated.bed_code, status: updated.status, branchId: updated.hostel_id },
+        { branchId: updated.hostel_id }
+      );
+      emitRealTimeEvent(
+        'bed.updated',
+        { bedId: updated.id, bedCode: updated.bed_code, status: updated.status, branchId: updated.hostel_id },
+        { branchId: updated.hostel_id }
+      );
+      emitRealTimeEvent('dashboard.kpi_updated', { orgId, branchId: updated.hostel_id }, { orgId });
+    }
+
+    return updated;
   }
 
   async deleteBed(orgId: string, bedId: string): Promise<{ success: boolean; message: string }> {
@@ -447,10 +466,14 @@ export class RoomService {
       `SELECT b.id, b.id as "_id", b.bed_number as "number", b.bed_number as "bedNumber",
               b.bed_code as "bedCode", b.room_id as "roomId", b.status,
               b.monthly_rate as "monthlyRate", b.monthly_rate as "monthlyFee",
-              b.current_student_id as "studentId", b.current_student_name as "studentName",
-              b.current_customer_code as "customerCode", b.allocated_at as "allocatedAt"
+              b.current_student_id as "studentId",
+              COALESCE(b.current_student_name, s.full_name) as "studentName",
+              COALESCE(b.current_customer_code, s.customer_code) as "customerCode",
+              b.allocated_at as "allocatedAt"
        FROM beds b
-       WHERE b.organization_id = $1`,
+       LEFT JOIN students s ON s.id = b.current_student_id
+       WHERE b.organization_id = $1
+       ORDER BY b.bed_number ASC`,
       [orgId]
     );
 
@@ -481,9 +504,11 @@ export class RoomService {
                       b.bed_code as "bedCode", b.room_id as "roomId", b.hostel_id as "hostelId",
                       b.hostel_id as "branchId", b.status, b.monthly_rate as "monthlyRate",
                       b.monthly_rate as "monthlyFee", b.current_student_id as "studentId",
-                      b.current_student_name as "studentName", b.current_customer_code as "customerCode",
+                      COALESCE(b.current_student_name, s.full_name) as "studentName",
+                      COALESCE(b.current_customer_code, s.customer_code) as "customerCode",
                       b.allocated_at as "allocatedAt"
                FROM beds b
+               LEFT JOIN students s ON s.id = b.current_student_id
                WHERE b.organization_id = $1`;
     const params: any[] = [orgId];
 

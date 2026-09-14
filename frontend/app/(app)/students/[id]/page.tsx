@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { CardSkeleton } from '@/components/dashboard/loader';
@@ -249,7 +250,7 @@ function StudentDetailPageContent() {
       setSuccessModal({
         title: 'Activation OTP Sent Successfully',
         studentName: student.name,
-        studentId: student.studentId || student.customerCode,
+        studentId: formatStudentId(student.studentId || student.customerCode || student),
         message: "Activation OTP sent successfully to the student's registered email. The student will use this OTP to activate the account and create their own secure password.",
       });
     } catch (err) {
@@ -330,7 +331,7 @@ function StudentDetailPageContent() {
 
       <PageHeader
         title={student.name}
-        description={`Student ID: ${student.studentId || student.customerCode} · ${student.hostelName || 'Main Hostel'}`}
+        description={`Student ID: ${formatStudentId(student)} · ${student.hostelName || 'Main Hostel'}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -403,7 +404,7 @@ function StudentDetailPageContent() {
             </div>
             <div className="min-w-0">
               <p className="truncate font-bold text-base text-slate-900">{student.name}</p>
-              <p className="font-mono text-xs font-bold text-sky-600">{student.studentId || student.customerCode}</p>
+              <p className="font-mono text-xs font-bold text-sky-600">{formatStudentId(student)}</p>
             </div>
           </div>
           <dl className="space-y-2 text-xs border-t border-slate-100 pt-3">
@@ -631,7 +632,7 @@ function StudentDetailPageContent() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Student ID:</span>
-              <span className="font-mono font-bold text-primary">{student.studentId || student.customerCode}</span>
+              <span className="font-mono font-bold text-primary">{formatStudentId(student)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Registered Email:</span>
@@ -697,7 +698,7 @@ function StudentDetailPageContent() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Student ID:</span>
-              <span className="font-mono font-bold text-primary">{student.studentId || student.customerCode}</span>
+              <span className="font-mono font-bold text-primary">{formatStudentId(student)}</span>
             </div>
           </div>
 
@@ -824,7 +825,7 @@ function StudentDetailPageContent() {
           <div className="space-y-3.5 py-2">
             <div className="rounded-xl border border-border bg-muted/40 p-3 text-center">
               <p className="text-[11px] font-medium text-muted-foreground">Student ID</p>
-              <p className="font-mono text-lg font-bold text-primary mt-0.5">{successModal?.studentId}</p>
+              <p className="font-mono text-lg font-bold text-primary mt-0.5">{formatStudentId(successModal?.studentId)}</p>
             </div>
 
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5 text-xs text-center text-muted-foreground leading-relaxed">
@@ -919,7 +920,7 @@ function StudentDetailPageContent() {
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-1">
                 <div className="flex justify-between">
                   <span className="text-slate-600 font-bold">Student ID:</span>
-                  <span className="font-mono font-bold text-slate-900">{student.studentId || student.customerCode}</span>
+                  <span className="font-mono font-bold text-slate-900">{formatStudentId(student)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-600 font-bold">Outstanding Balance:</span>

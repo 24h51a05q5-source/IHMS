@@ -11,8 +11,11 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     res.status(201).json({
       success: true,
       data: result,
+      masterId: result.masterId,
       ownerId: result.ownerId,
-      organizationId: result.organizationId,
+      organizationId: result.orgCode || result.organizationCode || result.organizationId,
+      orgCode: result.orgCode || result.organizationCode,
+      organizationCode: result.orgCode || result.organizationCode,
       hostelBranchId: result.hostelBranchId,
       hostelCode: result.hostelCode,
       hostelName: result.hostelName,
@@ -335,10 +338,11 @@ router.post('/resend-activation-otp', async (req: Request, res: Response, next: 
 
 router.post('/activate-student-account', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { activationToken, token, newPassword, password, confirmPassword } = req.body;
+    const { activationToken, token, newPassword, password, confirmPassword, agreeToTerms, termsAccepted } = req.body;
     const targetToken = activationToken || token;
     const targetPassword = newPassword || password;
-    const result = await authService.activateStudentAccount(targetToken, targetPassword, confirmPassword);
+    const isAgree = agreeToTerms !== undefined ? Boolean(agreeToTerms) : (termsAccepted !== undefined ? Boolean(termsAccepted) : undefined);
+    const result = await authService.activateStudentAccount(targetToken, targetPassword, confirmPassword, isAgree);
     res.json({
       success: true,
       data: result,

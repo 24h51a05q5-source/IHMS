@@ -57,7 +57,7 @@ export async function runSeed() {
   await query(
     `INSERT INTO organizations (
       id, org_code, name, email, phone, currency, tax_gstin, subscription_tier, status
-    ) VALUES ($1, 'ORG-1001', 'Green Valley Hostels Pvt Ltd', 'admin@greenvalleyhostels.com', '+91 9848012345', 'INR', '36AAACG1234F1Z5', 'ENTERPRISE', 'ACTIVE')`,
+    ) VALUES ($1, 'IHMSAA0001', 'Green Valley Hostels Pvt Ltd', 'admin@greenvalleyhostels.com', '+91 9848012345', 'INR', '36AAACG1234F1Z5', 'ENTERPRISE', 'ACTIVE')`,
     [orgId]
   );
 
@@ -73,7 +73,7 @@ export async function runSeed() {
 
   // Owner User
   const ownerUserId = require('crypto').randomUUID();
-  const ownerIhmsId = 'IHM-GV-MN-H-0001';
+  const ownerIhmsId = 'IHMSAA0001';
   await query(
     `INSERT INTO users (
       id, user_id, ihms_id, organization_id, name, email, password_hash, role, phone, owner_id, staff_code, status
@@ -85,7 +85,7 @@ export async function runSeed() {
   await query(
     `INSERT INTO users (
       id, user_id, ihms_id, organization_id, name, email, password_hash, role, phone, owner_id, staff_code, status
-    ) VALUES ($1, 'IHM-GV-MN-H-0002', 'IHM-GV-MN-H-0002', $2, 'Hostel Admin', 'admin@ihms.com', $3, 'OWNER', '+91 9848011112', 'IHM-GV-MN-H-0001', 'IHM-GV-MN-H-0002', 'ACTIVE')`,
+    ) VALUES ($1, 'IHMSAA0001-ADM', 'IHMSAA0001-ADM', $2, 'Hostel Admin', 'admin@ihms.com', $3, 'OWNER', '+91 9848011112', 'IHMSAA0001', 'IHMSAA0001-ADM', 'ACTIVE')`,
     [require('crypto').randomUUID(), orgId, defaultPasswordHash]
   );
 
@@ -101,16 +101,16 @@ export async function runSeed() {
   const b1Id = require('crypto').randomUUID();
   await query(
     `INSERT INTO hostels (
-      id, organization_id, branch_code, name, type, city, address, contact_number, email, total_capacity, current_occupancy, status
-    ) VALUES ($1, $2, 'HYD001', 'Green Valley Boys Executive Hostel', 'BOYS', 'Hyderabad', 'Plot 42, Hitech City Main Road, Madhapur', '+91 9848022222', 'hyd001@greenvalleyhostels.com', 50, 0, 'ACTIVE')`,
+      id, organization_id, branch_code, hostel_id, name, type, city, address, contact_number, email, total_capacity, current_occupancy, status
+    ) VALUES ($1, $2, 'IHMSAA0001', 'IHMSAA0001', 'Green Valley Boys Executive Hostel', 'BOYS', 'Hyderabad', 'Plot 42, Hitech City Main Road, Madhapur', '+91 9848022222', 'hyd001@greenvalleyhostels.com', 50, 0, 'ACTIVE')`,
     [b1Id, orgId]
   );
 
   const b2Id = require('crypto').randomUUID();
   await query(
     `INSERT INTO hostels (
-      id, organization_id, branch_code, name, type, city, address, contact_number, email, total_capacity, current_occupancy, status
-    ) VALUES ($1, $2, 'HYD002', 'Green Valley Elite Girls Hostel', 'GIRLS', 'Hyderabad', 'Road No 36, Jubilee Hills', '+91 9848033333', 'hyd002@greenvalleyhostels.com', 40, 0, 'ACTIVE')`,
+      id, organization_id, branch_code, hostel_id, name, type, city, address, contact_number, email, total_capacity, current_occupancy, status
+    ) VALUES ($1, $2, 'IHMSAA0002', 'IHMSAA0002', 'Green Valley Elite Girls Hostel', 'GIRLS', 'Hyderabad', 'Road No 36, Jubilee Hills', '+91 9848033333', 'hyd002@greenvalleyhostels.com', 40, 0, 'ACTIVE')`,
     [b2Id, orgId]
   );
 
@@ -160,28 +160,30 @@ export async function runSeed() {
   // Student 1: Rahul Kumar (Active student with user account)
   const s1Id = require('crypto').randomUUID();
   const s1UserId = require('crypto').randomUUID();
-  const s1IhmsId = 'IHM-GV-MN-S-0001';
+  const s1StudentId = 'IHMSAA0001-a001';
 
   await query(
     `INSERT INTO users (
       id, user_id, ihms_id, organization_id, branch_id, student_id, name, email, password_hash, role, phone, customer_code, staff_code, status
     ) VALUES ($1, $2, $2, $3, $4, $5, 'Rahul Kumar', 'student@ihms.com', $6, 'STUDENT', '+91 9876543210', $2, $2, 'ACTIVE')`,
-    [s1UserId, s1IhmsId, orgId, b1Id, s1Id, defaultPasswordHash]
+    [s1UserId, s1StudentId, orgId, b1Id, s1Id, defaultPasswordHash]
   );
+
+  const { redisService } = require('./common/redis/redis.service');
 
   await query(
     `INSERT INTO students (
-      id, student_id, customer_code, ihms_id, organization_id, hostel_id, user_id, full_name, email,
+      id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, user_id, full_name, email,
       phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
       room_id, bed_id, admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status, financial_total_demanded,
       financial_total_paid, financial_outstanding_balance
-    ) VALUES ($1, $2, $2, $2, $3, $4, $5, 'Rahul Kumar', 'student@ihms.com', '+91 9876543210', 'MALE', 'IIT Hyderabad (Computer Science)', 'Anand Kumar', 'Father', '+91 9876500001', 'Madhapur, Hyderabad', $6, $7, CURRENT_TIMESTAMP, true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE', 22000, 14000, 8000)`,
-    [s1Id, s1IhmsId, orgId, b1Id, s1UserId, r1Id, bed1Id]
+    ) VALUES ($1, $2, $2, $2, $8, $3, $4, $5, 'Rahul Kumar', 'student@ihms.com', '+91 9876543210', 'MALE', 'IIT Hyderabad (Computer Science)', 'Anand Kumar', 'Father', '+91 9876500001', 'Madhapur, Hyderabad', $6, $7, CURRENT_TIMESTAMP, true, true, 'ACTIVE', 'ACTIVATED', true, 'ACTIVE', 22000, 14000, 8000)`,
+    [s1Id, s1StudentId, orgId, b1Id, s1UserId, r1Id, bed1Id, 'IHMSAA0001-a001']
   );
 
   await query(
     `UPDATE beds SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2, current_student_name = 'Rahul Kumar', allocated_at = CURRENT_TIMESTAMP WHERE id = $3`,
-    [s1Id, s1IhmsId, bed1Id]
+    [s1Id, 'IHMSAA0001-a001', bed1Id]
   );
 
   await query(
@@ -192,20 +194,20 @@ export async function runSeed() {
 
   // Student 2: Priya Sharma (Portal access false)
   const s2Id = require('crypto').randomUUID();
-  const s2IhmsId = 'IHM-GV-MN-S-0002';
+  const s2StudentId = 'IHMSAA0001-a002';
   await query(
     `INSERT INTO students (
-      id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+      id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, full_name, email,
       phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
       room_id, bed_id, admission_date, portal_access, status, financial_total_demanded,
       financial_total_paid, financial_outstanding_balance
-    ) VALUES ($1, $2, $2, $2, $3, $4, 'Priya Sharma', 'priya.sharma@example.com', '+91 9876543222', 'FEMALE', 'Deloitte India (Analyst)', 'Sunil Sharma', 'Father', '+91 9876500002', 'Gachibowli, Hyderabad', $5, $6, CURRENT_TIMESTAMP, false, 'ACTIVE', 14000, 6000, 8000)`,
-    [s2Id, s2IhmsId, orgId, b1Id, r1Id, bed2Id]
+    ) VALUES ($1, $2, $2, $2, $7, $3, $4, 'Priya Sharma', 'priya.sharma@example.com', '+91 9876543222', 'FEMALE', 'Deloitte India (Analyst)', 'Sunil Sharma', 'Father', '+91 9876500002', 'Gachibowli, Hyderabad', $5, $6, CURRENT_TIMESTAMP, false, 'ACTIVE', 14000, 6000, 8000)`,
+    [s2Id, s2StudentId, orgId, b1Id, r1Id, bed2Id, 'IHMSAA0001-a002']
   );
 
   await query(
     `UPDATE beds SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2, current_student_name = 'Priya Sharma', allocated_at = CURRENT_TIMESTAMP WHERE id = $3`,
-    [s2Id, s2IhmsId, bed2Id]
+    [s2Id, 'IHMSAA0001-a002', bed2Id]
   );
 
   await query(
@@ -216,27 +218,32 @@ export async function runSeed() {
 
   // Student 3: Rahul Varma (Unactivated student for OTP setup test)
   const s3Id = require('crypto').randomUUID();
-  const s3IhmsId = 'IHM-GV-MN-S-0003';
+  const s3StudentId = 'IHMSAA0001-a003';
   await query(
     `INSERT INTO students (
-      id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+      id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, full_name, email,
       phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
       admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-    ) VALUES ($1, $2, $2, $2, $3, $4, 'Rahul Varma', 'stu2026003@ihms.com', '+91 9876543333', 'MALE', 'Osmania University', 'Ramesh Varma', 'Father', '+91 9876500003', 'Banjara Hills, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
-    [s3Id, s3IhmsId, orgId, b1Id]
+    ) VALUES ($1, $2, $2, $2, $5, $3, $4, 'Rahul Varma', 'stu2026003@ihms.com', '+91 9876543333', 'MALE', 'Osmania University', 'Ramesh Varma', 'Father', '+91 9876500003', 'Banjara Hills, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+    [s3Id, s3StudentId, orgId, b1Id, 'IHMSAA0001-a003']
   );
 
-  // Student 4: Ananya Reddy (Unactivated student for OTP setup test)
+  // Student 4: Ananya Reddy (Unactivated student in Hostel 2 IHMSAA0002)
   const s4Id = require('crypto').randomUUID();
-  const s4IhmsId = 'IHM-GV-MN-S-0004';
+  const s4StudentId = 'IHMSAA0002-a001';
   await query(
     `INSERT INTO students (
-      id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+      id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, full_name, email,
       phone, gender, college, guardian_name, guardian_relation, guardian_phone, guardian_address,
       admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status
-    ) VALUES ($1, $2, $2, $2, $3, $4, 'Ananya Reddy', 'stu2026004@ihms.com', '+91 9876543334', 'FEMALE', 'JNTU Hyderabad', 'Kiran Reddy', 'Father', '+91 9876500004', 'Kukatpally, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
-    [s4Id, s4IhmsId, orgId, b1Id]
+    ) VALUES ($1, $2, $2, $2, $5, $3, $4, 'Ananya Reddy', 'stu2026004@ihms.com', '+91 9876543334', 'FEMALE', 'JNTU Hyderabad', 'Kiran Reddy', 'Father', '+91 9876500004', 'Kukatpally, Hyderabad', CURRENT_TIMESTAMP, true, true, 'PENDING_ACTIVATION', 'UNACTIVATED', false, 'ACTIVE')`,
+    [s4Id, s4StudentId, orgId, b2Id, 'IHMSAA0002-a001']
   );
+
+  await redisService.setHostelCounter('IHMSAA0001', 3);
+  await redisService.setHostelCounter('IHMSAA0002', 1);
+  await redisService.setHostelCounter(b1Id, 3);
+  await redisService.setHostelCounter(b2Id, 1);
 
   // Do not seed fake or default payment credentials. Payment settings belong to each hostel owner.
 
@@ -247,7 +254,7 @@ export async function runSeed() {
       id, demand_number, organization_id, hostel_id, student_id, customer_code,
       term_name, hostel_rent, admission_fee, security_deposit, total_amount, paid_amount,
       balance_amount, due_date, status
-    ) VALUES ($1, 'DEM-10001', $2, $3, $4, 'HYD001-ST000001', 'August 2026 Fee', 8000, 1000, 5000, 14000, 14000, 0, CURRENT_TIMESTAMP - INTERVAL '15 days', 'PAID')`,
+    ) VALUES ($1, 'DEM-10001', $2, $3, $4, 'IHMSAA0001-a001', 'August 2026 Fee', 8000, 1000, 5000, 14000, 14000, 0, CURRENT_TIMESTAMP - INTERVAL '15 days', 'PAID')`,
     [dem1Id, orgId, b1Id, s1Id]
   );
 
@@ -257,7 +264,7 @@ export async function runSeed() {
       id, demand_number, organization_id, hostel_id, student_id, customer_code,
       term_name, hostel_rent, admission_fee, security_deposit, total_amount, paid_amount,
       balance_amount, due_date, status
-    ) VALUES ($1, 'DEM-10002', $2, $3, $4, 'HYD001-ST000001', 'September 2026 Fee', 8000, 0, 0, 8000, 0, 8000, CURRENT_TIMESTAMP + INTERVAL '7 days', 'UNPAID')`,
+    ) VALUES ($1, 'DEM-10002', $2, $3, $4, 'IHMSAA0001-a001', 'September 2026 Fee', 8000, 0, 0, 8000, 0, 8000, CURRENT_TIMESTAMP + INTERVAL '7 days', 'UNPAID')`,
     [dem2Id, orgId, b1Id, s1Id]
   );
 
@@ -267,13 +274,13 @@ export async function runSeed() {
     `INSERT INTO payments (
       id, payment_number, organization_id, hostel_id, student_id, customer_code,
       amount, payment_method, transaction_ref, status, receipt_number, received_by, notes
-    ) VALUES ($1, 'PAY-10001', $2, $3, $4, 'HYD001-ST000001', 14000, 'UPI', 'UPI-RAHUL-9848', 'SUCCESS', $5, 'Suresh Rao (Accountant)', 'Fee collection')`,
+    ) VALUES ($1, 'PAY-10001', $2, $3, $4, 'IHMSAA0001-a001', 14000, 'UPI', 'UPI-RAHUL-9848', 'SUCCESS', $5, 'Suresh Rao (Accountant)', 'Fee collection')`,
     [pay1Id, orgId, b1Id, s1Id, receiptNumber]
   );
 
   const qrPayload = await generateQrDataUrl({
     receiptNumber,
-    customerCode: 'HYD001-ST000001',
+    customerCode: 'IHMSAA0001-a001',
     studentName: 'Rahul Kumar',
     amount: 14000,
     date: new Date(),
@@ -284,7 +291,7 @@ export async function runSeed() {
       id, receipt_number, payment_number, organization_id, hostel_id, student_id,
       customer_code, student_name, room_number, bed_number, fee_type, installment_month,
       amount, payment_method, remaining_balance, issued_by, qr_payload, notes
-    ) VALUES ($1, $2, 'PAY-10001', $3, $4, $5, 'HYD001-ST000001', 'Rahul Kumar', '101', 'HYD001-R101-B01', 'Hostel Fee Payment', 'August 2026', 14000, 'UPI', 8000, 'Suresh Rao (Accountant)', $6, 'Full payment on admission')`,
+    ) VALUES ($1, $2, 'PAY-10001', $3, $4, $5, 'IHMSAA0001-a001', 'Rahul Kumar', '101', 'HYD001-R101-B01', 'Hostel Fee Payment', 'August 2026', 14000, 'UPI', 8000, 'Suresh Rao (Accountant)', $6, 'Full payment on admission')`,
     [require('crypto').randomUUID(), receiptNumber, orgId, b1Id, s1Id, qrPayload]
   );
 
@@ -294,7 +301,7 @@ export async function runSeed() {
       id, organization_id, hostel_id, student_id, customer_code, payment_plan,
       total_fee, total_paid, balance_amount, monthly_amount, number_of_installments,
       paid_installments, start_month, status, allow_advance_payment
-    ) VALUES ($1, $2, $3, $4, 'HYD001-ST000001', 'MONTHLY', 22000, 14000, 8000, 8000, 2, 1, 'August 2026', 'ACTIVE', true)`,
+    ) VALUES ($1, $2, $3, $4, 'IHMSAA0001-a001', 'MONTHLY', 22000, 14000, 8000, 8000, 2, 1, 'August 2026', 'ACTIVE', true)`,
     [accountId, orgId, b1Id, s1Id]
   );
 
@@ -303,7 +310,7 @@ export async function runSeed() {
     `INSERT INTO fee_installments (
       id, fee_account_id, organization_id, hostel_id, student_id, customer_code,
       installment_number, month_name, due_date, amount, paid_amount, balance_amount, status, payment_id, receipt_number
-    ) VALUES ($1, $2, $3, $4, $5, 'HYD001-ST000001', 1, 'August 2026', CURRENT_TIMESTAMP - INTERVAL '15 days', 14000, 14000, 0, 'PAID', $6, $7)`,
+    ) VALUES ($1, $2, $3, $4, $5, 'IHMSAA0001-a001', 1, 'August 2026', CURRENT_TIMESTAMP - INTERVAL '15 days', 14000, 14000, 0, 'PAID', $6, $7)`,
     [inst1Id, accountId, orgId, b1Id, s1Id, pay1Id, receiptNumber]
   );
 
@@ -312,7 +319,7 @@ export async function runSeed() {
     `INSERT INTO fee_installments (
       id, fee_account_id, organization_id, hostel_id, student_id, customer_code,
       installment_number, month_name, due_date, amount, paid_amount, balance_amount, status
-    ) VALUES ($1, $2, $3, $4, $5, 'HYD001-ST000001', 2, 'September 2026', CURRENT_TIMESTAMP + INTERVAL '7 days', 8000, 0, 8000, 'PENDING')`,
+    ) VALUES ($1, $2, $3, $4, $5, 'IHMSAA0001-a001', 2, 'September 2026', CURRENT_TIMESTAMP + INTERVAL '7 days', 8000, 0, 8000, 'PENDING')`,
     [inst2Id, accountId, orgId, b1Id, s1Id]
   );
 
@@ -343,7 +350,7 @@ export async function runSeed() {
     `INSERT INTO complaints (
       id, complaint_number, organization_id, branch_id, student_id, customer_code,
       student_name, room_code, category, title, description, priority, status
-    ) VALUES ($1, 'HYD001-CMP-000001', $2, $3, $4, 'HYD001-ST000001', 'Rahul Kumar', '101', 'ELECTRICAL', 'Study table reading lamp not working', 'Bulb flickers and turns off when switched on.', 'MEDIUM', 'OPEN')`,
+    ) VALUES ($1, 'HYD001-CMP-000001', $2, $3, $4, 'IHMSAA0001-a001', 'Rahul Kumar', '101', 'ELECTRICAL', 'Study table reading lamp not working', 'Bulb flickers and turns off when switched on.', 'MEDIUM', 'OPEN')`,
     [require('crypto').randomUUID(), orgId, b1Id, s1Id]
   );
 
@@ -379,8 +386,8 @@ export async function runSeed() {
   console.log('  - Security:      security@ihms.com');
   console.log('  - Maintenance:   maintenance@ihms.com');
   console.log('  - Mess Manager:  mess@ihms.com');
-  console.log('  - Student (Active): student@ihms.com (Customer Code: HYD001-ST000001)');
-  console.log('  - Student (Disabled): priya.sharma@example.com (HYD001-ST000002) - Portal Access Disabled');
+  console.log('  - Student (Active): student@ihms.com (Customer Code: IHMSAA0001-a001)');
+  console.log('  - Student (Disabled): priya.sharma@example.com (IHMSAA0001-a002) - Portal Access Disabled');
   console.log('===========================================================');
 
   if (require.main === module) {

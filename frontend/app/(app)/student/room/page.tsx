@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/dashboard/states';
 import { Badge, Money } from '@/components/dashboard/confirm-dialog';
 import { studentsApi } from '@/lib/api/students.api';
 import { getCachedData } from '@/lib/api/client';
+import { formatStudentId } from '@/lib/utils';
 import type { ApiError } from '@/lib/types';
 
 interface StudentRoomData {
@@ -74,7 +75,7 @@ export default function StudentRoomPage() {
     <div className="space-y-3.5 sm:space-y-5">
       <PageHeader
         title="My Room & Bed"
-        description={`Accommodation assigned to Student ID: ${data.studentId || data.customerCode}`}
+        description={`Accommodation assigned to Student ID: ${formatStudentId(data.studentId || data.customerCode || data)}`}
       />
 
       {/* Quick Summary Cards */}
@@ -143,7 +144,7 @@ export default function StudentRoomPage() {
         </div>
 
         <div className="grid gap-2.5 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <InfoItem label="Student ID / Customer Code" value={data.studentId || data.customerCode} mono />
+          <InfoItem label="Student ID" value={formatStudentId(data.studentId || data.customerCode || data)} mono />
           <InfoItem label="Hostel Branch" value={data.hostelName} />
           <InfoItem label="Building Name" value={data.buildingName} />
           <InfoItem label="Floor Number" value={`Floor ${data.floorNumber}`} />

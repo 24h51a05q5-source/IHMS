@@ -124,10 +124,25 @@ export class TermsService {
        SET terms_accepted = TRUE,
            accepted_terms_version = $1,
            terms_accepted_at = CURRENT_TIMESTAMP,
+           tc_accepted_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $2`,
       [CURRENT_TERMS_VERSION, userId]
     );
+
+    // Also update student or owner table if applicable
+    if (effectiveRole === 'STUDENT' || user.student_id) {
+      await query(
+        `UPDATE students SET tc_accepted_at = CURRENT_TIMESTAMP WHERE id = $1 OR user_id = $2`,
+        [user.student_id || userId, userId]
+      );
+    }
+    if (effectiveRole === 'OWNER' || user.owner_id) {
+      await query(
+        `UPDATE owners SET tc_accepted_at = CURRENT_TIMESTAMP WHERE id = $1 OR user_id = $2`,
+        [user.owner_id || userId, userId]
+      );
+    }
 
     // 3. Record system audit trail entry
     try {

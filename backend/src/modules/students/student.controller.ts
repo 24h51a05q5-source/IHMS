@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { studentService } from './student.service';
+import { studentService, sanitizeStudentDisplayId } from './student.service';
 import { query, queryOne, queryRows } from '../../config/database';
 import { authenticate, authorize } from '../../common/guards/auth.guard';
 import { UserRole } from '../../config/constants';
@@ -11,11 +11,20 @@ router.use(authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT, 
 // GET /students with Lovable Paginated filter
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { branchId, hostelId, search, status, portalAccess, page = 1, pageSize = 50, sortBy = 'createdAt', sortDir = 'desc' } = req.query;
+    const { branchId, hostelId, search, status, portalAccess, isActive, includeInactive, page = 1, pageSize = 50, sortBy = 'createdAt', sortDir = 'desc' } = req.query;
     const orgId = req.user!.organizationId;
 
     let whereClause = 'WHERE s.organization_id = $1';
     const params: any[] = [orgId];
+
+    // Soft Deletion Filter: Exclude soft-deleted students unless includeInactive or specific isActive flag requested
+    if (isActive !== undefined && isActive !== '' && isActive !== 'ALL') {
+      const activeBool = String(isActive) === 'true';
+      params.push(activeBool);
+      whereClause += ` AND COALESCE(s.is_active, TRUE) = $${params.length}`;
+    } else if (includeInactive !== 'true' && status !== 'INACTIVE') {
+      whereClause += ` AND COALESCE(s.is_active, TRUE) = TRUE`;
+    }
 
     const targetBranch = (branchId || hostelId) as string;
     if (targetBranch && targetBranch !== 'ALL') {
@@ -49,7 +58,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const offset = Math.max(0, (Number(page) - 1) * limit);
 
     const dataSql = `
-      SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name
+      SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name, h.branch_code as branch_code
       FROM students s
       LEFT JOIN rooms r ON r.id = s.room_id
       LEFT JOIN beds b ON b.id = s.bed_id
@@ -61,16 +70,23 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const students = await queryRows<any>(dataSql, params);
 
-    const mapped = students.map((s: any) => {
+    const mapped = students.map((s: any, idx: number) => {
       const demanded = Number(s.financial_total_demanded || 0);
       const paid = Number(s.financial_total_paid || 0);
       const balance = Number(s.financial_outstanding_balance || 0);
 
+      const rawCode = s.custom_id || s.customer_code || s.student_id || s.ihms_id;
+      const fallbackHostel = s.branch_code || 'IHMSAA0001';
+      const displayId = sanitizeStudentDisplayId(rawCode, fallbackHostel, idx + 1);
+
       return {
         id: s.id,
         _id: s.id,
-        customerCode: s.customer_code,
-        studentId: s.student_id || s.customer_code,
+        customerCode: displayId,
+        studentId: displayId,
+        customId: displayId,
+        ihmsId: displayId,
+        ihms_id: displayId,
         name: s.full_name,
         fullName: s.full_name,
         email: s.email,
@@ -89,6 +105,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         feeStatus: balance <= 0 ? 'PAID' : paid > 0 ? 'PARTIAL' : 'OVERDUE',
         portalAccess: s.portal_access ? 'ENABLED' : 'DISABLED',
         status: s.status || 'ACTIVE',
+        isActive: s.is_active !== false,
         course: s.course || '',
         year: 1,
         dateOfAdmission: s.admission_date || s.created_at,

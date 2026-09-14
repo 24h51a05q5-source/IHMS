@@ -18,16 +18,21 @@ router.get('/beds', async (req: Request, res: Response, next: NextFunction) => {
     const { roomId, status, page = 1, pageSize = 100 } = req.query;
     const orgId = req.user!.organizationId;
 
-    let sql = 'SELECT * FROM beds WHERE organization_id = $1';
+    let sql = `SELECT b.*,
+                      COALESCE(b.current_student_name, s.full_name) as student_name,
+                      COALESCE(b.current_customer_code, s.customer_code) as customer_code
+               FROM beds b
+               LEFT JOIN students s ON s.id = b.current_student_id
+               WHERE b.organization_id = $1`;
     const params: any[] = [orgId];
 
     if (roomId) {
       params.push(roomId);
-      sql += ` AND room_id = $${params.length}`;
+      sql += ` AND b.room_id = $${params.length}`;
     }
     if (status && status !== 'ALL') {
       params.push(status);
-      sql += ` AND status = $${params.length}`;
+      sql += ` AND b.status = $${params.length}`;
     }
 
     const countSql = `SELECT COUNT(*)::int as total FROM (${sql}) as sub`;
@@ -36,7 +41,7 @@ router.get('/beds', async (req: Request, res: Response, next: NextFunction) => {
 
     const limit = Number(pageSize);
     const offset = (Number(page) - 1) * limit;
-    sql += ` ORDER BY bed_number ASC LIMIT ${limit} OFFSET ${offset}`;
+    sql += ` ORDER BY b.bed_number ASC LIMIT ${limit} OFFSET ${offset}`;
 
     const beds = await queryRows<any>(sql, params);
 
@@ -49,8 +54,8 @@ router.get('/beds', async (req: Request, res: Response, next: NextFunction) => {
       roomId: b.room_id,
       status: b.status,
       studentId: b.current_student_id,
-      studentName: b.current_student_name,
-      customerCode: b.current_customer_code,
+      studentName: b.student_name || b.current_student_name,
+      customerCode: b.customer_code || b.current_customer_code,
       monthlyFee: Number(b.monthly_rate || 0),
       monthlyRate: Number(b.monthly_rate || 0),
     }));
@@ -71,7 +76,15 @@ router.get('/beds', async (req: Request, res: Response, next: NextFunction) => {
 // GET /beds/:id
 router.get('/beds/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const bed = await queryOne<any>('SELECT * FROM beds WHERE (id = $1 OR bed_code = $1) AND organization_id = $2', [req.params.id, req.user!.organizationId]);
+    const bed = await queryOne<any>(
+      `SELECT b.*,
+              COALESCE(b.current_student_name, s.full_name) as student_name,
+              COALESCE(b.current_customer_code, s.customer_code) as customer_code
+       FROM beds b
+       LEFT JOIN students s ON s.id = b.current_student_id
+       WHERE (b.id = $1 OR b.bed_code = $1) AND b.organization_id = $2`,
+      [req.params.id, req.user!.organizationId]
+    );
     if (!bed) return res.status(404).json({ success: false, message: 'Bed not found' });
     res.json({
       success: true,
@@ -84,8 +97,8 @@ router.get('/beds/:id', async (req: Request, res: Response, next: NextFunction) 
         roomId: bed.room_id,
         status: bed.status,
         studentId: bed.current_student_id,
-        studentName: bed.current_student_name,
-        customerCode: bed.current_customer_code,
+        studentName: bed.student_name || bed.current_student_name,
+        customerCode: bed.customer_code || bed.current_customer_code,
         monthlyFee: Number(bed.monthly_rate || 0),
         monthlyRate: Number(bed.monthly_rate || 0),
       },
@@ -230,13 +243,18 @@ router.get('/:id/beds', async (req: Request, res: Response, next: NextFunction) 
   try {
     const { status } = req.query;
     const orgId = req.user!.organizationId;
-    let sql = 'SELECT * FROM beds WHERE organization_id = $1 AND room_id = $2';
+    let sql = `SELECT b.*,
+                      COALESCE(b.current_student_name, s.full_name) as student_name,
+                      COALESCE(b.current_customer_code, s.customer_code) as customer_code
+               FROM beds b
+               LEFT JOIN students s ON s.id = b.current_student_id
+               WHERE b.organization_id = $1 AND b.room_id = $2`;
     const params: any[] = [orgId, req.params.id];
     if (status && status !== 'ALL') {
       params.push(status);
-      sql += ` AND status = $${params.length}`;
+      sql += ` AND b.status = $${params.length}`;
     }
-    sql += ' ORDER BY bed_number ASC';
+    sql += ' ORDER BY b.bed_number ASC';
     const beds = await queryRows<any>(sql, params);
 
     res.json({
@@ -252,8 +270,8 @@ router.get('/:id/beds', async (req: Request, res: Response, next: NextFunction) 
         monthlyFee: Number(b.monthly_rate || 0),
         monthlyRate: Number(b.monthly_rate || 0),
         studentId: b.current_student_id,
-        studentName: b.current_student_name,
-        customerCode: b.current_customer_code,
+        studentName: b.student_name || b.current_student_name,
+        customerCode: b.customer_code || b.current_customer_code,
       })),
     });
   } catch (err) { next(err); }

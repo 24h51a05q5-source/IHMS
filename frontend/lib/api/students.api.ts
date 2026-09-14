@@ -157,6 +157,7 @@ export const studentsApi = {
   removeDocument: (studentId: string, docId: string) =>
     api.delete<void>(`/students/${studentId}/documents/${docId}`),
 
+  /** @deprecated Use paymentsApi.createUpiQrOrder for Cashfree Dynamic UPI QR checkout */
   getPaymentInitiationDetails: (amount?: number) =>
     api.get<any>('/fees/student/payment-initiation', { query: { amount } }),
 

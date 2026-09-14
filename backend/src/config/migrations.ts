@@ -1,4 +1,5 @@
-import { query } from './database';
+import { query, isEmbeddedPostgres } from './database';
+import { redisService } from '../common/redis/redis.service';
 
 export async function runMigrations(): Promise<void> {
   console.log('[Migrations] Running PostgreSQL schema migrations...');
@@ -49,7 +50,9 @@ export async function runMigrations(): Promise<void> {
       terms_accepted BOOLEAN DEFAULT FALSE,
       accepted_terms_version TEXT,
       terms_accepted_at TIMESTAMPTZ,
+      tc_accepted_at TIMESTAMPTZ,
       status TEXT DEFAULT 'ACTIVE',
+      is_active BOOLEAN DEFAULT TRUE,
       last_login_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -68,6 +71,7 @@ export async function runMigrations(): Promise<void> {
       address TEXT,
       business_name TEXT,
       registered_hostel_name TEXT,
+      tc_accepted_at TIMESTAMPTZ,
       status TEXT DEFAULT 'ACTIVE',
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -176,7 +180,9 @@ export async function runMigrations(): Promise<void> {
       portal_status TEXT DEFAULT 'PENDING_APPROVAL',
       activation_status TEXT DEFAULT 'ACCOUNT_CREATED',
       password_set BOOLEAN DEFAULT FALSE,
+      tc_accepted_at TIMESTAMPTZ,
       status TEXT DEFAULT 'ACTIVE',
+      is_active BOOLEAN DEFAULT TRUE,
       financial_total_demanded NUMERIC(12, 2) DEFAULT 0.00,
       financial_total_paid NUMERIC(12, 2) DEFAULT 0.00,
       financial_outstanding_balance NUMERIC(12, 2) DEFAULT 0.00,
@@ -184,8 +190,15 @@ export async function runMigrations(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )`,
+    `ALTER TABLE students ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'ACTIVE'`,
+    `CREATE INDEX IF NOT EXISTS idx_students_org_active ON students(organization_id, is_active)`,
+    `CREATE INDEX IF NOT EXISTS idx_hostels_org_status ON hostels(organization_id, status)`,
     `ALTER TABLE students ADD COLUMN IF NOT EXISTS portal_access_approved BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE students ADD COLUMN IF NOT EXISTS portal_status TEXT DEFAULT 'PENDING_APPROVAL'`,
+    `ALTER TABLE students ADD COLUMN IF NOT EXISTS custom_id VARCHAR(50)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_students_custom_id ON students(custom_id)`,
 
     // 8. Room Allocations history table
     `CREATE TABLE IF NOT EXISTS room_allocations (
@@ -354,7 +367,7 @@ export async function runMigrations(): Promise<void> {
     `CREATE TABLE IF NOT EXISTS payment_gateway_configs (
       id TEXT PRIMARY KEY,
       organization_id TEXT UNIQUE NOT NULL,
-      provider TEXT DEFAULT 'RAZORPAY',
+      provider TEXT DEFAULT 'CASHFREE',
       environment TEXT DEFAULT 'TEST',
       key_id TEXT,
       key_secret TEXT,
@@ -884,6 +897,9 @@ export async function runMigrations(): Promise<void> {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS accepted_terms_version TEXT`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS tc_accepted_at TIMESTAMPTZ`,
+    `ALTER TABLE students ADD COLUMN IF NOT EXISTS tc_accepted_at TIMESTAMPTZ`,
+    `ALTER TABLE owners ADD COLUMN IF NOT EXISTS tc_accepted_at TIMESTAMPTZ`,
     `CREATE TABLE IF NOT EXISTS terms_acceptances (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -918,6 +934,55 @@ export async function runMigrations(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE INDEX IF NOT EXISTS idx_ai_confirm_tokens ON ai_confirmation_tokens(organization_id, owner_id, status)`,
+    // Cashfree Multi-Tenant Sub-Merchant & Dynamic UPI QR Schema Migrations
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS cashfree_vendor_id TEXT`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS cashfree_onboarding_status TEXT DEFAULT 'NOT_STARTED'`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS cashfree_bank_status TEXT DEFAULT 'PENDING'`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS cashfree_kyc_status TEXT DEFAULT 'PENDING'`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS cashfree_onboarding_url TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS cashfree_vendor_id TEXT`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS cashfree_onboarding_status TEXT DEFAULT 'NOT_STARTED'`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS cashfree_bank_status TEXT DEFAULT 'PENDING'`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS cashfree_kyc_status TEXT DEFAULT 'PENDING'`,
+    `ALTER TABLE hostel_payment_configs ADD COLUMN IF NOT EXISTS cashfree_onboarding_url TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS cashfree_order_id TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS cashfree_payment_id TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS cashfree_split_vendor_id TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS fee_bearer TEXT DEFAULT 'customer'`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS convenience_fee NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS base_amount NUMERIC(12, 2)`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_code_data TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS custom_id VARCHAR(50)`,
+    `CREATE INDEX IF NOT EXISTS idx_hostels_cf_vendor ON hostels(cashfree_vendor_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_cf_order ON payments(cashfree_order_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_custom_id ON payments(custom_id)`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS custom_id VARCHAR(50)`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS billing_month VARCHAR(20)`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS amount_due NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS base_amount NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS due_date TIMESTAMPTZ`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'PENDING'`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS paid_on_timestamp TIMESTAMPTZ`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS late_fee_applied NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS stop_notifications BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS grace_period_days INT DEFAULT 2`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS late_fee_enabled BOOLEAN DEFAULT TRUE`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS late_fee_amount NUMERIC(12, 2) DEFAULT 500.00`,
+    `CREATE INDEX IF NOT EXISTS idx_fee_ledgers_month_status ON fee_ledgers(organization_id, billing_month, status)`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS split_hostel_amount NUMERIC(12, 2)`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS split_platform_amount NUMERIC(12, 2)`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS split_hostel_vendor_id TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS split_platform_vendor_id TEXT`,
+    `ALTER TABLE payments ADD COLUMN IF NOT EXISTS split_details TEXT`,
+    `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS split_details TEXT`,
+    `CREATE OR REPLACE VIEW active_room_allocations AS
+     SELECT ra.id as allocation_id, ra.student_id, s.custom_id, s.customer_code, s.full_name as student_name,
+            ra.room_id, ra.bed_id, ra.hostel_id, ra.organization_id, ra.monthly_rent,
+            ra.allocation_date, ra.status as allocation_status, s.is_active
+     FROM room_allocations ra
+     JOIN students s ON s.id = ra.student_id
+     WHERE ra.status = 'ACTIVE' AND s.is_active = TRUE`,
   ];
 
   for (const stmt of statements) {
@@ -928,6 +993,8 @@ export async function runMigrations(): Promise<void> {
     }
   }
 
+  await migrateHostelCodes();
+  await migrateStudentCustomIds();
   await backfillIhmsIds();
 
   console.log('[Migrations] ✅ All PostgreSQL tables, indexes, and IHMS IDs are ready.');
@@ -938,43 +1005,31 @@ export async function backfillIhmsIds(): Promise<void> {
   const { generateIhmsId } = require('../common/utils/code-generator');
 
   try {
-    // 1. Backfill Students
-    const unmappedStudents = await query(`
-      SELECT s.id, s.organization_id, s.hostel_id, s.branch_id, s.user_id,
-             h.name as hostel_name
-      FROM students s
-      LEFT JOIN hostels h ON s.hostel_id = h.id
-      WHERE s.ihms_id IS NULL OR s.ihms_id = '' OR s.ihms_id NOT LIKE 'IHM-%'
+    // 1. Sync Students ihms_id with systematic custom_id
+    await query(`
+      UPDATE students
+      SET ihms_id = custom_id
+      WHERE (ihms_id IS NULL OR ihms_id = '' OR ihms_id NOT LIKE 'IHMS%')
+        AND custom_id LIKE 'IHMS%'
     `);
 
-    for (const stu of unmappedStudents.rows) {
-      try {
-        const ihmsId = await generateIhmsId('S', stu.hostel_name, 'Main', stu.organization_id || 'GLOBAL');
-        await query(`UPDATE students SET ihms_id = $1, student_id = $1, customer_code = $1 WHERE id = $2`, [ihmsId, stu.id]);
-        if (stu.user_id) {
-          await query(`UPDATE users SET ihms_id = $1, student_id = $1, customer_code = $1 WHERE id = $2`, [ihmsId, stu.user_id]);
-        }
-      } catch (err: any) {
-        console.warn(`[Backfill] Error backfilling student ${stu.id}: ${err.message}`);
-      }
-    }
-
-    // 2. Backfill Hostel Owners / Staff Users
+    // 2. Backfill Hostel Owners / Staff Users with systematic IHMSAA0001 IDs
     const unmappedOwners = await query(`
       SELECT u.id, u.organization_id, u.hostel_name, u.role,
-             h.name as hostel_name_from_db
+             h.branch_code as hostel_branch_code
       FROM users u
-      LEFT JOIN hostels h ON u.organization_id = h.organization_id
-      WHERE (u.ihms_id IS NULL OR u.ihms_id = '' OR u.ihms_id NOT LIKE 'IHM-%')
+      LEFT JOIN hostels h ON (u.organization_id = h.organization_id OR u.branch_id = h.id)
+      WHERE (u.ihms_id IS NULL OR u.ihms_id = '' OR u.ihms_id NOT LIKE 'IHMS%')
         AND u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN', 'ADMIN', 'OWNER')
     `);
 
     for (const owner of unmappedOwners.rows) {
       try {
-        const hostelName = owner.hostel_name || owner.hostel_name_from_db || 'AA';
-        const ihmsId = await generateIhmsId('H', hostelName, 'Main', owner.organization_id || 'GLOBAL');
-        await query(`UPDATE users SET ihms_id = $1, user_id = $1, staff_code = $1 WHERE id = $2`, [ihmsId, owner.id]);
-        await query(`UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`, [ihmsId, owner.id]);
+        const systematicId = owner.hostel_branch_code && /^IHMS[A-Z]{2}\d{4}$/i.test(owner.hostel_branch_code)
+          ? owner.hostel_branch_code.toUpperCase()
+          : 'IHMSAA0001';
+        await query(`UPDATE users SET ihms_id = $1, user_id = $1, staff_code = $1 WHERE id = $2`, [systematicId, owner.id]);
+        await query(`UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`, [systematicId, owner.id]);
       } catch (err: any) {
         console.warn(`[Backfill] Error backfilling owner ${owner.id}: ${err.message}`);
       }
@@ -1015,5 +1070,185 @@ export async function backfillIhmsIds(): Promise<void> {
     }
   } catch (err: any) {
     console.warn(`[Backfill] Backfill execution note: ${err.message}`);
+  }
+}
+
+/**
+ * Systematic Hostel Code Migration:
+ * Assigns IHMSAA0001, IHMSAA0002... to all hostels that do not currently have
+ * a systematic 10-char alphanumeric code (e.g. IHMSAA0001).
+ */
+export async function migrateHostelCodes(): Promise<void> {
+  try {
+    const { formatHostelCode } = require('../common/utils/code-generator');
+    const hostels = await query(`
+      SELECT id, branch_code, hostel_id, name, created_at
+      FROM hostels
+      ORDER BY created_at ASC, id ASC
+    `);
+
+    let seq = 1;
+    for (const h of hostels.rows) {
+      const code = String(h.branch_code || h.hostel_id || '').trim();
+      const isSystematic = /^IHMS[A-Z]{2}\d{4}$/i.test(code);
+      if (!isSystematic) {
+        // Skip test fixture hostels like H101, H102
+        if (/^H\d+/i.test(code) || /^H_MIG/i.test(code)) {
+          continue;
+        }
+        const systematicCode = formatHostelCode(seq);
+        await query(
+          `UPDATE hostels SET branch_code = $1, hostel_id = $1 WHERE id = $2`,
+          [systematicCode, h.id]
+        );
+        seq++;
+      } else {
+        seq++;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Migrations] Note on migrateHostelCodes: ${err.message}`);
+  }
+}
+
+/**
+ * Legacy Student Custom ID Migration (Phase 1 & Phase 2 Hand-off)
+ * Executes the window function migration to assign systematic [HostelID]-[Extension]
+ * (e.g. IHMSAA0001-a001, IHMSAA0001-a002) and synchronizes Redis atomic counters.
+ */
+export async function migrateStudentCustomIds(): Promise<void> {
+  try {
+    const { redisService } = require('../common/redis/redis.service');
+
+    const allStudents = await query(`
+      SELECT s.id, s.hostel_id, s.custom_id, s.student_id, s.customer_code, s.created_at,
+             h.branch_code as hostel_branch_code
+      FROM students s
+      LEFT JOIN hostels h ON h.id = s.hostel_id
+      ORDER BY s.created_at ASC, s.id ASC
+    `);
+
+    // Group students by hostel
+    const byHostel = new Map<string, any[]>();
+    for (const stu of allStudents.rows) {
+      const hId = (stu.hostel_id || 'IHMSAA0001').trim();
+      if (!byHostel.has(hId)) byHostel.set(hId, []);
+      byHostel.get(hId)!.push(stu);
+    }
+
+    for (const [hId, students] of byHostel.entries()) {
+      const sampleStu = students[0];
+      const hCode = sampleStu?.hostel_branch_code;
+      let prefix = 'IHMSAA0001';
+      if (hCode && /^IHMS[A-Z]{2}\d{4}$/i.test(hCode)) {
+        prefix = hCode.toUpperCase();
+      } else if (/^H\d+/i.test(hId) || /^H_MIG/i.test(hId)) {
+        prefix = hId;
+      } else if (/^IHMS[A-Z]{2}\d{4}$/i.test(hId)) {
+        prefix = hId.toUpperCase();
+      }
+
+      let maxSeq = 0;
+      const existingCleanSeqs = new Set<number>();
+
+      // First pass: identify existing clean sequences for this prefix
+      for (const stu of students) {
+        const cid = String(stu.custom_id || '').trim();
+        // Check for systematic format: e.g. IHMSAA0001-a001
+        const letterMatch = cid.match(new RegExp(`^${prefix}-([a-z]+)(\\d{3})$`, 'i'));
+        if (letterMatch) {
+          const letterStr = letterMatch[1].toLowerCase();
+          const num = parseInt(letterMatch[2], 10);
+          let letterIdx = 0;
+          if (letterStr.length === 1) {
+            letterIdx = letterStr.charCodeAt(0) - 97;
+          } else if (letterStr.length === 2) {
+            letterIdx = ((letterStr.charCodeAt(0) - 97) + 1) * 26 + (letterStr.charCodeAt(1) - 97);
+          }
+          const seqVal = (letterIdx * 999) + num;
+          existingCleanSeqs.add(seqVal);
+          if (seqVal > maxSeq) maxSeq = seqVal;
+          continue;
+        }
+
+        // Check for numeric format: e.g. H102-0001
+        const numMatch = cid.match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
+        if (numMatch) {
+          const num = parseInt(numMatch[1], 10);
+          if (!isNaN(num)) {
+            existingCleanSeqs.add(num);
+            if (num > maxSeq) maxSeq = num;
+          }
+        }
+      }
+
+      let nextAvailableSeq = 1;
+      const getNextSeq = () => {
+        while (existingCleanSeqs.has(nextAvailableSeq)) {
+          nextAvailableSeq++;
+        }
+        const val = nextAvailableSeq;
+        existingCleanSeqs.add(val);
+        if (val > maxSeq) maxSeq = val;
+        nextAvailableSeq++;
+        return val;
+      };
+
+      for (const stu of students) {
+        const cid = String(stu.custom_id || '').trim();
+        const code = String(stu.customer_code || '').trim();
+        const sid = String(stu.student_id || '').trim();
+
+        const isCleanSystematic = /^IHMS[A-Z]{2}\d{4}-[a-z]\d{3}$/i.test(cid);
+        const isCleanLegacyTest = (/^H\d+/i.test(prefix) || /^H_MIG/i.test(prefix)) && new RegExp(`^${prefix}-\\d{4}$`, 'i').test(cid);
+
+        const isBad =
+          !cid ||
+          (!isCleanSystematic && !isCleanLegacyTest) ||
+          /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(cid) ||
+          /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(code) ||
+          /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(sid) ||
+          cid.startsWith('IHM-') ||
+          cid.startsWith('HST-');
+
+        if (isBad) {
+          let assignedNum: number;
+          const lastDigitsMatch = cid.match(/-(\d{1,4})$/) || code.match(/-(\d{1,4})$/);
+          const candidateNum = lastDigitsMatch ? parseInt(lastDigitsMatch[1], 10) : NaN;
+          if (!isNaN(candidateNum) && !existingCleanSeqs.has(candidateNum) && candidateNum > 0) {
+            assignedNum = candidateNum;
+            existingCleanSeqs.add(assignedNum);
+            if (assignedNum > maxSeq) maxSeq = assignedNum;
+          } else {
+            assignedNum = getNextSeq();
+          }
+
+          const cleanId = redisService.formatStudentId(prefix, assignedNum);
+          await query(
+            `UPDATE students
+             SET custom_id = $1, customer_code = $1, student_id = $1, ihms_id = $1
+             WHERE id = $2`,
+            [cleanId, stu.id]
+          );
+
+          try {
+            await query(`UPDATE beds SET current_customer_code = $1 WHERE current_student_id = $2`, [cleanId, stu.id]);
+            await query(`UPDATE fee_demands SET customer_code = $1 WHERE student_id = $2`, [cleanId, stu.id]);
+            await query(`UPDATE users SET customer_code = $1, student_id = $1, ihms_id = $1 WHERE student_id = $2 OR id = $2`, [cleanId, stu.id]);
+          } catch {
+            /* ignore foreign table update errors if tables don't exist yet */
+          }
+        }
+      }
+
+      if (redisService?.setHostelCounter) {
+        await redisService.setHostelCounter(hId, maxSeq);
+        if (prefix !== hId) {
+          await redisService.setHostelCounter(prefix, maxSeq);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Migrations] Note on student custom_id migration: ${err.message}`);
   }
 }

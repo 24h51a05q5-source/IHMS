@@ -46,6 +46,10 @@ export function isTermsExemptPath(urlPath: string): boolean {
 }
 
 export async function authenticate(req: Request, res: Response, next: NextFunction) {
+  if (req.user) {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
   let token: string | undefined;
 

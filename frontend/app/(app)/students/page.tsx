@@ -23,6 +23,7 @@ import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { ConfirmDialog } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -284,7 +285,7 @@ function StudentsPageContent() {
       header: 'Student ID',
       cell: (s) => (
         <span className="font-mono text-xs font-black text-[#E87545]">
-          {s?.studentId || s?.customerCode || '—'}
+          {formatStudentId(s)}
         </span>
       ),
     },
@@ -382,6 +383,7 @@ function StudentsPageContent() {
     if (!q) return true;
     return (
       (s.name || (s as any)?.fullName || '').toLowerCase().includes(q) ||
+      formatStudentId(s).toLowerCase().includes(q) ||
       (s.customerCode || s.studentId || '').toLowerCase().includes(q) ||
       (s.phone || '').toLowerCase().includes(q) ||
       (s.email || '').toLowerCase().includes(q) ||
@@ -404,7 +406,7 @@ function StudentsPageContent() {
             >
               {s.name || (s as any)?.fullName || 'Unnamed Student'}
             </a>
-            <p className="font-mono text-xs font-bold text-[#E87545]">{s.studentId || s.customerCode || '—'}</p>
+            <p className="font-mono text-xs font-bold text-[#E87545]">{formatStudentId(s)}</p>
           </div>
           <Badge variant={s.portalAccess === 'ENABLED' ? 'success' : 'outline'} className="font-bold text-[11px] shrink-0">
             {s.portalAccess === 'ENABLED' ? 'Portal Active' : 'No Access'}
@@ -512,7 +514,7 @@ function StudentsPageContent() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Student ID:</span>
-                <span className="font-mono font-bold text-primary">{enableModalTarget.studentId || enableModalTarget.customerCode}</span>
+                <span className="font-mono font-bold text-primary">{formatStudentId(enableModalTarget)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Registered Email:</span>
@@ -580,7 +582,7 @@ function StudentsPageContent() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Student ID:</span>
-                <span className="font-mono font-bold text-primary">{resetModalTarget.studentId || resetModalTarget.customerCode}</span>
+                <span className="font-mono font-bold text-primary">{formatStudentId(resetModalTarget)}</span>
               </div>
             </div>
           )}
@@ -690,8 +692,8 @@ function StudentsPageContent() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Remove Student"
-        description={`Are you sure you want to remove ${deleteTarget?.name}? This action cannot be undone.`}
-        confirmLabel="Remove permanently"
+        description={`Are you sure you want to remove ${deleteTarget?.name}? Their bed assignment will be vacated immediately and returned to Available. Their Custom ID, receipts, and historical payment ledgers will be permanently preserved.`}
+        confirmLabel="Remove & Vacate Bed"
         destructive
         loading={deleteLoading}
         onConfirm={confirmDelete}

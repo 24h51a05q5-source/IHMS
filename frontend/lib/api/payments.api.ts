@@ -28,16 +28,84 @@ export interface PaymentInitResponse {
   receipt?: PaymentReceipt;
 }
 
+export interface CreateDynamicUpiQrInput {
+  studentId?: string;
+  amount: number;
+  installmentId?: string;
+}
+
+export interface DynamicUpiQrResponse {
+  orderId: string;
+  paymentId: string;
+  paymentNumber: string;
+  amount: number;
+  baseAmount?: number;
+  convenienceFee?: number;
+  currency: string;
+  vendorId: string;
+  feeBearer: 'customer';
+  upiIntentUrl: string;
+  upiId?: string;
+  qrDataUrl: string;
+  expiresAt: string;
+  expiresInSeconds: number;
+  hostelName: string;
+  platformMicroFee?: number;
+  paymentSessionId?: string;
+  splits?: Array<{
+    vendor_id?: string;
+    vendorId?: string;
+    amount: number;
+    recipient?: string;
+    percentage?: number;
+  }>;
+  upiAppLinks?: {
+    generic: string;
+    gpay: string;
+    phonepe: string;
+    paytm: string;
+  };
+  student?: {
+    id: string;
+    customerCode: string;
+    name: string;
+  };
+}
+
+export interface OrderStatusResponse {
+  orderId: string;
+  paymentId: string;
+  paymentNumber: string;
+  status: 'PAID' | 'SUCCESS' | 'PENDING' | 'EXPIRED' | 'FAILED';
+  amount: number;
+  currency: string;
+  receiptNumber?: string | null;
+  utr?: string | null;
+  expiresAt?: string;
+}
+
 export const paymentsApi = {
+  create: (data: CreatePaymentInput) => api.post<PaymentInitResponse>('/payments', data),
+
   list: (params?: PaginationParams & { studentId?: string; status?: Payment['status'] }) =>
     api.get<Paginated<Payment>>('/payments', { query: params as Record<string, unknown> as Record<string, string | number | boolean | undefined> }),
 
   getByStudent: (studentId: string) => api.get<Payment[]>(`/payments/student/${studentId}`),
 
-  create: (input: CreatePaymentInput) => api.post<PaymentInitResponse>('/payments/create', input),
+  // Phase 2: Create Dynamic Cashfree UPI QR (Customer Fee Bearer Model)
+  createUpiQrOrder: (input: CreateDynamicUpiQrInput) =>
+    api.post<DynamicUpiQrResponse>('/orders/create-upi-qr', input),
 
-  confirm: (paymentId: string, gatewayPayload?: unknown) =>
-    api.post<{ payment: Payment; receipt: PaymentReceipt }>(`/payments/${paymentId}/confirm`, { gatewayPayload }),
+  // Phase 3: Silent Polling Endpoint for instant payment confirmation
+  getOrderStatus: (orderId: string) =>
+    api.get<OrderStatusResponse>('/orders/status', { query: { order_id: orderId } }),
+
+  // Phase 1: Cashfree Sub-Merchant Hosted Onboarding Link & Status
+  getHostelOnboardingLink: (hostelId: string) =>
+    api.post<{ vendorId: string; onboardingUrl: string; status: string }>(`/fees/hostels/${hostelId}/cashfree-onboarding-link`),
+
+  getHostelOnboardingStatus: (hostelId: string) =>
+    api.get<{ vendorId: string; status: string; bankStatus: string; kycStatus: string; onboardingUrl?: string }>(`/fees/hostels/${hostelId}/cashfree-status`),
 
   getReceipt: (paymentId: string) => api.get<PaymentReceipt>(`/payments/${paymentId}/receipt`),
 

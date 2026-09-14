@@ -14,6 +14,7 @@ import {
   GraduationCap,
   ShieldCheck,
   Check,
+  CheckCircle2,
   KeyRound,
   Sparkles,
   ArrowLeft,
@@ -28,6 +29,7 @@ import { setTokens } from '@/lib/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 
 // ─── Student Flow Steps ──────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ function LoginForm() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPw, setShowNewPw] = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [agreeToTerms, setAgreeToTerms] = useState(false);
 
   // ── OTP Session & Resend Cooldown ──────────────────────────────────────────
   const [otpSession, setOtpSession] = useState<OtpTimerSession>(() => ({
@@ -346,18 +349,22 @@ function LoginForm() {
       setError('Password and Confirm Password do not match.');
       return;
     }
+    if (!agreeToTerms) {
+      setError('You must read and agree to the Student Terms & Conditions to activate your account.');
+      return;
+    }
 
     setLoading(true);
     try {
-      const res = await authApi.activateStudentAccount(activationToken, newPassword, confirmPassword);
+      const res = await authApi.activateStudentAccount(activationToken, newPassword, confirmPassword, true);
       const token = res?.accessToken || (res as any)?.token;
       const refreshToken = res?.refreshToken;
       if (token) {
         setTokens(token, refreshToken);
       }
-      setNotice('Account activated successfully! Redirecting...');
+      setNotice('Account activated successfully! Redirecting to student dashboard...');
       setTimeout(() => {
-        window.location.href = '/terms';
+        window.location.href = '/student/dashboard';
       }, 500);
     } catch (err: any) {
       setError(err?.message || 'Failed to activate account. Please verify your details.');
@@ -651,7 +658,7 @@ function LoginForm() {
                       required
                       autoCapitalize="none"
                       autoFocus
-                      placeholder="e.g. IHM-AA-MN-S-0001 or student@email.com"
+                      placeholder="e.g. H102-0001 or student@email.com"
                       value={identifier}
                       onChange={(e) => {
                         setIdentifier(e.target.value);
@@ -875,10 +882,42 @@ function LoginForm() {
                   </div>
                 </div>
 
+                {/* MANDATORY CLICKWRAP TERMS & CONDITIONS */}
+                <div className="rounded-xl border border-[#E4E0D7] bg-[#F8F7F4] p-3.5 space-y-2">
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="studentAgreeToTerms"
+                      checked={agreeToTerms}
+                      onCheckedChange={(checked) => setAgreeToTerms(Boolean(checked))}
+                      className="mt-0.5 border-[#94A3B8] data-[state=checked]:bg-[#E87545] data-[state=checked]:border-[#E87545]"
+                    />
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="studentAgreeToTerms"
+                        className="text-xs font-semibold text-[#111827] leading-relaxed cursor-pointer"
+                      >
+                        I agree to the{' '}
+                        <Link
+                          href="/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-bold text-[#E87545] hover:underline underline-offset-2 inline cursor-pointer"
+                        >
+                          Student Terms & Conditions
+                        </Link>
+                        {' '}(including UPI payments, platform convenience fee, and direct hostel settlement).
+                      </label>
+                      <p className="text-[11px] text-[#64748B]">
+                        By activating your account, you agree that base fees are routed directly to your hostel owner and disputes must be resolved with hostel management.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <Button
                   type="submit"
-                  disabled={loading || !pwValid}
-                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors mt-2"
+                  disabled={loading || !pwValid || !agreeToTerms}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
                     <>
@@ -970,10 +1009,21 @@ function LoginForm() {
             )}
 
             {/* Footer */}
-            <div className="pt-2 text-center text-xs font-medium text-[#64748B]">
-              New hostel owner?{' '}
-              <Link href="/register" className="font-bold text-[#E87545] hover:underline">
-                Register Your Hostel
+            <div className="pt-2 text-center text-xs font-medium text-[#64748B] flex items-center justify-center gap-3">
+              <span>
+                New hostel owner?{' '}
+                <Link href="/register" className="font-bold text-[#E87545] hover:underline">
+                  Register Your Hostel
+                </Link>
+              </span>
+              <span className="text-[#CBD5E1]">•</span>
+              <Link
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline hover:text-[#18233A] transition-colors"
+              >
+                Terms & Conditions
               </Link>
             </div>
           </div>

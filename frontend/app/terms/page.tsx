@@ -229,12 +229,48 @@ export default function TermsAndConditionsPage() {
             ))}
           </div>
 
-          {/* Acceptance Section */}
+          {/* Acceptance / Status Section */}
           <div className="pt-6 border-t border-slate-200 dark:border-slate-800">
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-6 sm:p-8 space-y-6 shadow-sm">
-              {/* Status Header: Accepted vs Mandatory Review */}
-              {isAlreadyAccepted ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/30 p-4 sm:p-5 flex items-start gap-3.5">
+            {!user ? (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850/50 p-6 sm:p-8 space-y-4">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 text-center sm:text-left">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#E87545]/10 text-[#E87545]">
+                      <ShieldCheck className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                        Official Legal Terms & Agreement
+                      </h3>
+                      <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+                        You are viewing the official IHMS Platform Terms & Conditions. Sign in or register to access the platform.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => router.push('/signin')}
+                      className="rounded-xl border-slate-300 text-xs font-bold px-4 h-10"
+                    >
+                      Sign In
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => router.push('/register')}
+                      className="rounded-xl bg-[#E87545] hover:bg-[#D66434] text-white text-xs font-bold px-4 h-10 shadow-xs"
+                    >
+                      Register Hostel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-6 sm:p-8 space-y-6 shadow-sm">
+                {/* Status Header: Accepted vs Mandatory Review */}
+                {isAlreadyAccepted ? (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/30 p-4 sm:p-5 flex items-start gap-3.5">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
                     <CheckCircle2 className="h-5 w-5" />
                   </div>
@@ -359,6 +395,7 @@ export default function TermsAndConditionsPage() {
                 </div>
               </div>
             </div>
+          )}
           </div>
 
           {/* Footer note */}

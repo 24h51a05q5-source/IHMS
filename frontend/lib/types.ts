@@ -455,6 +455,12 @@ export interface OwnerDashboardData {
   collectionTrend?: { month: string; collection: number; expenses: number }[];
   occupancyTrend?: { month: string; occupancy: number }[];
   recentActivity?: { id: string; description: string; timestamp: string; type?: string }[];
+  cashfreeOnboardingStatus?: 'ACTIVE' | 'PENDING' | 'REJECTED' | string;
+  cashfreeBankStatus?: 'VERIFIED' | 'PENDING' | string;
+  cashfreeKycStatus?: 'VERIFIED' | 'PENDING' | string;
+  cashfreeHostelId?: string;
+  cashfreeVendorId?: string;
+  cashfreeOnboardingUrl?: string;
 }
 
 export interface StudentDashboardData {

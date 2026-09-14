@@ -1,6 +1,9 @@
 import { query, queryOne, queryRows } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
-import { generateBusinessCode } from '../../common/utils/code-generator';
+import { generateBusinessCode, generateSystematicHostelCode } from '../../common/utils/code-generator';
+import { cashfreeService } from '../fees/cashfree.service';
+import { cache } from '../../common/utils/cache';
+import { emitRealTimeEvent } from '../../events/events.gateway';
 
 export interface IHostelBranch {
   id: string;
@@ -30,7 +33,7 @@ export interface IHostelBranch {
 
 export class HostelService {
   async create(orgId: string, data: any): Promise<any> {
-    const branchCode = data.branchCode || (await generateBusinessCode(orgId, 'HYD', 3, 'HYD'));
+    const branchCode = data.branchCode || (await generateSystematicHostelCode(orgId));
     const existing = await queryOne<any>(
       'SELECT id FROM hostels WHERE organization_id = $1 AND (branch_code = $2 OR name = $3)',
       [orgId, branchCode, data.name]
@@ -157,6 +160,13 @@ export class HostelService {
   }
 
   async update(orgId: string, id: string, data: any): Promise<any> {
+    if (data.status === 'DEACTIVATED') {
+      return this.deactivateHostel(orgId, id);
+    }
+    if (data.status === 'ACTIVE') {
+      return this.reactivateHostel(orgId, id);
+    }
+
     const branch = await queryOne<any>(
       `UPDATE hostels
        SET name = COALESCE($3, name),
@@ -194,6 +204,121 @@ export class HostelService {
     );
     if (!branch) throw new AppError('Hostel branch not found', 404);
     return branch;
+  }
+
+  /**
+   * Phase 2 & 3: Tenant Offboarding & Hostel Deactivation
+   * Freezes account, stops payments, blocks Cashfree vendor, preserves all historical ledgers
+   */
+  async deactivateHostel(orgId: string, id: string): Promise<any> {
+    const existing = await queryOne<any>(
+      `SELECT * FROM hostels
+       WHERE (id = $1 OR hostel_id = $1 OR branch_code = $1) AND organization_id = $2`,
+      [id, orgId]
+    );
+    if (!existing) throw new AppError('Hostel branch not found', 404);
+
+    const updated = await queryOne<any>(
+      `UPDATE hostels
+       SET status = 'DEACTIVATED',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND organization_id = $2
+       RETURNING id, id as "_id", hostel_id as "hostelId", branch_code as "branchCode",
+                 organization_id as "organizationId", hostel_name as "hostelName", name,
+                 branch_name as "branchName", hostel_type as "type", address, city, state,
+                 pincode, contact_phone as "contactPhone", contact_email as "contactEmail",
+                 cashfree_vendor_id as "cashfreeVendorId",
+                 status, created_at as "createdAt", updated_at as "updatedAt"`,
+      [existing.id, orgId]
+    );
+
+    // Phase 3: Synchronize with Cashfree Gateway - Block vendor to shut off banking splits
+    let cashfreeSync = null;
+    if (existing.cashfree_vendor_id) {
+      try {
+        cashfreeSync = await cashfreeService.updateVendorStatus(existing.cashfree_vendor_id, 'BLOCKED');
+      } catch (err: any) {
+        console.warn(`[HostelService] Cashfree vendor block failed for ${existing.cashfree_vendor_id}: ${err.message}`);
+      }
+    }
+
+    // Invalidate dashboard caches
+    cache.deletePattern(`dashboard:*:${orgId}*`);
+
+    // Audit log
+    await query(
+      `INSERT INTO audit_logs (id, organization_id, action, resource, resource_id, details)
+       VALUES ($1, $2, 'DEACTIVATE_HOSTEL', 'hostels', $3, $4)`,
+      [
+        require('crypto').randomUUID(),
+        orgId,
+        existing.id,
+        `Hostel '${existing.name}' (${existing.branch_code || existing.id}) deactivated. Payments frozen, Cashfree vendor blocked.`
+      ]
+    );
+
+    emitRealTimeEvent('hostel.deactivated', { hostelId: existing.id, status: 'DEACTIVATED' }, { orgId });
+    emitRealTimeEvent('hostel.updated', { hostelId: existing.id, status: 'DEACTIVATED' }, { orgId });
+
+    return {
+      ...updated,
+      cashfreeSync,
+      message: 'Hostel account deactivated successfully. Payments frozen and vendor account blocked.',
+    };
+  }
+
+  /**
+   * Reactivate Hostel Tenant
+   */
+  async reactivateHostel(orgId: string, id: string): Promise<any> {
+    const existing = await queryOne<any>(
+      `SELECT * FROM hostels
+       WHERE (id = $1 OR hostel_id = $1 OR branch_code = $1) AND organization_id = $2`,
+      [id, orgId]
+    );
+    if (!existing) throw new AppError('Hostel branch not found', 404);
+
+    const updated = await queryOne<any>(
+      `UPDATE hostels
+       SET status = 'ACTIVE',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND organization_id = $2
+       RETURNING id, id as "_id", hostel_id as "hostelId", branch_code as "branchCode",
+                 organization_id as "organizationId", hostel_name as "hostelName", name,
+                 branch_name as "branchName", hostel_type as "type", address, city, state,
+                 pincode, contact_phone as "contactPhone", contact_email as "contactEmail",
+                 cashfree_vendor_id as "cashfreeVendorId",
+                 status, created_at as "createdAt", updated_at as "updatedAt"`,
+      [existing.id, orgId]
+    );
+
+    if (existing.cashfree_vendor_id) {
+      try {
+        await cashfreeService.updateVendorStatus(existing.cashfree_vendor_id, 'ACTIVE');
+      } catch (err: any) {
+        console.warn(`[HostelService] Cashfree vendor unblock failed: ${err.message}`);
+      }
+    }
+
+    cache.deletePattern(`dashboard:*:${orgId}*`);
+
+    await query(
+      `INSERT INTO audit_logs (id, organization_id, action, resource, resource_id, details)
+       VALUES ($1, $2, 'REACTIVATE_HOSTEL', 'hostels', $3, $4)`,
+      [
+        require('crypto').randomUUID(),
+        orgId,
+        existing.id,
+        `Hostel '${existing.name}' reactivated.`
+      ]
+    );
+
+    emitRealTimeEvent('hostel.updated', { hostelId: existing.id, status: 'ACTIVE' }, { orgId });
+
+    return {
+      ...updated,
+      message: 'Hostel reactivated successfully.',
+    };
   }
 }
 

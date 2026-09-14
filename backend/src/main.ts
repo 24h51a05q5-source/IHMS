@@ -44,7 +44,7 @@ app.use(helmet({
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-razorpay-signature', 'x-webhook-signature', 'signature'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-webhook-signature', 'x-webhook-timestamp', 'x-client-id', 'x-client-secret', 'x-api-version', 'signature'],
 }));
 
 // Multi-instance identification header
@@ -154,6 +154,25 @@ app.use('/payments', (req, res, next) => {
 });
 app.use('/api/payments', (req, res, next) => {
   req.url = '/payments' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+
+// Cashfree Multi-Tenant Webhooks & Orders Mounts
+app.use('/webhooks/cashfree', (req, res, next) => {
+  req.url = '/webhooks/cashfree';
+  feeRouter(req, res, next);
+});
+app.use('/api/webhooks/cashfree', (req, res, next) => {
+  req.url = '/webhooks/cashfree';
+  feeRouter(req, res, next);
+});
+
+app.use('/orders', (req, res, next) => {
+  req.url = '/orders' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+app.use('/api/orders', (req, res, next) => {
+  req.url = '/orders' + (req.url === '/' ? '' : req.url);
   feeRouter(req, res, next);
 });
 

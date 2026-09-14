@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   BedDouble,
   Plus,
@@ -19,6 +20,13 @@ import {
   Eye,
   Info,
   Sparkles,
+  LayoutGrid,
+  Table as TableIcon,
+  Filter,
+  ShieldAlert,
+  Wrench,
+  MoreVertical,
+  UserPlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -26,17 +34,26 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { PageErrorBoundary } from '@/components/dashboard/error-boundary';
 import { roomsApi, type CreateRoomInput } from '@/lib/api/rooms.api';
 import { bedsApi } from '@/lib/api/beds.api';
 import { hostelsApi } from '@/lib/api/hostels.api';
 import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
 import type { ApiError, Room, Bed } from '@/lib/types';
 
 function RoomsPageContent() {
@@ -51,6 +68,9 @@ function RoomsPageContent() {
   const [selectedBranch, setSelectedBranch] = useState<string>(currentBranchId || '');
   const [loading, setLoading] = useState(() => !cachedRooms?.items?.length);
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<'map' | 'table'>('map');
+  const [selectedFloor, setSelectedFloor] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE'>('ALL');
 
   // 1. Add Room Modal State
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -121,6 +141,10 @@ function RoomsPageContent() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useRealtimeEvent('bed.updated', loadData);
+  useRealtimeEvent('student.updated', loadData);
+  useRealtimeEvent('hostel.updated', loadData);
 
   // Handle Add Room Submit
   const handleAddSubmit = async (e: React.FormEvent) => {
@@ -264,12 +288,36 @@ function RoomsPageContent() {
     setActionBedId(bed.id);
     try {
       await bedsApi.update(bed.id, { status: newStatus });
-      toast.success(`Bed ${bed.bedCode || bed.number} status updated to ${newStatus}`);
+      toast.success(`Bed ${bed.bedCode || bed.number} marked as ${newStatus === 'AVAILABLE' ? '🟢 Available' : '🟡 Maintenance'}`);
+      await loadData();
       if (activeRoomForBeds) {
         await refreshActiveRoomBeds(activeRoomForBeds.id);
       }
+      if (detailsSheetOpen && detailedRoom) {
+        openRoomDetails(detailedRoom.id);
+      }
     } catch (err) {
       toast.error((err as ApiError)?.message || 'Failed to update bed status.');
+    } finally {
+      setActionBedId(null);
+    }
+  };
+
+  // Vacate Bed
+  const handleVacateBed = async (bed: Bed) => {
+    setActionBedId(bed.id);
+    try {
+      await bedsApi.vacate(bed.id);
+      toast.success(`Bed ${bed.bedCode || bed.number} vacated successfully. Status changed to 🟢 Available.`);
+      await loadData();
+      if (activeRoomForBeds) {
+        await refreshActiveRoomBeds(activeRoomForBeds.id);
+      }
+      if (detailsSheetOpen && detailedRoom) {
+        openRoomDetails(detailedRoom.id);
+      }
+    } catch (err) {
+      toast.error((err as ApiError)?.message || 'Failed to vacate bed.');
     } finally {
       setActionBedId(null);
     }
@@ -341,8 +389,25 @@ function RoomsPageContent() {
     }
   };
 
+  const availableFloors = Array.from(
+    new Set(rooms.map((r) => (r.floorNumber !== undefined ? r.floorNumber : r.floor !== undefined ? r.floor : 1)))
+  ).sort((a, b) => Number(a) - Number(b));
+
   const filtered = rooms.filter((r) => {
     const term = search.toLowerCase().trim();
+
+    if (selectedFloor !== 'ALL') {
+      const roomFloor = String(r.floorNumber !== undefined ? r.floorNumber : r.floor !== undefined ? r.floor : 1);
+      if (roomFloor !== String(selectedFloor)) return false;
+    }
+
+    if (statusFilter !== 'ALL') {
+      const roomBeds = r.beds || [];
+      if (statusFilter === 'AVAILABLE' && !roomBeds.some((b: any) => b.status === 'AVAILABLE')) return false;
+      if (statusFilter === 'OCCUPIED' && !roomBeds.some((b: any) => b.status === 'OCCUPIED' || Boolean(b.studentId))) return false;
+      if (statusFilter === 'MAINTENANCE' && !roomBeds.some((b: any) => b.status === 'MAINTENANCE')) return false;
+    }
+
     if (!term) return true;
     const matchesRoom =
       String(r.roomNumber || r.number || '').toLowerCase().includes(term) ||
@@ -362,9 +427,32 @@ function RoomsPageContent() {
     return matchesRoom || matchesBeds;
   });
 
-  const totalBeds = rooms.reduce((acc, r) => acc + (r.capacity || r.totalBeds || 0), 0);
-  const occupiedBeds = rooms.reduce((acc, r) => acc + (r.occupied || r.occupiedBeds || 0), 0);
-  const availableBeds = Math.max(totalBeds - occupiedBeds, 0);
+  const totalBeds = rooms.reduce((acc, r) => acc + (r.capacity || r.totalBeds || (r.beds?.length || 0)), 0);
+  let totalOccupiedCount = 0;
+  let totalAvailableCount = 0;
+  let totalMaintenanceCount = 0;
+
+  rooms.forEach((r) => {
+    if (r.beds && r.beds.length > 0) {
+      r.beds.forEach((b: any) => {
+        if (b.status === 'OCCUPIED' || Boolean(b.studentId)) {
+          totalOccupiedCount++;
+        } else if (b.status === 'MAINTENANCE') {
+          totalMaintenanceCount++;
+        } else {
+          totalAvailableCount++;
+        }
+      });
+    } else {
+      const occ = r.occupied || r.occupiedBeds || 0;
+      const cap = r.capacity || r.totalBeds || 1;
+      totalOccupiedCount += occ;
+      totalAvailableCount += Math.max(0, cap - occ);
+    }
+  });
+
+  const occupiedBeds = totalOccupiedCount;
+  const availableBeds = totalAvailableCount;
 
   const columns: Column<Room>[] = [
     {
@@ -403,7 +491,7 @@ function RoomsPageContent() {
       key: 'beds',
       header: 'Beds Status',
       cell: (r) => (
-        <div className="flex items-center gap-1.5 flex-wrap max-w-[200px]">
+        <div className="flex items-center gap-1.5 flex-wrap max-w-[220px]">
           {r.beds && r.beds.length > 0 ? (
             r.beds.map((b: any, idx: number) => {
               const isOccupied = b.status === 'OCCUPIED' || Boolean(b.studentId);
@@ -412,22 +500,42 @@ function RoomsPageContent() {
                 <TooltipProvider key={idx}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span
-                        className={`inline-flex h-6 px-2 items-center justify-center rounded text-[11px] font-mono font-bold cursor-default transition-all shadow-xs ${
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (canManage && !isOccupied) {
+                            handleUpdateBedStatus(b, isMaint ? 'AVAILABLE' : 'MAINTENANCE');
+                          }
+                        }}
+                        className={`inline-flex h-6 px-2 items-center justify-center rounded text-[11px] font-mono font-bold transition-all shadow-xs ${
                           isOccupied
-                            ? 'bg-primary text-primary-foreground'
+                            ? 'bg-rose-600 text-white cursor-default'
                             : isMaint
-                            ? 'bg-destructive/15 text-destructive border border-destructive/30'
-                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 cursor-pointer'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200 cursor-pointer'
                         }`}
                       >
                         B{String(b.bedNumber || idx + 1).padStart(2, '0')}
-                      </span>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs">
-                      <p className="font-semibold">{b.bedCode || `Bed ${b.bedNumber || idx + 1}`}</p>
-                      <p className="text-muted-foreground">Status: <span className="font-medium text-foreground">{b.status}</span></p>
-                      {b.studentName && <p className="text-emerald-500">Student: {b.studentName} ({b.customerCode})</p>}
+                      <p className="font-bold">{b.bedCode || `Bed ${b.bedNumber || idx + 1}`}</p>
+                      <p className="text-muted-foreground">
+                        Status:{' '}
+                        <span className="font-bold text-foreground">
+                          {isOccupied ? '🔴 Occupied' : isMaint ? '🟡 Maintenance' : '🟢 Available'}
+                        </span>
+                      </p>
+                      {isOccupied && (
+                        <p className="text-rose-600 font-semibold pt-0.5">
+                          Resident: {b.studentName || 'Student'} {b.customerCode ? `(${formatStudentId(b.customerCode)})` : ''}
+                        </p>
+                      )}
+                      {canManage && !isOccupied && (
+                        <p className="text-[10px] text-muted-foreground pt-1 border-t border-border mt-1">
+                          Click to toggle {isMaint ? 'Available 🟢' : 'Maintenance 🟡'}
+                        </p>
+                      )}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -614,14 +722,14 @@ function RoomsPageContent() {
                     key={idx}
                     className={`inline-flex h-6 px-2 items-center justify-center rounded text-[11px] font-mono font-bold ${
                       isOccupied
-                        ? 'bg-[#E87545] text-white'
+                        ? 'bg-rose-600 text-white'
                         : isMaint
-                        ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                        : 'bg-[#E8F5ED] text-[#087A45] border border-[#B4E2C7]'
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                        : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                     }`}
                   >
                     B{String(b.bedNumber || idx + 1).padStart(2, '0')}
-                    {isOccupied && b.studentName ? ` (${b.studentName.split(' ')[0]})` : ''}
+                    {isOccupied ? ` (🔴 ${b.studentName ? b.studentName.split(' ')[0] : 'Occupied'})` : isMaint ? ' (🟡)' : ' (🟢)'}
                   </span>
                 );
               })}
@@ -684,42 +792,488 @@ function RoomsPageContent() {
         <StatCard title="Available Beds" value={availableBeds} icon={CheckCircle2} />
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filtered}
-        total={filtered.length}
-        page={1}
-        pageSize={filtered.length || 10}
-        loading={loading}
-        search={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search by room number, block..."
-        mobileRender={renderMobileRoomCard}
-        filters={
-          branches.length > 1 ? (
-            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-              <SelectTrigger className="w-48 h-10 bg-white border-[1.5px] border-[#CBD5E1] text-[#111827]">
-                <SelectValue placeholder="Select Branch" />
-              </SelectTrigger>
-              <SelectContent className="bg-white border-[1.5px] border-[#CBD5E1]">
-                {branches.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>
-                    {b.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : undefined
-        }
-        toolbarRight={
-          <Button variant="outline" size="sm" onClick={loadData} className="h-10 px-3.5 bg-white border-[#CBD5E1] text-[#111827] hover:bg-[#F8FAFC]" aria-label="Refresh rooms">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        }
-        rowKey={(r: any) => r.id}
-        emptyTitle="No rooms found"
-        emptyDescription="Click 'Add Room' to generate your first room & beds."
-      />
+      {/* View Switcher & Toolbar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#CBD5E1] pb-3">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-[#CBD5E1] w-fit">
+          <button
+            type="button"
+            onClick={() => setViewMode('map')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              viewMode === 'map'
+                ? 'bg-white text-[#111827] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <LayoutGrid className="h-4 w-4 text-[#E87545]" />
+            Digital Room / Bed Map
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('table')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              viewMode === 'table'
+                ? 'bg-white text-[#111827] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <TableIcon className="h-4 w-4 text-slate-500" />
+            Table View
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+          <span>Viewing {filtered.length} of {rooms.length} rooms</span>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 1. DIGITAL ROOM / BED MAP VIEW                                            */}
+      {/* ========================================================================= */}
+      {viewMode === 'map' && (
+        <div className="space-y-4">
+          {/* Controls Bar: Floor Filter, Status Filter, Search, Refresh */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-xl border border-[#CBD5E1] bg-white">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-slate-600 flex items-center gap-1 mr-1">
+                <Filter className="h-3.5 w-3.5 text-[#E87545]" /> Floor:
+              </span>
+              <Button
+                size="sm"
+                variant={selectedFloor === 'ALL' ? 'default' : 'outline'}
+                onClick={() => setSelectedFloor('ALL')}
+                className={`h-8 text-xs font-bold ${
+                  selectedFloor === 'ALL' ? 'bg-[#E87545] hover:bg-[#D66434] text-white' : 'border-[#CBD5E1] text-[#111827]'
+                }`}
+              >
+                All Floors
+              </Button>
+              {availableFloors.map((fl) => (
+                <Button
+                  key={fl}
+                  size="sm"
+                  variant={selectedFloor === String(fl) ? 'default' : 'outline'}
+                  onClick={() => setSelectedFloor(String(fl))}
+                  className={`h-8 text-xs font-bold ${
+                    selectedFloor === String(fl) ? 'bg-[#E87545] hover:bg-[#D66434] text-white' : 'border-[#CBD5E1] text-[#111827]'
+                  }`}
+                >
+                  Floor {fl}
+                </Button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Status Filter */}
+              <Select value={statusFilter} onValueChange={(val: any) => setStatusFilter(val)}>
+                <SelectTrigger className="w-40 h-8 text-xs bg-white border-[#CBD5E1]">
+                  <SelectValue placeholder="Bed Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Bed Statuses</SelectItem>
+                  <SelectItem value="AVAILABLE">🟢 Available Only</SelectItem>
+                  <SelectItem value="OCCUPIED">🔴 Occupied Only</SelectItem>
+                  <SelectItem value="MAINTENANCE">🟡 Maintenance Only</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Branch Selector if multiple */}
+              {branches.length > 1 && (
+                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                  <SelectTrigger className="w-40 h-8 text-xs bg-white border-[#CBD5E1]">
+                    <SelectValue placeholder="Branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search room, bed, student..."
+                  className="pl-8 h-8 text-xs w-48 sm:w-56 bg-white border-[#CBD5E1]"
+                />
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadData}
+                className="h-8 px-2.5 bg-white border-[#CBD5E1] text-[#111827]"
+                aria-label="Refresh"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
+          </div>
+
+          {/* Status Legend Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[#CBD5E1] bg-white shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Live Bed Map Status:</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-bold">🟢 Available:</span>
+                <span className="font-mono font-bold text-emerald-950">{totalAvailableCount}</span>
+                <span className="text-[10px] text-emerald-700">({totalBeds > 0 ? Math.round((totalAvailableCount / totalBeds) * 100) : 0}%)</span>
+              </div>
+
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500" />
+                <span className="font-bold">🔴 Occupied:</span>
+                <span className="font-mono font-bold text-rose-950">{totalOccupiedCount}</span>
+                <span className="text-[10px] text-rose-700">({totalBeds > 0 ? Math.round((totalOccupiedCount / totalBeds) * 100) : 0}%)</span>
+              </div>
+
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+                <span className="font-bold">🟡 Maintenance:</span>
+                <span className="font-mono font-bold text-amber-950">{totalMaintenanceCount}</span>
+                <span className="text-[10px] text-amber-700">({totalBeds > 0 ? Math.round((totalMaintenanceCount / totalBeds) * 100) : 0}%)</span>
+              </div>
+
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-700">
+                <BedDouble className="h-3.5 w-3.5 text-slate-500" />
+                <span className="font-bold">Total:</span>
+                <span className="font-mono font-bold text-slate-900">{totalBeds} Beds</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Rooms Grid */}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 space-y-3 text-muted-foreground">
+              <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm font-medium">Loading digital room map...</p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-16 border border-dashed rounded-xl bg-white p-8 space-y-3">
+              <DoorOpen className="h-10 w-10 mx-auto text-muted-foreground" />
+              <p className="text-sm font-semibold text-slate-700">No rooms match your filter.</p>
+              {canManage && (
+                <Button size="sm" onClick={() => setAddModalOpen(true)} className="gap-1.5">
+                  <Plus className="h-4 w-4" /> Add Room
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 lg:gap-6 pt-1">
+              {filtered.map((room) => {
+                const roomBeds = room.beds || [];
+                const occCount = roomBeds.filter((b: any) => b.status === 'OCCUPIED' || Boolean(b.studentId)).length;
+                const maintCount = roomBeds.filter((b: any) => b.status === 'MAINTENANCE').length;
+                const totalCap = room.capacity || room.totalBeds || roomBeds.length || 1;
+                const availCount = Math.max(0, totalCap - occCount - maintCount);
+                const isFull = occCount >= totalCap;
+                const occPercentage = Math.min(100, Math.round((occCount / totalCap) * 100));
+
+                // Dynamically build individual bed items matching the room's actual capacity
+                const maxBedsCount = Math.max(totalCap, roomBeds.length);
+                const displayBeds = Array.from({ length: maxBedsCount }, (_, i) => {
+                  const bedNum = i + 1;
+                  const existingBed = roomBeds.find((b: any) => (b.bedNumber !== undefined ? b.bedNumber === bedNum : false)) || roomBeds[i];
+                  if (existingBed) {
+                    return {
+                      ...existingBed,
+                      bedNumber: existingBed.bedNumber || bedNum,
+                    };
+                  }
+                  return {
+                    id: `dyn-bed-${room.id}-${bedNum}`,
+                    bedNumber: bedNum,
+                    status: 'AVAILABLE' as const,
+                    isDynamic: true,
+                  };
+                });
+
+                const firstAvailableBed = roomBeds.find((b: any) => b.status === 'AVAILABLE' && !b.studentId) || displayBeds.find((b: any) => b.status === 'AVAILABLE');
+                const admitHref = firstAvailableBed && !(firstAvailableBed as any).isDynamic
+                  ? `/students/new?roomId=${room.id}&bedId=${firstAvailableBed.id}`
+                  : `/students/new?roomId=${room.id}`;
+
+                return (
+                  <div
+                    key={room.id}
+                    className="rounded-xl border border-slate-200 bg-white shadow-xs hover:shadow-sm transition-all duration-150 flex flex-col overflow-hidden"
+                  >
+                    {/* 1. Room Header: Room Number + Room Type */}
+                    <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-800 font-bold text-xs border border-slate-200">
+                          {room.roomNumber || room.number}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-base text-slate-900 leading-tight truncate">
+                            Room {room.roomNumber || room.number}
+                          </h3>
+                          <p className="text-xs text-slate-500 font-medium pt-0.5 truncate">
+                            Floor {room.floorNumber || room.floor || 1}
+                            {room.blockName ? ` • Block ${room.blockName}` : ''}
+                            {` • `}
+                            <span className="uppercase">{room.roomType || room.type || 'DOUBLE'}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Streamlined More Actions Dropdown */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer shrink-0"
+                            title="Room Options"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem onClick={() => openRoomDetails(room.id)} className="cursor-pointer gap-2 text-xs">
+                            <Eye className="h-3.5 w-3.5 text-slate-500" /> View Room Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openManageBeds(room)} className="cursor-pointer gap-2 text-xs">
+                            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" /> Manage Beds & Maint.
+                          </DropdownMenuItem>
+                          {canManage && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => openEditModal(room)} className="cursor-pointer gap-2 text-xs">
+                                <Pencil className="h-3.5 w-3.5 text-slate-500" /> Edit Room
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => openDeleteModal(room)}
+                                className="cursor-pointer gap-2 text-xs text-rose-600 focus:text-rose-600 focus:bg-rose-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> Delete Room
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    {/* Room Card Body */}
+                    <div className="p-4 space-y-3.5 flex-1 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        {/* 2. Occupancy Indicator (Text-only, no progress bar) */}
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-medium">Occupancy</span>
+                          <span className="font-semibold text-slate-900">
+                            {occCount}/{totalCap} beds occupied — {occPercentage}%
+                          </span>
+                        </div>
+
+                        {/* 3. Monthly Rate */}
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 font-medium">Monthly Rate</span>
+                          <span className="font-semibold text-slate-900 font-mono">
+                            ₹{(room.monthlyRentPerBed || room.monthlyRate || 8000).toLocaleString('en-IN')}/bed
+                          </span>
+                        </div>
+
+                        {/* 4. BED STATUS Section */}
+                        <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                              BED STATUS
+                            </span>
+                            <span className="text-xs font-semibold text-slate-700">
+                              {displayBeds.length} {displayBeds.length === 1 ? 'Bed' : 'Beds'}
+                            </span>
+                          </div>
+
+                          {/* 5. Individual Bed Cards (2-Column Grid) */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {displayBeds.map((bed: any, bIdx: number) => {
+                              const isOccupied = bed.status === 'OCCUPIED' || Boolean(bed.studentId);
+                              const isMaint = bed.status === 'MAINTENANCE';
+                              const bedNum = bed.bedNumber || bIdx + 1;
+                              const studentName = bed.studentName || (isOccupied ? 'Resident Student' : null);
+
+                              if (isOccupied) {
+                                return (
+                                  <div
+                                    key={bed.id || bIdx}
+                                    className="p-2.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col justify-between min-h-[82px] shadow-2xs"
+                                  >
+                                    <div className="flex items-center gap-1.5 text-slate-900 font-semibold text-xs">
+                                      <span className="text-sm leading-none">🛏</span>
+                                      <span>Bed {bedNum}</span>
+                                    </div>
+                                    <div className="pt-1.5">
+                                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600 tracking-wide">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-rose-600 shrink-0" />
+                                        <span>OCCUPIED</span>
+                                      </div>
+                                      <p
+                                        className="text-xs font-medium text-slate-900 truncate pt-0.5"
+                                        title={studentName || 'Resident Student'}
+                                      >
+                                        {studentName}
+                                      </p>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              if (isMaint) {
+                                return (
+                                  <div
+                                    key={bed.id || bIdx}
+                                    className="p-2.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col justify-between min-h-[82px] shadow-2xs"
+                                  >
+                                    <div className="flex items-center gap-1.5 text-slate-900 font-semibold text-xs">
+                                      <span className="text-sm leading-none">🛏</span>
+                                      <span>Bed {bedNum}</span>
+                                    </div>
+                                    <div className="pt-1.5">
+                                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 tracking-wide">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                                        <span>MAINTENANCE</span>
+                                      </div>
+                                      <p className="text-[11px] text-slate-500 pt-0.5">
+                                        Under Service
+                                      </p>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              // Available Bed
+                              return (
+                                <div
+                                  key={bed.id || bIdx}
+                                  className="p-2.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col justify-between min-h-[82px] shadow-2xs"
+                                >
+                                  <div className="flex items-center gap-1.5 text-slate-900 font-semibold text-xs">
+                                    <span className="text-sm leading-none">🛏</span>
+                                    <span>Bed {bedNum}</span>
+                                  </div>
+                                  <div className="pt-1.5">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 tracking-wide">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                      <span>AVAILABLE</span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 pt-0.5">
+                                      Ready for Admission
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 6. Card Actions: Admit Student | Manage Beds */}
+                      <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                        {canManage && (
+                          <>
+                            {availCount > 0 ? (
+                              <Button
+                                size="sm"
+                                asChild
+                                className="flex-1 h-8 bg-[#F97316] hover:bg-[#EA580C] text-white font-medium text-xs gap-1.5 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                              >
+                                <Link href={admitHref}>
+                                  <UserPlus className="h-3.5 w-3.5" /> Admit Student
+                                </Link>
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                disabled
+                                variant="outline"
+                                className="flex-1 h-8 text-xs font-medium text-slate-400 border-slate-200 bg-slate-50 cursor-not-allowed rounded-lg"
+                              >
+                                Room Fully Occupied
+                              </Button>
+                            )}
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openManageBeds(room)}
+                              className="h-8 px-3 text-xs font-medium text-slate-700 border-slate-200 bg-white hover:bg-slate-50 hover:text-slate-900 rounded-lg transition-colors cursor-pointer shadow-2xs gap-1.5"
+                              title="Configure Beds & Maintenance"
+                            >
+                              <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
+                              <span>Manage Beds</span>
+                            </Button>
+                          </>
+                        )}
+
+                        {!canManage && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openRoomDetails(room.id)}
+                            className="w-full h-8 text-xs font-medium text-slate-700 border-slate-200"
+                          >
+                            <Eye className="h-3.5 w-3.5 mr-1.5" /> View Details
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. TABLE VIEW                                                             */}
+      {/* ========================================================================= */}
+      {viewMode === 'table' && (
+        <DataTable
+          columns={columns}
+          data={filtered}
+          total={filtered.length}
+          page={1}
+          pageSize={filtered.length || 10}
+          loading={loading}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search by room number, block..."
+          mobileRender={renderMobileRoomCard}
+          filters={
+            branches.length > 1 ? (
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-48 h-10 bg-white border-[1.5px] border-[#CBD5E1] text-[#111827]">
+                  <SelectValue placeholder="Select Branch" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border-[1.5px] border-[#CBD5E1]">
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : undefined
+          }
+          toolbarRight={
+            <Button variant="outline" size="sm" onClick={loadData} className="h-10 px-3.5 bg-white border-[#CBD5E1] text-[#111827] hover:bg-[#F8FAFC]" aria-label="Refresh rooms">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+          }
+          rowKey={(r: any) => r.id}
+          emptyTitle="No rooms found"
+          emptyDescription="Click 'Add Room' to generate your first room & beds."
+        />
+      )}
 
       {/* ========================================================================= */}
       {/* 1. ADD ROOM MODAL (Auto-Generates Bed IDs e.g. 101-B01, 101-B02...)      */}
@@ -1070,38 +1624,44 @@ function RoomsPageContent() {
                       <div
                         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-mono font-bold text-sm ${
                           isOccupied
-                            ? 'bg-primary text-primary-foreground'
+                            ? 'bg-rose-600 text-white'
                             : bed.status === 'MAINTENANCE'
-                            ? 'bg-destructive/15 text-destructive border border-destructive/30'
-                            : bed.status === 'RESERVED'
-                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                         }`}
                       >
                         B{String(bed.bedNumber || idx + 1).padStart(2, '0')}
                       </div>
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
-                          <p className="font-semibold text-sm text-foreground font-mono">
-                            {bed.bedCode || `Bed ${bed.bedNumber || idx + 1}`}
+                          <p className="font-bold text-sm text-foreground">
+                            Bed {bed.bedNumber || idx + 1}
                           </p>
-                          <Badge
-                            variant={
-                              isOccupied ? 'default' : bed.status === 'MAINTENANCE' ? 'error' : bed.status === 'RESERVED' ? 'warning' : 'success'
-                            }
-                            className="text-[10px] py-0 px-2 uppercase font-bold"
+                          {bed.bedCode && (
+                            <span className="text-[11px] font-mono text-slate-400">
+                              ({bed.bedCode})
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              isOccupied
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : bed.status === 'MAINTENANCE'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            }`}
                           >
-                            {bed.status}
-                          </Badge>
+                            {isOccupied ? '🔴 OCCUPIED' : bed.status === 'MAINTENANCE' ? '🟡 MAINTENANCE' : '🟢 AVAILABLE'}
+                          </span>
                         </div>
                         <p className="text-xs text-muted-foreground flex items-center gap-1 font-mono">
-                          <span>₹{(bed.monthlyRate || bed.monthlyFee || activeRoomForBeds?.monthlyRate || 8000).toLocaleString('en-IN')}/month</span>
+                          <span>₹{(bed.monthlyRate || bed.monthlyFee || activeRoomForBeds?.monthlyRentPerBed || activeRoomForBeds?.monthlyRate || 8000).toLocaleString('en-IN')}/month</span>
                         </p>
                         {isOccupied && (
-                          <div className="flex items-center gap-1.5 text-xs text-primary font-medium pt-1">
+                          <div className="flex items-center gap-1.5 text-xs text-rose-700 font-medium pt-1">
                             <UserCheck className="h-3.5 w-3.5 shrink-0" />
                             <span>
-                              Assigned: {bed.studentName || 'Student'} {bed.customerCode ? `(${bed.customerCode})` : ''}
+                              Resident: <strong>{bed.studentName || 'Student'}</strong> {bed.customerCode ? `(${formatStudentId(bed.customerCode)})` : ''}
                             </span>
                           </div>
                         )}
@@ -1109,21 +1669,43 @@ function RoomsPageContent() {
                     </div>
 
                     <div className="flex items-center gap-2 self-end sm:self-center">
-                      <Select
-                        value={bed.status}
-                        onValueChange={(val: any) => handleUpdateBedStatus(bed, val)}
-                        disabled={isUpdating || isOccupied}
-                      >
-                        <SelectTrigger className="w-32 h-8 text-xs font-medium">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="AVAILABLE">Available</SelectItem>
-                          <SelectItem value="RESERVED">Reserved</SelectItem>
-                          <SelectItem value="MAINTENANCE">Maintenance</SelectItem>
-                          {isOccupied && <SelectItem value="OCCUPIED">Occupied</SelectItem>}
-                        </SelectContent>
-                      </Select>
+                      {!isOccupied ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            asChild
+                            className="h-8 px-2.5 text-xs font-bold text-emerald-700 border-emerald-300 hover:bg-emerald-50 cursor-pointer shadow-2xs"
+                          >
+                            <Link href={`/students/new?roomId=${activeRoomForBeds?.id}&bedId=${bed.id}`}>
+                              <UserPlus className="h-3 w-3 mr-1" /> Admit
+                            </Link>
+                          </Button>
+                          <Select
+                            value={bed.status}
+                            onValueChange={(val: any) => handleUpdateBedStatus(bed, val)}
+                            disabled={isUpdating}
+                          >
+                            <SelectTrigger className="w-36 h-8 text-xs font-semibold">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="AVAILABLE">🟢 Available</SelectItem>
+                              <SelectItem value="MAINTENANCE">🟡 Maintenance</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleVacateBed(bed)}
+                          disabled={isUpdating}
+                          className="h-8 text-xs font-semibold border-rose-300 text-rose-700 hover:bg-rose-50"
+                        >
+                          Vacate Bed
+                        </Button>
+                      )}
 
                       <TooltipProvider>
                         <Tooltip>
@@ -1281,46 +1863,76 @@ function RoomsPageContent() {
                   {detailedRoom.beds && detailedRoom.beds.length > 0 ? (
                     detailedRoom.beds.map((bed: any, idx: number) => {
                       const isOcc = bed.status === 'OCCUPIED' || Boolean(bed.studentId);
+                      const isMaint = bed.status === 'MAINTENANCE';
                       return (
                         <div
                           key={idx}
-                          className="p-3 rounded-xl border border-border bg-card/60 flex items-start justify-between gap-3 shadow-xs"
+                          className={`p-3 rounded-xl border flex items-start justify-between gap-3 shadow-xs ${
+                            isOcc
+                              ? 'bg-rose-50/40 border-rose-200'
+                              : isMaint
+                              ? 'bg-amber-50/40 border-amber-200'
+                              : 'bg-emerald-50/40 border-emerald-200'
+                          }`}
                         >
                           <div className="flex items-start gap-2.5">
                             <div
                               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-mono font-bold text-xs ${
                                 isOcc
-                                  ? 'bg-primary text-primary-foreground'
-                                  : bed.status === 'MAINTENANCE'
-                                  ? 'bg-destructive/15 text-destructive'
-                                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                  ? 'bg-rose-600 text-white'
+                                  : isMaint
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                               }`}
                             >
                               B{String(bed.bedNumber || idx + 1).padStart(2, '0')}
                             </div>
                             <div>
-                              <p className="font-mono font-semibold text-xs text-foreground">
-                                {bed.bedCode || `Bed ${bed.bedNumber || idx + 1}`}
+                              <p className="font-bold text-xs text-foreground">
+                                Bed {bed.bedNumber || idx + 1}
+                                {bed.bedCode && (
+                                  <span className="font-mono font-normal text-[10px] text-muted-foreground ml-1.5">
+                                    ({bed.bedCode})
+                                  </span>
+                                )}
                               </p>
                               {isOcc && (
-                                <p className="text-xs text-primary font-medium pt-0.5">
-                                  {bed.studentName || 'Student'} {bed.customerCode ? `• ${bed.customerCode}` : ''}
+                                <p className="text-xs text-rose-700 font-semibold pt-0.5">
+                                  {bed.studentName || 'Student'} {bed.customerCode ? `• ${formatStudentId(bed.customerCode)}` : ''}
                                 </p>
                               )}
                               {!isOcc && (
                                 <p className="text-[11px] text-muted-foreground pt-0.5">
-                                  ₹{(bed.monthlyRate || bed.monthlyFee || detailedRoom.monthlyRate || 8000).toLocaleString('en-IN')}/mo
+                                  ₹{(bed.monthlyRate || bed.monthlyFee || detailedRoom.monthlyRentPerBed || detailedRoom.monthlyRate || 8000).toLocaleString('en-IN')}/mo
                                 </p>
                               )}
                             </div>
                           </div>
 
-                          <Badge
-                            variant={isOcc ? 'default' : bed.status === 'MAINTENANCE' ? 'error' : 'success'}
-                            className="text-[10px] uppercase font-bold"
-                          >
-                            {bed.status}
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                isOcc
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                  : isMaint
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {isOcc ? '🔴 Occupied' : isMaint ? '🟡 Maintenance' : '🟢 Available'}
+                            </span>
+                            {canManage && !isOcc && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleUpdateBedStatus(bed, isMaint ? 'AVAILABLE' : 'MAINTENANCE')}
+                                disabled={actionBedId === bed.id}
+                                className="h-6 px-1.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+                              >
+                                {isMaint ? 'Set Available 🟢' : 'Set Maint. 🟡'}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       );
                     })

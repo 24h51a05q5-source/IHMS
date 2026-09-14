@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { paymentsApi } from '@/lib/api/payments.api';
 import { toast } from 'sonner';
+import { formatStudentId } from '@/lib/utils';
 import type { PaymentReceipt, Payment } from '@/lib/types';
 
 interface PaymentReceiptModalProps {
@@ -145,8 +146,8 @@ export function PaymentReceiptModal({ open, onOpenChange, receipt, payment }: Pa
                 <p className="font-bold text-[#1F2937] text-sm">{data.studentName}</p>
               </div>
               <div>
-                <span className="text-[#6B7280] font-medium">Student ID / Customer Code:</span>
-                <p className="font-bold text-[#F97316] font-mono text-sm">{data.customerCode || 'N/A'}</p>
+                <span className="text-[#6B7280] font-medium">Student ID:</span>
+                <p className="font-bold text-[#F97316] font-mono text-sm">{formatStudentId(data.customerCode || (data as any).studentId || data)}</p>
               </div>
               <div>
                 <span className="text-[#6B7280] font-medium">Room & Bed Number:</span>

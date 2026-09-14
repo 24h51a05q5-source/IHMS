@@ -124,7 +124,30 @@ router.get('/owner', async (req: Request, res: Response, next: NextFunction) => 
       ...stats,
     };
 
-    res.json({ success: true, data: ownerData, ...ownerData });
+    // Sub-merchant KYC and bank verification status for Cashfree UPI QR payments
+    const cashfreeHostel = await queryOne<any>(
+      `SELECT id, status, cashfree_vendor_id, cashfree_onboarding_status, cashfree_bank_status, cashfree_kyc_status, cashfree_onboarding_url
+       FROM hostels
+       WHERE organization_id = $1 ${bParam ? 'AND id = $2' : ''}
+       ORDER BY created_at ASC LIMIT 1`,
+      bParam ? [orgId, bParam] : [orgId]
+    );
+
+    const isDeactivated = cashfreeHostel?.status === 'DEACTIVATED' || cashfreeHostel?.status === 'SUSPENDED';
+
+    const fullOwnerData = {
+      ...ownerData,
+      hostelStatus: cashfreeHostel?.status || 'ACTIVE',
+      isDeactivated,
+      cashfreeOnboardingStatus: cashfreeHostel?.cashfree_onboarding_status || 'PENDING',
+      cashfreeBankStatus: cashfreeHostel?.cashfree_bank_status || 'PENDING',
+      cashfreeKycStatus: cashfreeHostel?.cashfree_kyc_status || 'PENDING',
+      cashfreeHostelId: cashfreeHostel?.id,
+      cashfreeVendorId: cashfreeHostel?.cashfree_vendor_id,
+      cashfreeOnboardingUrl: cashfreeHostel?.cashfree_onboarding_url,
+    };
+
+    res.json({ success: true, data: fullOwnerData, ...fullOwnerData });
   } catch (err) { next(err); }
 });
 

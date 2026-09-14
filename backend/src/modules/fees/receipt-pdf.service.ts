@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { sanitizeStudentDisplayId } from '../students/student.service';
 
 export interface IReceipt {
   id?: string;
@@ -94,8 +95,9 @@ export class ReceiptPdfService {
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student Name:', 55, y + 34);
       doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(receipt.studentName, 145, y + 34);
 
-      doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student ID / Code:', 55, y + 54);
-      doc.fillColor('#E87545').fontSize(9.5).font('Helvetica-Bold').text(receipt.customerCode || receipt.studentId, 145, y + 54);
+      const displayStudentId = sanitizeStudentDisplayId(receipt.customerCode || receipt.studentId, 'IHMSAA0001');
+      doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student ID:', 55, y + 54);
+      doc.fillColor('#E87545').fontSize(9.5).font('Helvetica-Bold').text(displayStudentId, 145, y + 54);
 
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Room / Bed:', 55, y + 74);
       doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(`Room ${receipt.roomNumber || '—'} · Bed ${receipt.bedNumber || '—'}`, 145, y + 74);

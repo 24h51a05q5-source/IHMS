@@ -5,16 +5,17 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   Building2, Lock, Mail, Phone, User, MapPin, CheckCircle2,
-  Copy, ArrowRight, Loader2, Eye, EyeOff, ShieldCheck, Sparkles, AlertCircle, ArrowLeft
+  Copy, ArrowRight, Loader2, Eye, EyeOff, ShieldCheck, Sparkles, AlertCircle, ArrowLeft, X
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { authApi, type RegisterOwnerPayload, type RegisterOwnerResponse, type ExistingHostelAccount } from '@/lib/api/auth.api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import type { ApiError } from '@/lib/types';
-import { cn } from '@/lib/utils';
+import { cn, formatMasterId, formatHostelId } from '@/lib/utils';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -41,6 +42,7 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [existingAccount, setExistingAccount] = useState<ExistingHostelAccount | null>(null);
   const [successData, setSuccessData] = useState<RegisterOwnerResponse | null>(null);
+  const [agreeToTerms, setAgreeToTerms] = useState(false);
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -78,6 +80,10 @@ export default function RegisterPage() {
       setError('Password must be at least 6 characters.');
       return;
     }
+    if (!agreeToTerms) {
+      setError('You must read and agree to the Terms & Conditions to register.');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -96,11 +102,13 @@ export default function RegisterPage() {
         city: (form.city || 'Hyderabad').trim(),
         state: (form.state || 'Telangana').trim(),
         pincode: (form.pincode || '').trim(),
+        agreeToTerms: true,
+        termsAccepted: true,
       };
       const res = await authApi.register(payload);
       setSuccessData(res);
       setExistingAccount(null);
-      toast.success('Registration successful! Please save your Owner ID.');
+      toast.success('Registration successful! Please save your Master ID.');
     } catch (err) {
       const apiErr = err as ApiError;
       const details = apiErr?.details as ExistingHostelAccount | undefined;
@@ -195,21 +203,21 @@ export default function RegisterPage() {
             {/* Structured Details Box */}
             <div className="space-y-4 rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] p-5 sm:p-6">
               
-              {/* Highlighted OWNER ID Section */}
+              {/* Highlighted MASTER ID Section */}
               <div className="space-y-1.5">
-                <p className="text-[11px] font-black uppercase tracking-wider text-[#64748B]">Owner ID</p>
+                <p className="text-[11px] font-black uppercase tracking-wider text-[#64748B]">Master ID</p>
                 <div className="flex items-center justify-between rounded-xl border border-[#CBD5E1] bg-white p-3 sm:p-3.5">
                   <div>
                     <span className="font-mono font-black text-base sm:text-xl text-[#E87545] tracking-tight">
-                      {existingAccount.ownerId}
+                      {formatMasterId(existingAccount.masterId || existingAccount.ownerId)}
                     </span>
-                    <p className="text-[11px] font-semibold text-[#8C93A4]">Use this Owner ID or your email to sign in</p>
+                    <p className="text-[11px] font-semibold text-[#8C93A4]">Use this Master ID or your email to sign in</p>
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => copyToClipboard(existingAccount.ownerId, 'Owner ID')}
+                    onClick={() => copyToClipboard(formatMasterId(existingAccount.masterId || existingAccount.ownerId), 'Master ID')}
                     className="gap-1.5 h-8 sm:h-9 rounded-xl border-[#CBD5E1] bg-[#FFF8F5] text-xs font-bold text-[#E87545] hover:bg-[#FFEFE8] hover:border-[#E87545] cursor-pointer"
                   >
                     <Copy className="h-3.5 w-3.5" /> Copy
@@ -294,37 +302,35 @@ export default function RegisterPage() {
               </p>
             </div>
 
-            {/* Permanent Credentials Summary Box */}
+            {/* Unified Master Credentials Summary Box */}
             <div className="space-y-4 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-5 sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#CBD5E1] pb-4">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-[#64748B]">Permanent Owner ID</p>
-                  <p className="text-2xl font-mono font-black text-[#E87545] tracking-tight">{successData.ownerId}</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#64748B]">Master ID</p>
+                  <p className="text-2xl font-mono font-black text-[#E87545] tracking-tight">
+                    {formatMasterId(successData.masterId || successData.ownerId || successData.hostelCode)}
+                  </p>
                 </div>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => copyToClipboard(successData.ownerId, 'Owner ID')}
+                  onClick={() => copyToClipboard(formatMasterId(successData.masterId || successData.ownerId || successData.hostelCode), 'Master ID')}
                   className="gap-1.5 h-9 rounded-lg border-[#CBD5E1] bg-white text-xs font-bold text-[#18233A] hover:bg-[#FFF3EB] hover:border-[#E87545] hover:text-[#E87545]"
                 >
-                  <Copy className="h-3.5 w-3.5" /> Copy Owner ID
+                  <Copy className="h-3.5 w-3.5" /> Copy Master ID
                 </Button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 text-xs">
                 <div>
-                  <span className="font-semibold text-[#64748B]">Organization ID:</span>
-                  <p className="font-extrabold text-[#18233A] text-sm mt-0.5">{successData.orgCode || successData.organizationId}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-[#64748B]">Hostel Branch:</span>
-                  <p className="font-extrabold text-[#18233A] text-sm mt-0.5">{successData.hostelName} ({successData.hostelCode})</p>
+                  <span className="font-semibold text-[#64748B]">Hostel Name:</span>
+                  <p className="font-extrabold text-[#18233A] text-sm mt-0.5">{successData.hostelName}</p>
                 </div>
                 <div>
                   <span className="font-semibold text-[#64748B]">Owner Name:</span>
                   <p className="font-extrabold text-[#18233A] text-sm mt-0.5">{successData.ownerName}</p>
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <span className="font-semibold text-[#64748B]">Registered Email:</span>
                   <p className="font-extrabold text-[#18233A] text-sm mt-0.5">{successData.email}</p>
                 </div>
@@ -332,7 +338,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="rounded-xl border border-[#E87545]/30 bg-[#FFF6F0] p-4 text-xs font-medium text-[#18233A]">
-              💡 <span className="font-bold text-[#E87545]">Login Tip:</span> You can sign in using either your registered <strong className="text-[#E87545]">Email Address</strong> or your <strong className="text-[#E87545]">Owner ID ({successData.ownerId})</strong>.
+              💡 <span className="font-bold text-[#E87545]">Login Tip:</span> You can sign in using either your registered <strong className="text-[#E87545]">Email Address</strong> or your <strong className="text-[#E87545]">Master ID ({formatMasterId(successData.masterId || successData.ownerId || successData.hostelCode)})</strong>.
             </div>
 
             <Button
@@ -622,6 +628,38 @@ export default function RegisterPage() {
                 </div>
               </div>
 
+              {/* MANDATORY CLICKWRAP TERMS & CONDITIONS */}
+              <div className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-4 space-y-2">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="agreeToTerms"
+                    checked={agreeToTerms}
+                    onCheckedChange={(checked) => setAgreeToTerms(Boolean(checked))}
+                    className="mt-1 border-[#94A3B8] data-[state=checked]:bg-[#E87545] data-[state=checked]:border-[#E87545]"
+                  />
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="agreeToTerms"
+                      className="text-xs font-semibold text-[#18233A] leading-relaxed cursor-pointer"
+                    >
+                      I have read and agree to the{' '}
+                      <Link
+                        href="/terms"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-[#E87545] hover:underline underline-offset-2 inline cursor-pointer"
+                      >
+                        Hostel Owner Terms & Conditions
+                      </Link>
+                      {' '}(including the Technology Service Provider model, direct settlement routing, and ₹0 platform deduction).
+                    </label>
+                    <p className="text-[11px] text-[#64748B]">
+                      By checking this box, you certify that you are authorized to register this establishment and agree to mandatory sub-merchant KYC onboarding.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* Error Message Display */}
               {error && (
                 <div className="animate-fade-in rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs font-semibold text-rose-800 space-y-2">
@@ -635,8 +673,8 @@ export default function RegisterPage() {
               {/* SUBMIT BUTTON */}
               <Button
                 type="submit"
-                className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm sm:text-base font-bold text-white transition-colors cursor-pointer"
-                disabled={loading}
+                className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm sm:text-base font-bold text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={loading || !agreeToTerms}
               >
                 {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin text-white" /> : <Building2 className="mr-2 h-5 w-5 text-white" />}
                 Register Hostel & Create Account
@@ -644,12 +682,23 @@ export default function RegisterPage() {
             </form>
 
             {/* Bottom Footer Link */}
-            <p className="text-center text-xs font-medium text-[#64748B] pt-2">
-              Already have an account?{' '}
-              <Link href="/login" className="font-bold text-[#E87545] hover:underline">
-                Sign In
+            <div className="text-center text-xs font-medium text-[#64748B] pt-2 flex items-center justify-center gap-3">
+              <span>
+                Already have an account?{' '}
+                <Link href="/login" className="font-bold text-[#E87545] hover:underline">
+                  Sign In
+                </Link>
+              </span>
+              <span className="text-[#CBD5E1]">•</span>
+              <Link
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline hover:text-[#18233A] transition-colors"
+              >
+                Terms & Conditions
               </Link>
-            </p>
+            </div>
           </div>
         )}
       </div>

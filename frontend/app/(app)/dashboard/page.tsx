@@ -75,11 +75,17 @@ function OwnerDashboardPageContent() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0 w-full sm:w-auto">
-            <Link href="/students/new" className="flex-1 sm:flex-initial">
-              <Button className="w-full sm:w-auto h-9 text-xs sm:text-sm gap-1.5 bg-[#E87545] hover:bg-[#D66434] text-white font-bold">
-                <PlusCircle className="h-4 w-4" /> Add Student
+            {((data as any)?.isDeactivated || (data as any)?.hostelStatus === 'DEACTIVATED') ? (
+              <Button disabled className="w-full sm:w-auto h-9 text-xs sm:text-sm gap-1.5 bg-slate-500 cursor-not-allowed text-white font-bold opacity-75">
+                <PlusCircle className="h-4 w-4" /> Admission Locked
               </Button>
-            </Link>
+            ) : (
+              <Link href="/students/new" className="flex-1 sm:flex-initial">
+                <Button className="w-full sm:w-auto h-9 text-xs sm:text-sm gap-1.5 bg-[#E87545] hover:bg-[#D66434] text-white font-bold">
+                  <PlusCircle className="h-4 w-4" /> Add Student
+                </Button>
+              </Link>
+            )}
             <Link href="/finance" className="flex-1 sm:flex-initial">
               <Button variant="outline" className="w-full sm:w-auto h-9 text-xs sm:text-sm bg-white/10 hover:bg-white/20 text-white border-white/20 hover:text-white font-bold">
                 View Finance
@@ -88,6 +94,62 @@ function OwnerDashboardPageContent() {
           </div>
         </div>
       </div>
+
+      {/* Tenant Offboarding / Deactivated Read-Only Banner */}
+      {((data as any)?.isDeactivated || (data as any)?.hostelStatus === 'DEACTIVATED') && (
+        <div className="w-full min-w-0 rounded-2xl border-2 border-red-400 bg-red-50/95 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm mt-0.5">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-red-950 text-sm">Hostel Account Deactivated — Read-Only Mode</h3>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-red-200 text-red-900">
+                  PAYMENTS FROZEN
+                </span>
+              </div>
+              <p className="text-red-800 font-semibold leading-relaxed">
+                This hostel has been deactivated. New student admissions and payment processing are disabled. Historical ledgers, tax invoices, and past receipts remain fully preserved and accessible for export.
+              </p>
+            </div>
+          </div>
+          <Link href="/finance">
+            <Button size="sm" variant="outline" className="shrink-0 border-red-300 text-red-900 bg-white hover:bg-red-100 font-bold">
+              Export Historical Reports
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      {/* Cashfree Sub-Merchant KYC Incomplete Banner */}
+      {data?.cashfreeOnboardingStatus && data.cashfreeOnboardingStatus !== 'ACTIVE' && (
+        <div className="w-full min-w-0 rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm mt-0.5">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div className="space-y-0.5 text-xs">
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-amber-950 text-sm">Action Required: Complete Cashfree Sub-Merchant KYC</h3>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900">
+                  SETUP INCOMPLETE
+                </span>
+              </div>
+              <p className="text-amber-800 font-semibold leading-relaxed">
+                To receive 100% direct settlement from student dynamic UPI QR payments with ₹0 platform charges, complete your business PAN & automated Penny Drop bank verification.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link href="/settings/payment">
+              <Button className="h-9 text-xs font-black uppercase tracking-wider bg-[#E87545] hover:bg-[#D66434] text-white shadow-sm gap-1.5">
+                Complete KYC Setup
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* KPI grid */}
       <div className="w-full min-w-0 grid grid-cols-1 min-[360px]:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">

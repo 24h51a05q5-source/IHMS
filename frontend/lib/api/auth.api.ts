@@ -16,10 +16,13 @@ export interface RegisterOwnerPayload {
   city?: string;
   state?: string;
   pincode?: string;
+  agreeToTerms?: boolean;
+  termsAccepted?: boolean;
 }
 
 export interface RegisterOwnerResponse {
   success: boolean;
+  masterId?: string;
   ownerId: string;
   organizationId: string;
   orgCode: string;
@@ -35,6 +38,7 @@ export interface RegisterOwnerResponse {
 
 export interface ExistingHostelAccount {
   accountAlreadyExists: boolean;
+  masterId?: string;
   organizationName: string;
   organizationId: string;
   ownerId: string;
@@ -141,6 +145,6 @@ export const authApi = {
       _debugOtp?: string;
     }>('/auth/resend-activation-otp', { identifier }),
 
-  activateStudentAccount: (activationToken: string, newPassword: string, confirmPassword?: string) =>
-    api.post<AuthResponse>('/auth/activate-student-account', { activationToken, newPassword, confirmPassword }),
+  activateStudentAccount: (activationToken: string, newPassword: string, confirmPassword?: string, agreeToTerms?: boolean) =>
+    api.post<AuthResponse>('/auth/activate-student-account', { activationToken, newPassword, confirmPassword, agreeToTerms }),
 };

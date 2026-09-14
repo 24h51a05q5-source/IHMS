@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { getNextReceiptNumber } from './receipt-sequence';
 import { ReceiptPdfService, IReceipt } from './receipt-pdf.service';
@@ -98,6 +99,8 @@ export interface IFeeDemand {
 }
 
 export class FeeService {
+  private readonly activeWebhookLocks = new Map<string, Promise<any>>();
+
   async createFeeAccountAndInstallments(
     orgId: string,
     branchId: string,
@@ -1037,7 +1040,7 @@ export class FeeService {
             amount: Math.round(Number(existing.amount) * 100),
             currency: existing.currency || 'INR',
             keyId: paymentGatewayService.getKeyId(),
-            provider: 'RAZORPAY',
+            provider: 'CASHFREE',
             status: existing.status,
           };
         }
@@ -1409,6 +1412,51 @@ export class FeeService {
           ]
         );
 
+        // Easy Split calculations for auditing inflows
+        const platformFee = Number(lockedPayment.convenience_fee || 3.00);
+        const hostelSplitAmt = Math.max(0, receivedAmount - platformFee);
+        const hostelVendorId = lockedPayment.cashfree_split_vendor_id || lockedPayment.hostel_id;
+        const platformVendorId = process.env.CASHFREE_PLATFORM_VENDOR_ID || 'IHMS_PLATFORM_MAIN';
+        const splitAudit = {
+          hostelVendorId,
+          hostelAmount: hostelSplitAmt,
+          platformVendorId,
+          platformAmount: platformFee,
+          totalReceived: receivedAmount,
+          verifiedAt: new Date().toISOString(),
+        };
+        const splitAuditJson = JSON.stringify(splitAudit);
+
+        // Update payment with split details
+        await client.query(
+          `UPDATE payments
+           SET split_hostel_amount = $1, split_platform_amount = $2,
+               split_hostel_vendor_id = $3, split_platform_vendor_id = $4,
+               split_details = $5
+           WHERE id = $6`,
+          [hostelSplitAmt, platformFee, hostelVendorId, platformVendorId, splitAuditJson, lockedPayment.id]
+        );
+
+        // Reconcile matching monthly invoice in fee_ledgers, mark PAID, record timestamp, stop notifications, and log split
+        await client.query(
+          `UPDATE fee_ledgers
+           SET status = 'PAID',
+               payment_id = $1,
+               paid_on_timestamp = CURRENT_TIMESTAMP,
+               amount_due = GREATEST(0, amount_due - $2),
+               stop_notifications = TRUE,
+               split_details = $3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE student_id = $4
+             AND transaction_type = 'MONTHLY_INVOICE'
+             AND status IN ('PENDING', 'OVERDUE')`,
+          [lockedPayment.id, receivedAmount, splitAuditJson, lockedPayment.student_id]
+        );
+
+        console.log(`[Cashfree Easy Split] 💸 Inflow split verified for Payment ${lockedPayment.payment_number}:`);
+        console.log(`   🏨 Hostel Owner [${hostelVendorId}]: ₹${hostelSplitAmt.toFixed(2)}`);
+        console.log(`   🏢 Platform Main [${platformVendorId}]: ₹${platformFee.toFixed(2)}`);
+
         // Generate Canonical Digital Receipt Record
         const receiptId = crypto.randomUUID();
         const qrPayload = `IHMS-REC:${receiptNumber}:${student?.customer_code}:${receivedAmount}`;
@@ -1471,6 +1519,474 @@ export class FeeService {
 
     return { success: true, message: 'Webhook processed successfully.', eventId };
   }
+
+  /**
+   * Cashfree Webhook Processing Engine (Phase 4 & Phase 1)
+   * Cryptographically verifies HMAC-SHA256 signature using Cashfree Secret Key.
+   * Handles:
+   * 1. Sub-merchant KYC / Penny Drop activation webhooks -> marks hostel owner vendor active.
+   * 2. Payment success webhooks -> atomic ledger update, receipt creation, balance settlement.
+   */
+  async processCashfreeWebhook(
+    rawBody: string | Buffer,
+    signature: string,
+    timestamp: string | undefined,
+    body: any
+  ) {
+    const { cashfreeService } = await import('./cashfree.service');
+
+    // 1. Cryptographic Signature Verification
+    const isValid = cashfreeService.verifyWebhookSignature(rawBody, signature, timestamp);
+    if (!isValid) {
+      throw new AppError('Cryptographic signature verification failed.', 401);
+    }
+
+    // 2. Parse Event Payload
+    const parsed = cashfreeService.parseWebhookPayload(body);
+    const eventId = parsed.eventId;
+
+    // Concurrency Lock: deduplicate concurrent webhook delivery for the same order / payment / event
+    const lockKey = parsed.orderId
+      ? `order:${parsed.orderId}`
+      : parsed.paymentId
+      ? `pmt:${parsed.paymentId}`
+      : `evt:${eventId}`;
+
+    const existingLock = this.activeWebhookLocks.get(lockKey);
+    if (existingLock) {
+      return await existingLock;
+    }
+
+    const processPromise = this.executeCashfreeWebhook(parsed, rawBody, body);
+    this.activeWebhookLocks.set(lockKey, processPromise);
+    try {
+      return await processPromise;
+    } finally {
+      this.activeWebhookLocks.delete(lockKey);
+    }
+  }
+
+  private async executeCashfreeWebhook(
+    parsed: any,
+    rawBody: string | Buffer,
+    body: any
+  ) {
+    const eventId = parsed.eventId;
+
+    // 3. Prevent Duplicate Processing (Idempotency Ledger)
+    const existingEvent = await queryOne<any>(
+      'SELECT * FROM payment_webhook_events WHERE gateway_event_id = $1 OR (gateway_order_id = $2 AND status = $3)',
+      [eventId, parsed.orderId || null, 'PROCESSED']
+    );
+    if (existingEvent) {
+      return { success: true, message: 'Event already processed (Idempotent)', eventId };
+    }
+
+    // Record webhook event in ledger
+    await query(
+      `INSERT INTO payment_webhook_events (
+        id, organization_id, gateway_event_id, event_type, gateway_order_id,
+        gateway_payment_id, payload, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'PROCESSED')
+      ON CONFLICT (gateway_event_id) DO NOTHING`,
+      [
+        crypto.randomUUID(),
+        null,
+        eventId,
+        parsed.eventType || 'CASHFREE_EVENT',
+        parsed.orderId || null,
+        parsed.paymentId || null,
+        typeof rawBody === 'string' ? rawBody : rawBody?.toString ? rawBody.toString('utf8') : JSON.stringify(body),
+      ]
+    ).catch(() => {});
+
+    // Case A: Vendor / Sub-Merchant KYC & Activation Webhook
+    if (parsed.type === 'VENDOR' && parsed.vendorId) {
+      const newStatus = parsed.status === 'ACTIVE' ? 'ACTIVE' : parsed.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
+      const bankStatus = parsed.bankStatus || (newStatus === 'ACTIVE' ? 'VERIFIED' : 'PENDING');
+      const kycStatus = parsed.kycStatus || (newStatus === 'ACTIVE' ? 'VERIFIED' : 'PENDING');
+
+      await query(
+        `UPDATE hostels
+         SET cashfree_onboarding_status = $1,
+             cashfree_bank_status = $2,
+             cashfree_kyc_status = $3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE cashfree_vendor_id = $4`,
+        [newStatus, bankStatus, kycStatus, parsed.vendorId]
+      );
+      await query(
+        `UPDATE hostel_payment_configs
+         SET cashfree_onboarding_status = $1,
+             cashfree_bank_status = $2,
+             cashfree_kyc_status = $3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE cashfree_vendor_id = $4`,
+        [newStatus, bankStatus, kycStatus, parsed.vendorId]
+      );
+
+      emitRealTimeEvent('hostel.kyc_verified', { vendorId: parsed.vendorId, status: newStatus, bankStatus, kycStatus });
+      return {
+        success: true,
+        type: 'VENDOR',
+        status: newStatus,
+        bankStatus,
+        kycStatus,
+        vendorId: parsed.vendorId,
+        message: `Vendor ${parsed.vendorId} KYC status updated to ${newStatus} (Bank: ${bankStatus}, KYC: ${kycStatus})`,
+      };
+    }
+
+    // Case B: Payment Webhook
+    if (parsed.type === 'PAYMENT' && parsed.status === 'PAID') {
+      const matchRef = parsed.orderId;
+      if (!matchRef) {
+        return { success: false, message: 'No Cashfree order_id provided in webhook.', eventId };
+      }
+
+      // Locate original IHMS payment record
+      const payment = await queryOne<any>(
+        `SELECT * FROM payments
+         WHERE (cashfree_order_id = $1 OR gateway_order_id = $1 OR payment_number = $1 OR id = $1)
+           AND status NOT IN ('REJECTED')`,
+        [matchRef]
+      );
+
+      if (!payment) {
+        return { success: false, message: `No pending payment found matching order "${matchRef}".`, eventId };
+      }
+
+      // Fast Idempotency: If payment is already finalized as PAID / SUCCESS / VERIFIED, return receipt immediately
+      if (payment.status === 'PAID' || payment.status === 'SUCCESS' || payment.status === 'VERIFIED') {
+        const receipt = await this.getReceiptByPaymentId(payment.organization_id, payment.id).catch(() => null);
+        return { success: true, message: 'Payment already processed (Idempotent)', payment, receipt };
+      }
+
+      return transaction(async (client) => {
+        const lockRes = await client.query(
+          `SELECT * FROM payments WHERE id = $1 FOR UPDATE`,
+          [payment.id]
+        );
+        const lockedPayment = lockRes.rows[0];
+
+        if (!lockedPayment) {
+          throw new AppError('Payment record locked or unavailable.', 404);
+        }
+
+        // Idempotency: If already paid or successful, return existing receipt
+        if (lockedPayment.status === 'PAID' || lockedPayment.status === 'SUCCESS' || lockedPayment.status === 'VERIFIED') {
+          const receipt = await this.getReceiptByPaymentId(lockedPayment.organization_id, lockedPayment.id).catch(() => null);
+          return { success: true, message: 'Payment already processed (Idempotent)', payment: lockedPayment, receipt };
+        }
+
+        // Database Ledger Idempotency: If fee_ledger entry already exists for this payment, return existing receipt
+        const existingLedger = await client.query(
+          `SELECT id FROM fee_ledgers WHERE payment_id = $1`,
+          [lockedPayment.id]
+        );
+        if (existingLedger.rows.length > 0) {
+          const receipt = await this.getReceiptByPaymentId(lockedPayment.organization_id, lockedPayment.id).catch(() => null);
+          return { success: true, message: 'Payment already processed (Idempotent)', payment: lockedPayment, receipt };
+        }
+
+        const utrToUse = parsed.utr || lockedPayment.transaction_ref || `UTR-${Date.now()}`;
+        const pmtOrgId = lockedPayment.organization_id;
+
+        // Duplicate UTR check across database
+        const dupCheck = await client.query(
+          `SELECT id FROM payments WHERE organization_id = $1 AND LOWER(transaction_ref) = LOWER($2) AND id != $3 AND status IN ('SUCCESS', 'PAID', 'VERIFIED')`,
+          [pmtOrgId, utrToUse, lockedPayment.id]
+        );
+
+        if (dupCheck.rows.length > 0) {
+          await client.query(
+            `UPDATE payments SET status = 'DUPLICATE', notes = notes || $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+            [` [Duplicate UTR detected: ${utrToUse}]`, lockedPayment.id]
+          );
+          return { success: false, status: 'DUPLICATE', message: `Duplicate transaction reference / UTR (${utrToUse}) blocked.` };
+        }
+
+        const expectedAmount = Number(lockedPayment.base_amount || lockedPayment.expected_amount || lockedPayment.amount);
+        const receivedAmount = parsed.amount && parsed.amount > 0 ? Number(parsed.amount) : expectedAmount;
+
+        // Harden against Partial Payment / Amount Mismatch:
+        // If received amount is less than expected amount (e.g. ₹4,000 received for ₹5,000 order),
+        // flag order as PARTIAL_PAYMENT_ERROR and alert admin instead of crediting full fee.
+        if (parsed.amount && Number(parsed.amount) < (expectedAmount - 0.01)) {
+          await client.query(
+            `UPDATE payments
+             SET status = 'PARTIAL_PAYMENT_ERROR',
+                 notes = COALESCE(notes, '') || $1,
+                 transaction_ref = $2,
+                 transaction_reference = $2,
+                 gateway_transaction_id = $3,
+                 cashfree_payment_id = $4,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $5`,
+            [
+              ` [PARTIAL_PAYMENT_ERROR: Expected ₹${expectedAmount.toFixed(2)}, received ₹${Number(parsed.amount).toFixed(2)}]`,
+              utrToUse,
+              parsed.utr || utrToUse,
+              parsed.paymentId || null,
+              lockedPayment.id,
+            ]
+          );
+
+          emitRealTimeEvent(
+            'payment.partial_payment_error',
+            {
+              paymentId: lockedPayment.id,
+              orderId: matchRef,
+              expectedAmount,
+              receivedAmount: Number(parsed.amount),
+              studentId: lockedPayment.student_id,
+              status: 'PARTIAL_PAYMENT_ERROR',
+            },
+            { branchId: lockedPayment.hostel_id }
+          );
+
+          return {
+            success: false,
+            status: 'PARTIAL_PAYMENT_ERROR',
+            orderId: matchRef,
+            expectedAmount,
+            receivedAmount: Number(parsed.amount),
+            message: `Payment amount mismatch: Expected ₹${expectedAmount.toFixed(2)}, received ₹${Number(parsed.amount).toFixed(2)}. Order flagged as PARTIAL_PAYMENT_ERROR.`,
+          };
+        }
+
+        // Finalize payment row as PAID
+        await client.query(
+          `UPDATE payments
+           SET status = 'PAID', amount = $1, base_amount = $1, transaction_ref = $2, transaction_reference = $2,
+               gateway_transaction_id = $3, cashfree_payment_id = $4,
+               verified_by = 'Cashfree Webhook', verified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $5`,
+          [receivedAmount, utrToUse, parsed.utr || utrToUse, parsed.paymentId || null, lockedPayment.id]
+        );
+
+        const receiptNumber = await getNextReceiptNumber(pmtOrgId, client);
+
+        await client.query(
+          `UPDATE payments SET receipt_number = $1 WHERE id = $2`,
+          [receiptNumber, lockedPayment.id]
+        );
+
+        // Update Student Financial Totals (Only this specific student)
+        const studentRes = await client.query(`SELECT * FROM students WHERE id = $1`, [lockedPayment.student_id]);
+        const student = studentRes.rows[0];
+
+        const newTotalPaid = Number(student?.financial_total_paid || 0) + receivedAmount;
+        const newOutstanding = Math.max(0, Number(student?.financial_outstanding_balance || 0) - receivedAmount);
+
+        await client.query(
+          `UPDATE students
+           SET financial_total_paid = $1, financial_outstanding_balance = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [newTotalPaid, newOutstanding, lockedPayment.student_id]
+        );
+
+        // Update Master Fee Account
+        await client.query(
+          `UPDATE fee_accounts
+           SET total_paid = total_paid + $1, balance_amount = GREATEST(0, balance_amount - $1),
+               outstanding_balance = GREATEST(0, outstanding_balance - $1), updated_at = CURRENT_TIMESTAMP
+           WHERE organization_id = $2 AND student_id = $3`,
+          [receivedAmount, pmtOrgId, lockedPayment.student_id]
+        );
+
+        // Allocate across Fee Installments
+        if (lockedPayment.installment_id) {
+          await client.query(
+            `UPDATE fee_installments
+             SET paid_amount = paid_amount + $1, balance_amount = GREATEST(0, balance_amount - $1),
+                 status = CASE WHEN (balance_amount - $1) <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
+                 payment_id = $2, paid_at = CURRENT_TIMESTAMP, receipt_number = $3, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [receivedAmount, lockedPayment.id, receiptNumber, lockedPayment.installment_id]
+          );
+        } else {
+          const instRes = await client.query(
+            `SELECT id, amount, paid_amount, balance_amount FROM fee_installments
+             WHERE organization_id = $1 AND student_id = $2 AND status IN ('PENDING', 'PARTIALLY_PAID', 'OVERDUE')
+             ORDER BY installment_number ASC`,
+            [pmtOrgId, lockedPayment.student_id]
+          );
+
+          let remainingToApply = receivedAmount;
+          for (const inst of instRes.rows) {
+            if (remainingToApply <= 0) break;
+            const instBal = Number(inst.balance_amount);
+            const applyAmt = Math.min(remainingToApply, instBal);
+            const newInstBal = instBal - applyAmt;
+
+            await client.query(
+              `UPDATE fee_installments
+               SET paid_amount = paid_amount + $1, balance_amount = $2,
+                   status = CASE WHEN $2 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
+                   paid_at = CURRENT_TIMESTAMP, receipt_number = $3, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $4`,
+              [applyAmt, newInstBal, receiptNumber, inst.id]
+            );
+            remainingToApply -= applyAmt;
+          }
+        }
+
+        // Insert Immutable Fee Ledger Entry
+        const ledgerId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO fee_ledgers (
+            id, organization_id, hostel_id, student_id, customer_code,
+            payment_id, transaction_type, amount, currency,
+            reference_number, description
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'PAYMENT', $7, 'INR', $8, $9)`,
+          [
+            ledgerId,
+            pmtOrgId,
+            lockedPayment.hostel_id,
+            lockedPayment.student_id,
+            student?.customer_code || lockedPayment.customer_code,
+            lockedPayment.id,
+            receivedAmount,
+            receiptNumber,
+            `Cashfree Dynamic UPI QR payment (Ref: ${utrToUse})`,
+          ]
+        );
+
+        // Easy Split calculations for auditing inflows
+        const platformFee = Number(lockedPayment.convenience_fee || 3.00);
+        const hostelSplitAmt = Math.max(0, receivedAmount - platformFee);
+        const hostelVendorId = lockedPayment.cashfree_split_vendor_id || lockedPayment.hostel_id;
+        const platformVendorId = process.env.CASHFREE_PLATFORM_VENDOR_ID || 'IHMS_PLATFORM_MAIN';
+        const splitAudit = {
+          hostelVendorId,
+          hostelAmount: hostelSplitAmt,
+          platformVendorId,
+          platformAmount: platformFee,
+          totalReceived: receivedAmount,
+          verifiedAt: new Date().toISOString(),
+        };
+        const splitAuditJson = JSON.stringify(splitAudit);
+
+        // Update payment with split details
+        await client.query(
+          `UPDATE payments
+           SET split_hostel_amount = $1, split_platform_amount = $2,
+               split_hostel_vendor_id = $3, split_platform_vendor_id = $4,
+               split_details = $5
+           WHERE id = $6`,
+          [hostelSplitAmt, platformFee, hostelVendorId, platformVendorId, splitAuditJson, lockedPayment.id]
+        );
+
+        // Reconcile matching monthly invoice in fee_ledgers, mark PAID, record timestamp, stop notifications, and log split
+        await client.query(
+          `UPDATE fee_ledgers
+           SET status = 'PAID',
+               payment_id = $1,
+               paid_on_timestamp = CURRENT_TIMESTAMP,
+               amount_due = GREATEST(0, amount_due - $2),
+               stop_notifications = TRUE,
+               split_details = $3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE student_id = $4
+             AND transaction_type = 'MONTHLY_INVOICE'
+             AND status IN ('PENDING', 'OVERDUE')`,
+          [lockedPayment.id, receivedAmount, splitAuditJson, lockedPayment.student_id]
+        );
+
+        console.log(`[Cashfree Easy Split] 💸 Inflow split verified for Payment ${lockedPayment.payment_number}:`);
+        console.log(`   🏨 Hostel Owner [${hostelVendorId}]: ₹${hostelSplitAmt.toFixed(2)}`);
+        console.log(`   🏢 Platform Main [${platformVendorId}]: ₹${platformFee.toFixed(2)}`);
+
+        // Generate Canonical Digital Receipt Record
+        const receiptId = crypto.randomUUID();
+        const qrPayload = `IHMS-REC:${receiptNumber}:${student?.customer_code}:${receivedAmount}`;
+
+        await client.query(
+          `INSERT INTO receipts (
+            id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
+            student_id, customer_code, student_name, amount, payment_method, remaining_balance,
+            issued_by, qr_payload, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          ON CONFLICT (receipt_number) DO NOTHING`,
+          [
+            receiptId,
+            receiptNumber,
+            lockedPayment.id,
+            lockedPayment.payment_number,
+            pmtOrgId,
+            lockedPayment.hostel_id,
+            lockedPayment.student_id,
+            student?.customer_code || lockedPayment.customer_code,
+            student?.full_name || 'Student',
+            receivedAmount,
+            'UPI',
+            newOutstanding,
+            'Cashfree Platform',
+            qrPayload,
+            `Cashfree Order: ${matchRef}`,
+          ]
+        );
+
+        dashboardService.invalidateCache(pmtOrgId);
+
+        emitRealTimeEvent(
+          'payment.success',
+          {
+            paymentId: lockedPayment.id,
+            paymentNumber: lockedPayment.payment_number,
+            orderId: matchRef,
+            receiptNumber,
+            studentId: lockedPayment.student_id,
+            amount: receivedAmount,
+            status: 'PAID',
+            utr: utrToUse,
+          },
+          { branchId: lockedPayment.hostel_id }
+        );
+
+        emitRealTimeEvent('fee.updated', { studentId: lockedPayment.student_id }, { branchId: lockedPayment.hostel_id });
+        emitRealTimeEvent('dashboard.kpi_updated', { orgId: pmtOrgId }, { orgId: pmtOrgId });
+
+        return {
+          success: true,
+          orderId: matchRef,
+          receiptNumber,
+          paymentId: lockedPayment.id,
+          amount: receivedAmount,
+          status: 'PAID',
+          message: `Cashfree payment verified and finalized. Receipt #${receiptNumber} generated.`,
+        };
+      });
+    }
+
+    // Case C: Payment Failed / User Cancelled Webhook
+    if (parsed.type === 'PAYMENT' && (parsed.status === 'FAILED' || parsed.status === 'USER_DROPPED')) {
+      const matchRef = parsed.orderId;
+      if (matchRef) {
+        await query(
+          `UPDATE payments
+           SET status = 'FAILED',
+               notes = COALESCE(notes, '') || ' [Cashfree payment failed / user cancelled]',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE (cashfree_order_id = $1 OR gateway_order_id = $1 OR payment_number = $1 OR id = $1)
+             AND status NOT IN ('PAID', 'SUCCESS')`,
+          [matchRef]
+        );
+        emitRealTimeEvent('payment.failed', { orderId: matchRef, status: 'FAILED' });
+      }
+      return {
+        success: true,
+        orderId: matchRef,
+        status: 'FAILED',
+        message: 'Payment attempt marked as FAILED from Cashfree webhook.',
+        eventId,
+      };
+    }
+
+    return { success: true, message: 'Cashfree webhook processed successfully.', eventId };
+  }
+
 
   async refundPayment(
     orgId: string,
@@ -1638,12 +2154,12 @@ export class FeeService {
   async getPaymentSettings(orgId: string) {
     const config = await paymentGatewayService.getOrgConfig(orgId);
     return {
-      provider: config.provider,
+      provider: config.provider || 'CASHFREE',
       environment: config.environment,
       keyId: config.keyId,
       maskedSecret: paymentGatewayService.maskKey(config.keySecret),
       webhookSecret: paymentGatewayService.maskKey(config.webhookSecret),
-      webhookUrl: '/api/fees/payments/webhook',
+      webhookUrl: '/api/webhooks/cashfree',
       merchantId: config.merchantId || '',
       onboardingStatus: config.onboardingStatus,
       payoutStatus: config.payoutStatus,
@@ -1671,7 +2187,7 @@ export class FeeService {
          WHERE organization_id = $1`,
         [
           orgId,
-          data.provider,
+          data.provider || 'CASHFREE',
           data.environment,
           data.keyId,
           data.keySecret,
@@ -1690,11 +2206,11 @@ export class FeeService {
         [
           require('crypto').randomUUID(),
           orgId,
-          data.provider || 'RAZORPAY',
+          data.provider || 'CASHFREE',
           data.environment || 'TEST',
           data.keyId || paymentGatewayService.getKeyId(),
-          data.keySecret || 'ihms_sec_k8923f_prod_secret',
-          data.webhookSecret || 'whsec_ihms_secure_webhook_key_2026',
+          data.keySecret || 'cf_sec_k8923f_prod_secret',
+          data.webhookSecret || 'whsec_ihms_secure_cashfree_key_2026',
           data.merchantId || '',
           data.onboardingStatus || 'CONNECTED',
           data.payoutStatus || 'ACTIVE',
@@ -2026,7 +2542,7 @@ export class FeeService {
     );
     if (!payment) throw new AppError('Payment not found.', 404);
 
-    if (payment.status !== 'SUCCESS' && payment.status !== 'VERIFIED') {
+    if (payment.status !== 'SUCCESS' && payment.status !== 'VERIFIED' && payment.status !== 'PAID') {
       throw new AppError('Receipt is only available for confirmed successful payments.', 400);
     }
 

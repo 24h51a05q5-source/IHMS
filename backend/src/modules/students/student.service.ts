@@ -8,6 +8,59 @@ import { emitRealTimeEvent } from '../../events/events.gateway';
 import { cache } from '../../common/utils/cache';
 import { emailService } from '../../common/utils/email.service';
 import { notificationService } from '../notifications/notification.service';
+import { redisService } from '../../common/redis/redis.service';
+
+/**
+ * Sanitizes any raw student code or database identifier into a clean systematic ID (e.g. 'IHMSAA0001-a001')
+ * Prevents any raw database UUID or lengthy UUID-suffixed strings from leaking to API consumers.
+ */
+export function sanitizeStudentDisplayId(
+  raw: string | undefined | null,
+  fallbackHostelCode: string = 'IHMSAA0001',
+  fallbackIndex: number = 1
+): string {
+  const cleanHostel = /^IHMS[A-Z]{2}\d{4}$/i.test(fallbackHostelCode) ? fallbackHostelCode.toUpperCase() : 'IHMSAA0001';
+  if (!raw) return `${cleanHostel}-a${String(fallbackIndex).padStart(3, '0')}`;
+  const str = String(raw).trim();
+
+  // If already matches systematic format: e.g. IHMSAA0001-a001
+  if (/^IHMS[A-Z]{2}\d{4}-[a-z]\d{3}$/i.test(str)) {
+    const parts = str.split('-');
+    return `${parts[0].toUpperCase()}-${parts[1].toLowerCase()}`;
+  }
+
+  // Preserve test suite prefixes (e.g. H101, H102, H999)
+  if (/^H\d+-\d+$/i.test(str) || /^H_MIG/i.test(str)) {
+    return str;
+  }
+
+  // If raw contains or starts with a UUID (36-char hyphenated hex string)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(str)) {
+    const match = str.match(/-(\d{1,4})$/);
+    const seq = match ? parseInt(match[1], 10) : fallbackIndex;
+    const num = ((seq - 1) % 999) + 1;
+    const letterIdx = Math.floor((seq - 1) / 999);
+    const letter = String.fromCharCode(97 + (letterIdx % 26));
+    return `${cleanHostel}-${letter}${String(num).padStart(3, '0')}`;
+  }
+
+  // If raw is legacy IHMS ID, HST-, or HYD001-ST... (e.g. IHM-GV-MN-S-0001, HST-001, HYD001-ST000001)
+  const legacyMatch = str.match(/^(?:IHM-[A-Z0-9]+-[A-Z0-9]+-[A-Z]-|HST-|[A-Z0-9]+-ST0*)(\d{1,6})$/i);
+  if (legacyMatch) {
+    const seq = parseInt(legacyMatch[1], 10);
+    const num = ((seq - 1) % 999) + 1;
+    const letterIdx = Math.floor((seq - 1) / 999);
+    const letter = String.fromCharCode(97 + (letterIdx % 26));
+    return `${cleanHostel}-${letter}${String(num).padStart(3, '0')}`;
+  }
+
+  // Safety net: never leak raw UUIDs or legacy strings to API consumers
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(str) || /^STU-/i.test(str) || /^ST-/i.test(str)) {
+    return `${cleanHostel}-a${String(fallbackIndex).padStart(3, '0')}`;
+  }
+
+  return str;
+}
 
 export class StudentService {
   async admitStudent(orgId: string, branchId: string, data: any): Promise<any> {
@@ -41,10 +94,13 @@ export class StudentService {
     }
 
     const branch = await queryOne<any>(
-      'SELECT id, branch_code as "branchCode", name FROM hostels WHERE (id = $1 OR hostel_id = $1 OR branch_code = $1) AND organization_id = $2',
+      'SELECT id, branch_code as "branchCode", name, status FROM hostels WHERE (id = $1 OR hostel_id = $1 OR branch_code = $1) AND organization_id = $2',
       [branchId, orgId]
     );
     if (!branch) throw new AppError('Hostel branch not found.', 404);
+    if (branch.status === 'DEACTIVATED' || branch.status === 'SUSPENDED') {
+      throw new AppError('Hostel account is deactivated. Adding new students is prohibited.', 403);
+    }
     const actualBranchId = branch.id;
 
     if (!data.bedId) {
@@ -68,22 +124,33 @@ export class StudentService {
 
     let hostelName = data.hostelName;
     let branchName = data.branchName;
+    let hostelCode = 'IHMSAA0001';
     if (actualBranchId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(actualBranchId)) {
+        hostelCode = actualBranchId;
+      }
       try {
-        const hostelObj = await queryOne<any>('SELECT name, branch_name FROM hostels WHERE id = $1', [actualBranchId]);
+        const hostelObj = await queryOne<any>('SELECT name, branch_name, branch_code, hostel_id FROM hostels WHERE id = $1', [actualBranchId]);
         if (hostelObj) {
           if (!hostelName) hostelName = hostelObj.name;
           if (!branchName) branchName = hostelObj.branch_name || 'Main';
+          const bCode = hostelObj.branch_code || hostelObj.hostel_id;
+          if (bCode && !/^[0-9a-f-]{36}$/i.test(bCode)) {
+            hostelCode = bCode.toUpperCase();
+          } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(actualBranchId)) {
+            hostelCode = actualBranchId;
+          }
         }
       } catch {
         /* ignore lookup error */
       }
     }
     const ihmsId = await generateIhmsId('S', hostelName, branchName, orgId);
-    const studentId = ihmsId;
-    const customerCode = ihmsId;
+    const customId = await redisService.generateStudentCustomId(hostelCode);
+    const studentId = customId;
+    const customerCode = customId;
     const studentDbId = require('crypto').randomUUID();
-    const finalEmail = studentEmail || `${ihmsId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
+    const finalEmail = studentEmail || `${customId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
 
     const monthlyRent = Number(bed.monthly_rate || room.monthly_rate || 8000);
     const stayDurationMonths = Number(data.stayDurationMonths || data.durationMonths || data.stayDuration || 1);
@@ -110,18 +177,19 @@ export class StudentService {
       // 2. Insert student record
       const studentRes = await client.query(
         `INSERT INTO students (
-          id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+          id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, full_name, email,
           phone, gender, date_of_birth, blood_group, aadhar_number, college, course,
           guardian_name, guardian_relation, guardian_phone, guardian_email, guardian_address,
           room_id, bed_id, admission_date, portal_access, portal_access_approved, portal_status, status, financial_total_demanded,
           financial_total_paid, financial_outstanding_balance
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $23, 0, $23)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $24, 0, $24)
         RETURNING *`,
         [
           studentDbId,
           studentId,
           customerCode,
           ihmsId,
+          customId,
           orgId,
           actualBranchId,
           fullName,
@@ -149,6 +217,16 @@ export class StudentService {
         `INSERT INTO room_allocations (id, student_id, room_id, bed_id, hostel_id, organization_id, monthly_rent, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE')`,
         [require('crypto').randomUUID(), studentDbId, room.id, bed.id, branchId, orgId, monthlyRent]
+      );
+
+      // Update room occupancy counters
+      await client.query(
+        `UPDATE rooms
+         SET occupied_beds = occupied_beds + 1,
+             available_beds = GREATEST(0, capacity - (occupied_beds + 1)),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [room.id]
       );
 
       // 4. Create initial Fee Demand
@@ -765,28 +843,37 @@ export class StudentService {
       return this.admitStudent(orgId, actualBranchId, data);
     }
 
+    let hostelCode = 'IHMSAA0001';
+    const bCode = branch?.branch_code || branch?.branchCode || branch?.hostel_id;
+    if (bCode && !/^[0-9a-f-]{36}$/i.test(bCode)) {
+      hostelCode = bCode.toUpperCase();
+    } else if (actualBranchId && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(actualBranchId)) {
+      hostelCode = actualBranchId;
+    }
     const ihmsId = await generateIhmsId('S', branch?.name, 'Main', orgId);
-    const studentId = ihmsId;
-    const customerCode = ihmsId;
+    const customId = await redisService.generateStudentCustomId(hostelCode);
+    const studentId = customId;
+    const customerCode = customId;
     const studentDbId = require('crypto').randomUUID();
-    const finalEmail = studentEmail || `${ihmsId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
+    const finalEmail = studentEmail || `${customId.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`;
 
     const initialFee = Number(data.totalFee || data.admissionFee || 0);
 
     const student = await queryOne<any>(
       `INSERT INTO students (
-        id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+        id, student_id, customer_code, ihms_id, custom_id, organization_id, hostel_id, full_name, email,
         phone, gender, date_of_birth, blood_group, aadhar_number, college, course,
         guardian_name, guardian_relation, guardian_phone, guardian_email, guardian_address,
         admission_date, portal_access, portal_access_approved, portal_status, status, financial_total_demanded,
         financial_total_paid, financial_outstanding_balance
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $21, 0, $21)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP, false, false, 'PENDING_APPROVAL', 'ACTIVE', $22, 0, $22)
       RETURNING *`,
       [
         studentDbId,
         studentId,
         customerCode,
         ihmsId,
+        customId,
         orgId,
         actualBranchId,
         fullName,
@@ -938,8 +1025,8 @@ export class StudentService {
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR s.user_id = $1)
-         AND (s.organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
+        WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR s.user_id = $1)
+          AND (s.organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
       [id ? id.trim() : id, orgId]
     );
     if (!student) throw new AppError('Student not found in this organization', 404);
@@ -954,7 +1041,7 @@ export class StudentService {
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (UPPER(s.customer_code) = UPPER($1) OR UPPER(s.student_id) = UPPER($1) OR s.id = $1)
+       WHERE (UPPER(s.customer_code) = UPPER($1) OR UPPER(s.student_id) = UPPER($1) OR UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR s.id = $1)
          AND (s.organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
       [code ? code.trim() : code, orgId]
     );
@@ -1048,10 +1135,14 @@ export class StudentService {
     return this.getById(orgId, sDbId);
   }
 
+  async deleteStudent(orgId: string, idOrCode: string): Promise<{ success: boolean; message: string; studentId: string }> {
+    return this.removeStudent(orgId, idOrCode);
+  }
+
   async removeStudent(orgId: string, idOrCode: string): Promise<{ success: boolean; message: string; studentId: string }> {
     const student = await queryOne<any>(
       `SELECT * FROM students
-       WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1)
+       WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1 OR UPPER(custom_id) = UPPER($1))
          AND (organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
       [idOrCode ? idOrCode.trim() : idOrCode, orgId]
     );
@@ -1061,18 +1152,20 @@ export class StudentService {
 
     const sDbId = student.id;
     const sBedId = student.bed_id;
+    const sRoomId = student.room_id;
     const sUserId = student.user_id;
     const sName = student.full_name || 'Student';
     const sBranchId = student.hostel_id;
     const sCode = student.customer_code;
+    const sCustomId = student.custom_id;
 
     await transaction(async (client) => {
-      // 1. Vacate & Free Bed if assigned
+      // 1. Vacate & Free Bed if assigned (Digital Bed Map returns to AVAILABLE / Green)
       if (sBedId) {
         await client.query(
           `UPDATE beds
            SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL,
-               current_student_name = NULL, allocated_at = NULL
+               current_student_name = NULL, allocated_at = NULL, updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
           [sBedId]
         );
@@ -1081,50 +1174,70 @@ export class StudentService {
       await client.query(
         `UPDATE beds
          SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL,
-             current_student_name = NULL, allocated_at = NULL
+             current_student_name = NULL, allocated_at = NULL, updated_at = CURRENT_TIMESTAMP
          WHERE current_student_id = $1 OR current_customer_code = $2`,
         [sDbId, sCode]
       );
 
-      // 2. Remove / Update Room Allocations
-      await client.query('DELETE FROM room_allocations WHERE student_id = $1', [sDbId]);
-
-      // 3. Remove Transfers
-      await client.query('DELETE FROM student_transfers WHERE student_id = $1', [sDbId]);
-
-      // 4. Remove Fees & Financials
-      await client.query('DELETE FROM fee_installments WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM fee_demands WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM fee_accounts WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM receipts WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM payments WHERE student_id = $1', [sDbId]);
-
-      // 5. Remove Operational records
-      await client.query('DELETE FROM attendances WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM meal_attendances WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM leave_requests WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM complaints WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM visitors WHERE student_id = $1', [sDbId]);
-      await client.query('DELETE FROM announcement_reads WHERE student_id = $1', [sDbId]);
-
-      // 6. Remove Linked User Account if exists
-      if (sUserId) {
-        await client.query('DELETE FROM users WHERE id = $1', [sUserId]);
+      // Decrement room occupied count if student was in a room
+      if (sRoomId) {
+        await client.query(
+          `UPDATE rooms
+           SET occupied_beds = GREATEST(0, occupied_beds - 1),
+               available_beds = LEAST(capacity, available_beds + 1),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [sRoomId]
+        );
       }
-      await client.query('DELETE FROM users WHERE student_id = $1 OR UPPER(customer_code) = UPPER($2)', [sDbId, sCode]);
 
-      // 7. Delete Student Record
-      await client.query('DELETE FROM students WHERE id = $1', [sDbId]);
+      // 2. Room Allocations: Mark active allocations as VACATED (DO NOT DELETE!)
+      await client.query(
+        `UPDATE room_allocations
+         SET status = 'VACATED', vacated_date = CURRENT_TIMESTAMP
+         WHERE student_id = $1 AND status = 'ACTIVE'`,
+        [sDbId]
+      );
 
-      // 8. Record audit log
+      // 3. Linked User Account: Soft deactivation (DO NOT DELETE!)
+      if (sUserId) {
+        await client.query(
+          `UPDATE users
+           SET is_active = FALSE, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [sUserId]
+        );
+      }
+      await client.query(
+        `UPDATE users
+         SET is_active = FALSE, status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
+         WHERE student_id = $1 OR UPPER(customer_code) = UPPER($2)`,
+        [sDbId, sCode]
+      );
+
+      // 4. Soft Delete Student Record (DO NOT DELETE!)
+      // Permanently preserves custom_id, financial ledger history, receipts, and payments
+      await client.query(
+        `UPDATE students
+         SET is_active = FALSE,
+             status = 'INACTIVE',
+             bed_id = NULL,
+             room_id = NULL,
+             portal_access = FALSE,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [sDbId]
+      );
+
+      // 5. Record audit log
       await client.query(
         `INSERT INTO audit_logs (id, organization_id, action, resource, resource_id, details)
-         VALUES ($1, $2, 'DELETE_STUDENT', 'students', $3, $4)`,
+         VALUES ($1, $2, 'SOFT_DELETE_STUDENT', 'students', $3, $4)`,
         [
           require('crypto').randomUUID(),
           orgId,
           sDbId,
-          `Student ${sName} (${sCode}) removed permanently by organization admin`
+          `Student ${sName} (${sCustomId || sCode}) soft-deleted by admin. Bed vacated, financial ledgers preserved.`
         ]
       );
     });
@@ -1158,13 +1271,19 @@ export class StudentService {
       else feeStatus = 'OVERDUE';
     }
 
+    const rawCode = s.custom_id || s.customer_code || s.student_id || s.ihms_id;
+    const fallbackHostel = s.branch_code || s.hostel_code || 'IHMSAA0001';
+    const displayId = sanitizeStudentDisplayId(rawCode, fallbackHostel);
+
     return {
       id: s.id,
       _id: s.id,
-      studentId: s.student_id,
-      customerCode: s.customer_code,
-      ihmsId: s.ihms_id,
-      ihms_id: s.ihms_id,
+      studentId: displayId,
+      customerCode: displayId,
+      customId: displayId,
+      custom_id: displayId,
+      ihmsId: displayId,
+      ihms_id: displayId,
       name: s.full_name,
       fullName: s.full_name,
       email: s.email,
@@ -1190,6 +1309,8 @@ export class StudentService {
       admissionDate: s.admission_date || s.created_at,
       portalAccess: s.portal_access ? 'ENABLED' : 'DISABLED',
       status: s.status || 'ACTIVE',
+      isActive: s.is_active !== false,
+      is_active: s.is_active !== false,
       userId: s.user_id,
       avatarUrl: s.avatar_url || '',
       feeTotal: totalDemanded,

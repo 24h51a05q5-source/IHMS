@@ -1,32 +1,144 @@
+import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { feeService } from './fee.service';
 import { feeReminderService } from './fee-reminder.service';
 import { query, queryOne, queryRows } from '../../config/database';
 import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { verifyHostelActive } from '../../common/guards/hostel-active.guard';
 import { UserRole, PaymentMethod } from '../../config/constants';
+import { AppError } from '../../common/filters/http-exception.filter';
 
 const router = Router();
 
-// Webhook endpoints (Cryptographically verified via HMAC-SHA256 signature)
-const handleWebhook = async (req: Request, res: Response, next: NextFunction) => {
+// 1. Cashfree Webhook Listener (Cryptographically verified via HMAC-SHA256 signature)
+const handleCashfreeWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Production IP whitelisting validation (enabled when CASHFREE_ENFORCE_IP_WHITELIST=true)
+    if (process.env.CASHFREE_ENFORCE_IP_WHITELIST === 'true') {
+      const clientIp = (
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        req.socket.remoteAddress ||
+        ''
+      ).replace(/^.*:/, '');
+
+      const CASHFREE_PRODUCTION_IPS = new Set([
+        '52.66.101.190',
+        '3.109.91.50',
+        '3.108.136.237',
+        '13.235.150.146',
+        '65.0.93.81',
+        '3.108.137.95',
+        '13.235.150.147',
+        '65.0.93.82',
+        '3.109.91.51',
+      ]);
+
+      if (clientIp && !CASHFREE_PRODUCTION_IPS.has(clientIp) && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+        return res.status(403).json({
+          success: false,
+          message: `Webhook origin IP (${clientIp}) is not authorized.`,
+        });
+      }
+    }
+
     const signature = String(
-      req.headers['x-razorpay-signature'] ||
       req.headers['x-webhook-signature'] ||
       req.headers['signature'] ||
-      req.body?.signature ||
+      ''
+    );
+    const timestamp = String(
+      req.headers['x-webhook-timestamp'] ||
       ''
     );
     const rawBody = (req as any).rawBody || JSON.stringify(req.body);
-    const result = await feeService.processWebhookPayment(rawBody, signature, req.body);
+    const result = await feeService.processCashfreeWebhook(rawBody, signature, timestamp, req.body);
     res.json(result);
   } catch (err) {
     next(err);
   }
 };
 
-router.post('/payments/webhook', handleWebhook);
-router.post('/webhook', handleWebhook);
+router.post('/webhooks/cashfree', handleCashfreeWebhook);
+router.post('/payments/webhooks/cashfree', handleCashfreeWebhook);
+
+// Phase 0: Deprecate legacy gateway webhooks
+const handleDeprecatedWebhook = (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    message: 'Legacy payment webhook endpoint is permanently deprecated and disabled. Webhooks are exclusively received via /api/webhooks/cashfree.',
+  });
+};
+router.post('/payments/webhook', handleDeprecatedWebhook);
+router.post('/webhook', handleDeprecatedWebhook);
+
+// Phase 0: Deprecate legacy order & payment initiation endpoints
+const handleDeprecatedOrder = (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    message: 'Legacy payment endpoints have been permanently deprecated. All fee checkout must exclusively use Cashfree Dynamic UPI QR via POST /api/orders/create-upi-qr.',
+  });
+};
+router.post('/payments/order', handleDeprecatedOrder);
+router.post('/payments/initiate', handleDeprecatedOrder);
+router.post('/payments/verify', handleDeprecatedOrder);
+router.post('/payments/:id/confirm', handleDeprecatedOrder);
+
+// GET /orders/status (Phase 3: Silent Polling Endpoint: GET /api/orders/status?order_id=...)
+router.get(['/orders/status', '/status'], async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orderId = String(req.query.order_id || req.query.orderId || req.query.id || '').trim();
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'order_id query parameter is required' });
+    }
+
+    const payment = await queryOne<any>(
+      `SELECT p.*, r.receipt_number as receipt_no_rel
+       FROM payments p
+       LEFT JOIN receipts r ON (r.payment_id = p.id OR r.payment_number = p.payment_number)
+       WHERE (p.cashfree_order_id = $1 OR p.gateway_order_id = $1 OR p.payment_number = $1 OR p.id = $1)
+       LIMIT 1`,
+      [orderId]
+    );
+
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Server-side expiry check if still pending
+    if (payment.status === 'PENDING' && payment.expires_at) {
+      if (Date.now() > new Date(payment.expires_at).getTime()) {
+        await query(
+          `UPDATE payments SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [payment.id]
+        );
+        payment.status = 'EXPIRED';
+      }
+    }
+
+    const isPaid = payment.status === 'PAID' || payment.status === 'SUCCESS';
+    const status = isPaid ? 'PAID' : payment.status;
+
+    const payload = {
+      orderId: payment.cashfree_order_id || payment.gateway_order_id || payment.id,
+      paymentId: payment.id,
+      paymentNumber: payment.payment_number,
+      status,
+      amount: Number(payment.amount),
+      currency: payment.currency || 'INR',
+      receiptNumber: payment.receipt_number || payment.receipt_no_rel || null,
+      utr: payment.transaction_reference || payment.transaction_ref || payment.gateway_transaction_id || null,
+      expiresAt: payment.expires_at,
+    };
+
+    res.json({
+      success: true,
+      ...payload,
+      data: payload,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.use(authenticate);
 
@@ -142,20 +254,15 @@ router.post(
 );
 
 // GET /fees/student/payment-initiation (or /payments/zero-gateway/details)
-const handleGetPaymentDetails = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
-    const isStaff = req.user!.role !== UserRole.STUDENT;
-    const studentId = isStaff && req.query.studentId
-      ? String(req.query.studentId)
-      : (req.user!.studentId || (req.user as any).customerCode || (req.user as any).ihmsId || req.user!.id);
-    const amount = req.query.amount ? Number(req.query.amount) : undefined;
-    const result = await zeroGatewayPaymentService.getStudentHostelPaymentInfo(req.user!.organizationId, studentId, amount);
-    res.json({ success: true, data: result });
-  } catch (err) { next(err); }
+// DEPRECATED: Replaced by Cashfree Dynamic UPI QR checkout (/orders/create-upi-qr)
+const handleDeprecatedPaymentInitiation = (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    message: 'Legacy payment initiation details are permanently deprecated. All fee checkout must use Cashfree Dynamic UPI QR via POST /api/orders/create-upi-qr.',
+  });
 };
-router.get('/student/payment-initiation', handleGetPaymentDetails);
-router.get('/payments/zero-gateway/details', handleGetPaymentDetails);
+router.get('/student/payment-initiation', handleDeprecatedPaymentInitiation);
+router.get('/payments/zero-gateway/details', handleDeprecatedPaymentInitiation);
 
 // GET /fees/student/:studentId (Full Fee Account & Installments Details)
 router.get('/student/:studentId', async (req: Request, res: Response, next: NextFunction) => {
@@ -544,33 +651,304 @@ router.post('/payments/:id/confirm', async (req: Request, res: Response, next: N
   }
 });
 
-// POST /payments/dynamic-qr (Initiate dynamic UPI QR payment request)
-router.post('/payments/dynamic-qr', async (req: Request, res: Response, next: NextFunction) => {
+// Phase 2: Create Dynamic UPI QR Order with Split Logic & Customer Fee Bearer
+const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
+    const { cashfreeService } = await import('./cashfree.service');
     const isStaff = req.user!.role !== UserRole.STUDENT;
     const studentId = isStaff && req.body.studentId ? req.body.studentId : (req.user!.studentId || req.user!.id);
-    const amount = (req.body.amount !== undefined && req.body.amount !== null && req.body.amount !== '')
+    const requestedAmount = (req.body.amount !== undefined && req.body.amount !== null && req.body.amount !== '')
       ? Number(req.body.amount)
       : undefined;
     const installmentId = req.body.installmentId;
-    const result = await zeroGatewayPaymentService.createDynamicQRPayment(
-      req.user!.organizationId,
-      studentId,
-      amount,
-      installmentId
+
+    // Security Rule 1: Retrieve student from DB to enforce organization & hostel isolation
+    const student = await queryOne<any>(
+      `SELECT s.id, s.customer_code, s.full_name, s.email, s.phone, s.hostel_id, s.financial_outstanding_balance,
+              h.id as hostel_db_id, h.name as hostel_name, h.cashfree_vendor_id, h.cashfree_onboarding_status
+       FROM students s
+       LEFT JOIN hostels h ON h.id = s.hostel_id
+       WHERE (s.id = $1 OR s.user_id = $1 OR s.customer_code = $1 OR s.student_id = $1)
+         AND s.organization_id = $2`,
+      [studentId, req.user!.organizationId]
     );
-    res.status(201).json({ success: true, data: result });
-  } catch (err) { next(err); }
-});
+
+    if (!student) {
+      throw new AppError('Student profile not found in your organization.', 404);
+    }
+
+    // Security Rule 2: Derive hostel_id strictly from database, NEVER from frontend
+    let hostelId = student.hostel_id;
+    let vendorId = student.cashfree_vendor_id;
+    let vendorStatus = student.cashfree_onboarding_status;
+
+    if (!hostelId) {
+      const defaultHostel = await queryOne<any>(
+        `SELECT id, name, cashfree_vendor_id, cashfree_onboarding_status FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1`,
+        [req.user!.organizationId]
+      );
+      if (defaultHostel) {
+        hostelId = defaultHostel.id;
+        vendorId = defaultHostel.cashfree_vendor_id;
+        vendorStatus = defaultHostel.cashfree_onboarding_status;
+      }
+    }
+
+    if (!hostelId) {
+      throw new AppError('No hostel branch is assigned to this student.', 400);
+    }
+
+    // Tenant Offboarding Check: If hostel is DEACTIVATED or SUSPENDED, reject payment creation
+    const hostelRecord = await queryOne<any>(
+      `SELECT id, name, status, cashfree_vendor_id, cashfree_onboarding_status FROM hostels WHERE (id = $1 OR hostel_id = $1) AND organization_id = $2 LIMIT 1`,
+      [hostelId, req.user!.organizationId]
+    );
+
+    if (hostelRecord && (hostelRecord.status === 'DEACTIVATED' || hostelRecord.status === 'SUSPENDED' || hostelRecord.status === 'INACTIVE')) {
+      throw new AppError('This hostel is no longer active.', 403);
+    }
+
+    // Auto-create sub-merchant account if not yet created on Cashfree
+    if (!vendorId) {
+      const owner = await queryOne<any>(
+        `SELECT full_name, email, phone, registered_hostel_name FROM owners WHERE organization_id = $1 LIMIT 1`,
+        [req.user!.organizationId]
+      );
+      const newVendor = await cashfreeService.createVendor({
+        hostelId,
+        organizationId: req.user!.organizationId,
+        ownerName: owner?.full_name || 'Hostel Owner',
+        email: owner?.email || 'owner@hostel.com',
+        phone: owner?.phone || '9999999999',
+        registeredHostelName: owner?.registered_hostel_name || student.hostel_name || 'Hostel',
+      });
+      vendorId = newVendor.vendorId;
+      vendorStatus = newVendor.status;
+    }
+
+    const baseAmount = requestedAmount && requestedAmount > 0 ? requestedAmount : Number(student.financial_outstanding_balance || 0);
+    if (!baseAmount || baseAmount <= 0) {
+      throw new AppError('Payment amount must be greater than ₹0.', 400);
+    }
+
+    const orderId = `IHMS_CF_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    const paymentId = crypto.randomUUID();
+    const paymentNumber = `PAY-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+
+    // Call Cashfree Platform Order API (Customer Fee Bearer Model)
+    const qrResult = await cashfreeService.createDynamicUPIOrder({
+      orderId,
+      amount: baseAmount,
+      studentId: student.id,
+      studentCustomerCode: student.customer_code,
+      studentName: student.full_name,
+      studentPhone: student.phone || '9876543210',
+      studentEmail: student.email || `${student.customer_code}@ihms.app`,
+      vendorId,
+      hostelId,
+      organizationId: req.user!.organizationId,
+    });
+
+    // Save pending payment record in DB
+    await query(
+      `INSERT INTO payments (
+        id, payment_number, organization_id, hostel_id, student_id, customer_code,
+        installment_id, amount, expected_amount, base_amount, convenience_fee, currency, payment_method,
+        gateway_name, gateway_order_id, cashfree_order_id, cashfree_split_vendor_id,
+        fee_bearer, status, expires_at, qr_code_data, received_by, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, 'INR', 'UPI', 'CASHFREE', $11, $11, $12, 'customer', 'PENDING', $13, $14, 'Cashfree Platform', $15)`,
+      [
+        paymentId,
+        paymentNumber,
+        req.user!.organizationId,
+        hostelId,
+        student.id,
+        student.customer_code,
+        installmentId || null,
+        qrResult.amount,
+        baseAmount,
+        qrResult.convenienceFee || 0,
+        orderId,
+        vendorId,
+        qrResult.expiresAt,
+        qrResult.qrDataUrl,
+        `Cashfree Dynamic UPI QR Order for ${student.customer_code} (Vendor: ${vendorId})`,
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      data: {
+        orderId,
+        paymentId,
+        paymentNumber,
+        amount: qrResult.amount,
+        baseAmount: qrResult.baseAmount,
+        convenienceFee: qrResult.convenienceFee || 0,
+        platformMicroFee: qrResult.platformMicroFee || 3.00,
+        currency: 'INR',
+        vendorId,
+        feeBearer: 'customer',
+        upiIntentUrl: qrResult.upiIntentUrl,
+        upiAppLinks: qrResult.upiAppLinks,
+        paymentSessionId: qrResult.paymentSessionId,
+        splits: qrResult.splits,
+        qrDataUrl: qrResult.qrDataUrl,
+        expiresAt: qrResult.expiresAt,
+        expiresInSeconds: qrResult.expiresInSeconds,
+        hostelName: student.hostel_name || 'Hostel',
+        student: {
+          id: student.id,
+          customerCode: student.customer_code,
+          name: student.full_name,
+        },
+      },
+      message: 'Dynamic Cashfree UPI QR generated successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+router.post(['/orders/create-upi-qr', '/create-upi-qr', '/payments/dynamic-qr', '/dynamic-qr', '/orders/create', '/orders', '/create'], verifyHostelActive, handleCreateCashfreeUpiQr);
 
 // GET /payments/:id/status (Verified server-side status check with expiry check)
 router.get('/payments/:id/status', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { zeroGatewayPaymentService } = await import('./zero-gateway-payment.service');
-    const statusData = await zeroGatewayPaymentService.checkDynamicPaymentStatus(req.user!.organizationId, req.params.id);
-    res.json({ success: true, data: statusData });
-  } catch (err) { next(err); }
+    const payment = await queryOne<any>(
+      `SELECT p.*, r.receipt_number as receipt_no_rel
+       FROM payments p
+       LEFT JOIN receipts r ON (r.payment_id = p.id OR r.payment_number = p.payment_number)
+       WHERE (p.id = $1 OR p.payment_number = $1 OR p.gateway_order_id = $1 OR p.cashfree_order_id = $1)
+         AND p.organization_id = $2`,
+      [req.params.id, req.user!.organizationId]
+    );
+
+    if (!payment) {
+      throw new AppError('Payment record not found.', 404);
+    }
+
+    if (payment.status === 'PENDING' && payment.expires_at) {
+      if (Date.now() > new Date(payment.expires_at).getTime()) {
+        await query(
+          `UPDATE payments SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [payment.id]
+        );
+        payment.status = 'EXPIRED';
+      }
+    }
+
+    const isPaid = payment.status === 'PAID' || payment.status === 'SUCCESS';
+    const status = isPaid ? 'PAID' : payment.status;
+
+    res.json({
+      success: true,
+      data: {
+        orderId: payment.cashfree_order_id || payment.gateway_order_id || payment.id,
+        paymentId: payment.id,
+        paymentNumber: payment.payment_number,
+        status,
+        amount: Number(payment.amount),
+        currency: payment.currency || 'INR',
+        receiptNumber: payment.receipt_number || payment.receipt_no_rel || null,
+        utr: payment.transaction_ref || payment.gateway_transaction_id || null,
+        expiresAt: payment.expires_at,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Phase 1: Generate Cashfree Sub-Merchant Hosted Onboarding Link
+router.post('/hostels/:hostelId/cashfree-onboarding-link', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { cashfreeService } = await import('./cashfree.service');
+    const hostel = await queryOne<any>(
+      `SELECT h.id, h.name, h.cashfree_vendor_id, h.cashfree_onboarding_status, h.cashfree_onboarding_url,
+              o.full_name as owner_name, o.email as owner_email, o.phone as owner_phone
+       FROM hostels h
+       LEFT JOIN owners o ON o.organization_id = h.organization_id
+       WHERE (h.id = $1 OR h.hostel_id = $1) AND h.organization_id = $2`,
+      [req.params.hostelId, req.user!.organizationId]
+    );
+
+    if (!hostel) {
+      throw new AppError('Hostel not found', 404);
+    }
+
+    let vendorId = hostel.cashfree_vendor_id;
+    if (!vendorId) {
+      const vendor = await cashfreeService.createVendor({
+        hostelId: hostel.id,
+        organizationId: req.user!.organizationId,
+        ownerName: hostel.owner_name || req.user!.name || 'Hostel Owner',
+        email: hostel.owner_email || req.user!.email || 'owner@hostel.com',
+        phone: hostel.owner_phone || '9999999999',
+        registeredHostelName: hostel.name,
+      });
+      vendorId = vendor.vendorId;
+    }
+
+    const onboardingUrl = await cashfreeService.generateOnboardingLink(vendorId, hostel.name);
+
+    await query(
+      `UPDATE hostels SET cashfree_onboarding_url = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [onboardingUrl, hostel.id]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        vendorId,
+        onboardingUrl,
+        status: hostel.cashfree_onboarding_status || 'PENDING',
+      },
+      message: 'Cashfree hosted onboarding link generated.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Phase 1: Retrieve Cashfree Sub-Merchant Verification Status
+router.get('/hostels/:hostelId/cashfree-status', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { cashfreeService } = await import('./cashfree.service');
+    const hostel = await queryOne<any>(
+      `SELECT id, name, cashfree_vendor_id, cashfree_onboarding_status, cashfree_bank_status,
+              cashfree_kyc_status, cashfree_onboarding_url
+       FROM hostels
+       WHERE (id = $1 OR hostel_id = $1) AND organization_id = $2`,
+      [req.params.hostelId, req.user!.organizationId]
+    );
+
+    if (!hostel) {
+      throw new AppError('Hostel not found', 404);
+    }
+
+    let statusData = {
+      vendorId: hostel.cashfree_vendor_id,
+      status: hostel.cashfree_onboarding_status || 'NOT_STARTED',
+      bankStatus: hostel.cashfree_bank_status || 'PENDING',
+      kycStatus: hostel.cashfree_kyc_status || 'PENDING',
+      onboardingUrl: hostel.cashfree_onboarding_url,
+    };
+
+    if (hostel.cashfree_vendor_id) {
+      const liveStatus = await cashfreeService.getVendorStatus(hostel.cashfree_vendor_id);
+      statusData.status = liveStatus.status;
+      statusData.bankStatus = liveStatus.bankStatus;
+      statusData.kycStatus = liveStatus.kycStatus;
+    }
+
+    res.json({
+      success: true,
+      data: statusData,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /payments/:id/refund
@@ -721,3 +1099,4 @@ router.get('/receipts/:receiptNumber/pdf', async (req: Request, res: Response, n
 });
 
 export const feeRouter = router;
+export default router;

@@ -30,6 +30,7 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { SearchInput } from '@/components/ui/search-input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -241,7 +242,7 @@ function FeesPageContent() {
       cell: (f) => (
         <div>
           <p className="font-extrabold text-slate-950 text-sm">{f.studentName || 'Student'}</p>
-          <p className="text-xs font-mono font-bold text-slate-600">{f.customerCode || f.studentId}</p>
+          <p className="text-xs font-mono font-bold text-slate-600">{formatStudentId(f.customerCode || f.studentId)}</p>
         </div>
       ),
     },
@@ -328,7 +329,7 @@ function FeesPageContent() {
         <div>
           <p className="font-extrabold text-slate-950 text-sm">{p.studentName || 'Student'}</p>
           <p className="text-xs font-mono font-bold text-slate-600">
-            {p.customerCode || p.studentId}
+            {formatStudentId(p.customerCode || p.studentId)}
           </p>
         </div>
       ),
@@ -361,7 +362,7 @@ function FeesPageContent() {
         <div>
           <p className="font-extrabold text-slate-950 text-sm">{v.studentName || 'Student'}</p>
           <p className="text-xs font-mono font-bold text-slate-600">
-            {v.customerCode} · {v.hostelName || 'Hostel'}
+            {formatStudentId(v.customerCode)} · {v.hostelName || 'Hostel'}
           </p>
         </div>
       ),
@@ -600,7 +601,7 @@ function FeesPageContent() {
                   <SelectContent className="bg-white border-slate-300 max-h-56">
                     {students.map((s) => (
                       <SelectItem key={s.id} value={s.id} className="font-bold text-xs">
-                        {s.fullName || s.name} ({s.customerCode || s.studentId})
+                        {s.fullName || s.name} ({formatStudentId(s.customerCode || s.studentId)})
                       </SelectItem>
                     ))}
                   </SelectContent>

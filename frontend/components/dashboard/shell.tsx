@@ -9,6 +9,7 @@ import {
   X,
   LogOut,
   LifeBuoy,
+  FileText,
   type LucideIcon,
 } from 'lucide-react';
 import * as Icons from 'lucide-react';
@@ -473,6 +474,17 @@ function SidebarFooter({
             {user.role.replace(/_/g, ' ')}
           </p>
         </div>
+
+        {/* Terms & Conditions Link */}
+        <Link
+          href="/terms"
+          onClick={() => onNavigate?.()}
+          title="Terms & Conditions"
+          aria-label="Terms and Conditions"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#64748B] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#18233A] hover:border-[#94A3B8]"
+        >
+          <FileText className="h-4 w-4" />
+        </Link>
 
         {/* Help & Support Trigger Button */}
         {onOpenSupport && (

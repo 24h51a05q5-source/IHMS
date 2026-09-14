@@ -8,6 +8,7 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { attendanceApi } from '@/lib/api/attendance.api';
@@ -88,7 +89,7 @@ function AttendancePageContent() {
       cell: (a) => (
         <div>
           <p className="font-semibold text-foreground">{a.studentName || 'Resident'}</p>
-          <p className="text-xs font-mono text-muted-foreground">{a.customerCode || a.studentId}</p>
+          <p className="text-xs font-mono text-muted-foreground">{formatStudentId(a.customerCode || a.studentId)}</p>
         </div>
       ),
     },
@@ -121,7 +122,7 @@ function AttendancePageContent() {
       cell: (l) => (
         <div>
           <p className="font-semibold text-foreground">{l.studentName || 'Resident'}</p>
-          <p className="text-xs font-mono text-muted-foreground">{l.customerCode || l.studentId}</p>
+          <p className="text-xs font-mono text-muted-foreground">{formatStudentId(l.customerCode || l.studentId)}</p>
         </div>
       ),
     },
@@ -207,7 +208,7 @@ function AttendancePageContent() {
       <div className="flex items-start justify-between gap-2 border-b border-[#E4E0D7] pb-2">
         <div>
           <p className="font-bold text-[#111827] text-sm">{a.studentName || 'Resident'}</p>
-          <p className="font-mono text-xs font-bold text-[#E87545]">{a.customerCode || a.studentId}</p>
+          <p className="font-mono text-xs font-bold text-[#E87545]">{formatStudentId(a.customerCode || a.studentId)}</p>
         </div>
         <Badge variant={a.status === 'PRESENT' ? 'success' : a.status === 'ABSENT' ? 'error' : 'warning'}>
           {a.status}
@@ -231,7 +232,7 @@ function AttendancePageContent() {
       <div className="flex items-start justify-between gap-2 border-b border-[#E4E0D7] pb-2">
         <div>
           <p className="font-bold text-[#111827] text-sm">{l.studentName || 'Resident'}</p>
-          <p className="font-mono text-xs font-bold text-[#E87545]">{l.customerCode || l.studentId}</p>
+          <p className="font-mono text-xs font-bold text-[#E87545]">{formatStudentId(l.customerCode || l.studentId)}</p>
         </div>
         <Badge variant={l.status === 'APPROVED' ? 'success' : l.status === 'REJECTED' ? 'error' : 'warning'}>
           {l.status}

@@ -17,9 +17,12 @@ export interface TermsSection {
 export const OWNER_TERMS_SECTIONS: TermsSection[] = [
   {
     id: 'owner-platform-use',
-    title: '1. Use of the IHMS Platform',
-    summary: 'Grant of operational license and scope of cloud ERP services.',
+    title: '1. Use of the IHMS Platform & Role of the Platform',
+    summary: 'Grant of operational license, Technology Service Provider role, and scope of cloud ERP services.',
     content: `Integrated Hostel Management System ("IHMS") grants you a non-exclusive, non-transferable, revocable license to access and use the platform strictly for managing your registered residential hostel properties, branches, staff, student admissions, fee collections, and day-to-day lodging operations.
+
+Role of the Platform:
+The Platform provides software services to assist the Hostel Owner in managing hostel operations, bed allocations, and payment routing. The Platform is purely a Technology Service Provider and SaaS facilitator, and is not a bank, financial institution, or Payment Aggregator as defined by the Reserve Bank of India (RBI).
 
 You acknowledge that IHMS provides cloud-based enterprise resource planning ("ERP") software infrastructure. IHMS is not a real estate broker, residential hostel operator, physical landlord, or insurer. The legal and operational relationship for providing physical lodging, boarding, food, and facilities exists exclusively between your establishment and your enrolled residents.`,
     applicableTo: 'OWNER',
@@ -47,9 +50,12 @@ You agree to maintain functional grievance redressal mechanisms and actively res
   },
   {
     id: 'owner-fee-payments',
-    title: '4. Fee and Payment Responsibilities',
-    summary: 'Transparent billing, receipt issuance, and security deposit accounting.',
-    content: `All fee schedules, installment plans, security deposits, mess charges, and utility tariffs configured in IHMS must be clearly communicated to enrolled students without hidden fees. You agree that every payment received—whether processed online via integrated payment gateways or recorded as an offline transaction—must be accurately recorded in IHMS with an official digital receipt issued to the resident.
+    title: '4. Fee and Payment Responsibilities & Zero Transaction Fee',
+    summary: 'Transparent billing, zero transaction fee, 100% direct settlement, and security deposit accounting.',
+    content: `All fee schedules, installment plans, security deposits, mess charges, and utility tariffs configured in IHMS must be clearly communicated to enrolled students without hidden fees. You agree that every payment received—whether processed online via UPI QR or recorded as an offline transaction—must be accurately recorded in IHMS with an official digital receipt issued to the resident.
+
+Zero Transaction Fee & Settlement Routing:
+The Hostel Owner shall receive 100% of the base hostel fee set by the Owner. The Platform deducts ₹0 from this base fee. Payment routing is facilitated via our Payment Gateway partner (Cashfree Payments). Digital convenience fees are borne exclusively by the paying student.
 
 You are responsible for the lawful custody, accounting, and timely refund of refundable security deposits upon student checkout, subject to legitimate deductions for unpaid dues or verified property damage. IHMS is not responsible for handling cash collections or enforcing fee recovery from defaulting residents.`,
     applicableTo: 'OWNER',
@@ -87,9 +93,12 @@ You agree not to share administrative credentials with external third parties. A
   },
   {
     id: 'owner-legal-compliance',
-    title: '8. Compliance with Applicable Laws',
-    summary: 'Adherence to municipal trade licenses, fire safety NOCs, and police verification.',
+    title: '8. Compliance with Applicable Laws & Mandatory KYC',
+    summary: 'Adherence to municipal trade licenses, fire safety NOCs, and payment partner sub-merchant KYC.',
     content: `You represent and warrant that your hostel premises comply with all applicable local, municipal, state, and national laws and regulations. This includes obtaining and maintaining valid commercial lodging permits, trade licenses, fire safety no-objection certificates (NOC), public health clearances, and local police verification records for all residents and hostel personnel.
+
+Mandatory KYC & Compliance:
+To receive payments, the Hostel Owner must complete the 'Sub-Merchant' onboarding process (PAN/Bank Verification) directly with our Payment Gateway partner. The Platform is not liable for delayed settlements resulting from failed KYC or invalid bank accounts.
 
 You agree to indemnify and hold harmless IHMS and its officers from any legal penalties, municipal notices, fines, or litigation arising from your failure to maintain statutory compliance for your physical properties.`,
     applicableTo: 'OWNER',
@@ -137,9 +146,12 @@ Upon termination, your right to access administrative functions will cease. Subj
   },
   {
     id: 'owner-disputes',
-    title: '13. Dispute Handling and Governing Law',
-    summary: 'Jurisdiction in Hyderabad, Telangana, India and arbitration mechanisms.',
-    content: `These Terms & Conditions shall be governed by and construed in accordance with the substantive laws of the Republic of India. In the event of any operational or contractual disagreement arising between you and IHMS, the parties agree to first seek an amicable resolution through formal executive mediation.
+    title: '13. Dispute Handling, Refund Liability & Governing Law',
+    summary: 'Refund liability for student disputes, Hyderabad jurisdiction, and arbitration mechanisms.',
+    content: `Refund Liability:
+The Hostel Owner assumes full liability for refunding Students in the event of double payments, cancellations, or disputes. The Platform cannot automatically reverse funds once settled into the Owner's bank account.
+
+These Terms & Conditions shall be governed by and construed in accordance with the substantive laws of the Republic of India. In the event of any operational or contractual disagreement arising between you and IHMS, the parties agree to first seek an amicable resolution through formal executive mediation.
 
 If mediation does not resolve the dispute within thirty (30) days, the dispute shall be settled by binding arbitration conducted under the Arbitration and Conciliation Act, 1996, in Hyderabad, Telangana. Subject to arbitration, the competent civil courts of Hyderabad shall have exclusive jurisdiction.`,
     applicableTo: 'OWNER',
@@ -204,21 +216,26 @@ Subletting, transferring, or allowing non-registered third parties or unauthoriz
   },
   {
     id: 'student-fee-payments-dues',
-    title: '4. Fee Payments and Dues',
-    summary: 'Timely settlement of monthly fees, late penalties, and digital receipts.',
-    content: `You agree to pay all recurring hostel rent, mess fees, maintenance charges, and utility dues on or before the due date specified on your IHMS payment schedule. Invoices and upcoming due reminders are delivered to your portal and notification center.
+    title: '4. Fee Payments, Payment Method & Platform Convenience Fee',
+    summary: 'UPI fee processing, non-refundable platform convenience fee, and direct owner settlement.',
+    content: `Payment Method & Platform Convenience Fee:
+All hostel fee payments facilitated through the Platform are processed exclusively via UPI. By initiating a payment, the Student agrees to bear a nominal, non-refundable 'Platform Convenience Fee' applied at checkout. This fee covers digital processing and routing. The total amount displayed before payment authorization includes this convenience fee.
 
-Failure to settle dues within the designated timeline may attract applicable late payment penalties, suspension of mess dining privileges, or administrative holds on room allocation. Official digital receipts are automatically generated and stored in your portal upon successful payment confirmation, serving as proof of settlement.`,
+Direct Settlement to Hostel:
+The Platform acts solely as a technology facilitator and is not a payment aggregator, banking entity, or custodian of student funds. The base hostel fee is routed directly and immediately to the verified bank account of the designated hostel owner. The Platform does not hold, escrow, or retain any portion of the student's base hostel fee.
+
+You agree to pay all recurring hostel rent, mess fees, maintenance charges, and utility dues on or before the due date specified on your IHMS payment schedule. Invoices and upcoming due reminders are delivered to your portal and notification center. Failure to settle dues within the designated timeline may attract applicable late payment penalties, suspension of mess dining privileges, or administrative holds on room allocation. Official digital receipts are automatically generated and stored in your portal upon successful payment confirmation, serving as proof of settlement.`,
     applicableTo: 'STUDENT',
     order: 4,
   },
   {
     id: 'student-deposit-refund-terms',
-    title: '5. Security Deposit and Refund Terms',
-    summary: 'Deposit custody, damage deductions, and refund disbursement timeline.',
-    content: `Refunds of advance hostel rent, mess fees, and security deposits are governed strictly by the published checkout and cancellation policy of your specific hostel management. Security deposits are refundable upon completion of your stay duration, subject to clearance of all outstanding fee dues and formal physical room inspection.
+    title: '5. Security Deposit, Refund & Dispute Policy',
+    summary: 'Deposit custody, damage deductions, and direct hostel refund dispute resolution.',
+    content: `Refund & Dispute Policy:
+Any disputes, chargebacks, or requests for refunds regarding the base hostel fee must be resolved directly between the Student and the Hostel Owner. The Platform holds zero liability and possesses no technical mechanism to reverse settled transactions from a hostel owner's bank account. The Platform Convenience Fee is non-refundable under all circumstances, including but not limited to double payments, admission cancellations, hostel eviction, or early departure.
 
-Legitimate deductions may be applied from refundable deposits for unreturned keys, verified property damage, or unpaid utility bills. Approved refunds are processed and disbursed through bank transfer within the timeframe formally stipulated by hostel management (typically 15 to 30 business days after clearance).`,
+Refunds of advance hostel rent, mess fees, and security deposits are governed strictly by the published checkout and cancellation policy of your specific hostel management. Security deposits are refundable upon completion of your stay duration, subject to clearance of all outstanding fee dues and formal physical room inspection. Legitimate deductions may be applied from refundable deposits for unreturned keys, verified property damage, or unpaid utility bills. Approved refunds are processed and disbursed through bank transfer within the timeframe formally stipulated by hostel management.`,
     applicableTo: 'STUDENT',
     order: 5,
   },
@@ -386,19 +403,19 @@ Management shall not practice discrimination against residents or applicants bas
   },
   {
     id: 'payment-terms',
-    title: '4. Fees, Billing, Payments & Refund Policy',
-    summary: 'Payment processing rules, supported payment channels, automated receipts, transaction charges, and dispute handling.',
+    title: '4. Fees, Billing, Payments & UPI Convenience Fee Model',
+    summary: 'Exclusive UPI payment routing, non-refundable convenience fees, and direct owner settlements.',
     content: `4.1 Payment Methods:
-IHMS facilitates fee collection through integrated online payment gateways (Credit Cards, Debit Cards, Net Banking, Unified Payments Interface [UPI], and dynamic QR codes) as well as offline direct bank transfers (IMPS / NEFT / RTGS) verified by management.
+All fee collections facilitated through IHMS are processed exclusively via dynamic Unified Payments Interface (UPI) QR codes. The Platform does not process or accept credit cards, debit cards, net banking, wallets, or NEFT/IMPS on checkout.
 
-4.2 Invoicing & Digital Receipts:
-Every successful financial transaction recorded in IHMS automatically generates a verifiable, tamper-evident digital payment receipt with a unique receipt number, timestamp, and audit trail. Receipts remain accessible in the student portal and can be downloaded as PDF records.
+4.2 Customer Fee Bearer & Convenience Fee:
+Under our Customer Fee Bearer model, students agree to bear a nominal, non-refundable Platform Convenience Fee applied dynamically at checkout to cover digital processing and routing. The base hostel fee is routed directly and immediately to the verified bank account of the designated hostel owner without any deduction from the principal.
 
-4.3 Payment Gateway Fees & Taxes:
-Online payment transactions may be subject to applicable banking charges, convenience fees, and goods and services tax (GST) levied by acquiring banks and payment gateway providers, which are clearly displayed prior to transaction confirmation.
+4.3 Technology Service Provider Role:
+The Platform operates purely as a Technology Service Provider (TSP) and SaaS facilitator, not as a bank, financial institution, or RBI-licensed Payment Aggregator. The Platform never holds, pools, or escrows student funds.
 
-4.4 Payment Disputes & Chargebacks:
-In the event of double debits, transaction timeouts, or banking gateway failures, funds are reconciled in accordance with Reserve Bank of India (RBI) and National Payments Corporation of India (NPCI) turnaround time (TAT) standards (typically 3 to 7 business days). Any billing dispute between a student and hostel owner must be raised through the IHMS Support & Complaints portal.`,
+4.4 Refund Liability & Invoicing:
+Disputes and refunds regarding base hostel fees must be addressed directly with hostel management. The Platform Convenience Fee is strictly non-refundable. Official digital payment receipts are generated automatically upon confirmation of payment.`,
     applicableTo: 'ALL',
     order: 4,
   },

@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { studentService } from './student.service';
+import { studentService, sanitizeStudentDisplayId } from './student.service';
 import { feeService } from '../fees/fee.service';
 import { feeReminderService } from '../fees/fee-reminder.service';
 import { queryOne, queryRows } from '../../config/database';
@@ -36,12 +36,18 @@ const handleGetProfile = async (req: Request, res: Response, next: NextFunction)
     const totalDemanded = Number(student.financial_total_demanded || 0);
     const totalPaid = Number(student.financial_total_paid || 0);
     const outstandingBalance = Number(student.financial_outstanding_balance || 0);
+    const rawCode = student.custom_id || student.customer_code || student.student_id || student.ihms_id;
+    const fallbackHostel = student.branch_code || 'IHMSAA0001';
+    const displayId = sanitizeStudentDisplayId(rawCode, fallbackHostel);
 
     const mapped = {
       id: student.id,
       _id: student.id,
-      studentId: student.student_id || student.customer_code,
-      customerCode: student.customer_code,
+      studentId: displayId,
+      customerCode: displayId,
+      customId: displayId,
+      ihmsId: displayId,
+      ihms_id: displayId,
       name: student.full_name,
       fullName: student.full_name,
       email: student.email,
@@ -56,7 +62,7 @@ const handleGetProfile = async (req: Request, res: Response, next: NextFunction)
       address: student.guardian_address || '',
       currentAssignment: student.room_id ? {
         branchId: student.hostel_id,
-        hostelCode: student.branch_code || 'HYD001',
+        hostelCode: student.branch_code || 'IHMSAA0001',
         roomId: student.room_id,
         roomNumber: student.room_number,
         roomCode: student.room_number,
@@ -129,10 +135,16 @@ router.patch('/profile', handleUpdateProfile);
 router.get('/room', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const student = await getAuthenticatedStudent(req);
+    const rawCode = student.custom_id || student.customer_code || student.student_id || student.ihms_id;
+    const fallbackHostel = student.branch_code || 'IHMSAA0001';
+    const displayId = sanitizeStudentDisplayId(rawCode, fallbackHostel);
 
     const roomData = {
-      studentId: student.student_id || student.customer_code,
-      customerCode: student.customer_code,
+      studentId: displayId,
+      customerCode: displayId,
+      customId: displayId,
+      ihmsId: displayId,
+      ihms_id: displayId,
       studentName: student.full_name,
       hostelName: student.hostel_name || 'Main Hostel',
       hostelId: student.hostel_id,
@@ -195,7 +207,16 @@ router.get('/payments', async (req: Request, res: Response, next: NextFunction) 
     sql += ` ORDER BY p.created_at DESC LIMIT ${Math.min(200, Math.max(1, Number(limit)))}`;
 
     const payments = await queryRows<any>(sql, params);
-    res.json({ success: true, data: payments });
+    const rawStudentCode = student.custom_id || student.customer_code || student.student_id || student.ihms_id;
+    const fallbackHostel = student.branch_code || 'IHMSAA0001';
+    const displayStudentId = sanitizeStudentDisplayId(rawStudentCode, fallbackHostel);
+
+    const mappedPayments = payments.map((p: any) => ({
+      ...p,
+      studentId: displayStudentId,
+      customerCode: displayStudentId,
+    }));
+    res.json({ success: true, data: mappedPayments });
   } catch (err) {
     next(err);
   }
@@ -216,26 +237,12 @@ router.get('/payment-config', async (req: Request, res: Response, next: NextFunc
   }
 });
 
-router.post('/payments/initiate', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const student = await getAuthenticatedStudent(req);
-    const { amount, installmentId, paymentMethod, idempotencyKey } = req.body;
-
-    const order = await feeService.initiatePayment(student.organization_id, student.id, {
-      amount: Number(amount),
-      installmentId,
-      paymentMethod,
-      idempotencyKey,
-    });
-
-    res.status(201).json({
-      success: true,
-      data: order,
-      message: 'Payment order created successfully.',
-    });
-  } catch (err) {
-    next(err);
-  }
+// DEPRECATED: Student payment initiation must use Cashfree Dynamic UPI QR checkout (/orders/create-upi-qr)
+router.post('/payments/initiate', (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    message: 'Legacy payment initiation is permanently deprecated. Fee checkout exclusively uses Cashfree Dynamic UPI QR via POST /api/orders/create-upi-qr.',
+  });
 });
 
 router.post('/payments/verify', async (req: Request, res: Response, next: NextFunction) => {

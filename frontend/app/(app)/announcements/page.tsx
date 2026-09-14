@@ -12,6 +12,7 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { SearchInput } from '@/components/ui/search-input';
 import { Button } from '@/components/ui/button';
+import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/dashboard/confirm-dialog';
@@ -240,7 +241,7 @@ function AnnouncementsPageContent() {
       finalLabel = r ? `Room ${r.roomNumber}` : `Room ${form.targetId}`;
     } else if (form.targetType === 'STUDENT') {
       const s = students.find((x) => x.id === form.targetId);
-      finalLabel = s ? `${s.name} (${s.customerCode || 'Resident'})` : 'Specific Student';
+      finalLabel = s ? `${s.name} (${formatStudentId(s.customerCode) || 'Resident'})` : 'Specific Student';
     }
 
     setSubmitting(true);
@@ -763,7 +764,7 @@ function AnnouncementsPageContent() {
                   <SelectContent className="bg-white border-[1.5px] border-[#CBD5E1] max-h-56">
                     {students.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
-                        {s.name} ({s.customerCode || 'Resident'}) {s.roomNumber ? `· Room ${s.roomNumber}` : ''}
+                        {s.name} ({formatStudentId(s.customerCode) || 'Resident'}) {s.roomNumber ? `· Room ${s.roomNumber}` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>

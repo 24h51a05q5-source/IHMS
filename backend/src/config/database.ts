@@ -93,6 +93,16 @@ export async function connectDatabase(): Promise<Pool> {
         return String(str).split(String(findStr)).join(String(replaceStr));
       },
     });
+    db.public.registerFunction({
+      name: 'lpad',
+      args: [DataType.text, DataType.integer, DataType.text],
+      returns: DataType.text,
+      implementation: (str: string, len: number, pad: string) => {
+        const s = String(str ?? '');
+        const p = String(pad ?? ' ');
+        return s.padStart(len, p);
+      },
+    });
     
     const pgAdapter = db.adapters.createPg();
     pool = new pgAdapter.Pool() as unknown as Pool;

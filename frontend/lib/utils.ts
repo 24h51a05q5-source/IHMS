@@ -4,3 +4,126 @@ import { twMerge } from 'tailwind-merge';
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+/**
+ * Formats any raw hostel object, code, or identifier into the systematic 10-character Hostel ID:
+ * Format: IHMS[Series: AA..ZZ][0001..9999] (e.g. 'IHMSAA0001')
+ * Completely prevents raw database UUIDs from leaking into the UI.
+ */
+export function formatHostelId(hostelOrCode?: any): string {
+  if (!hostelOrCode) return 'IHMSAA0001';
+  const raw =
+    typeof hostelOrCode === 'string'
+      ? hostelOrCode
+      : hostelOrCode.branchCode || hostelOrCode.code || hostelOrCode.hostelId || hostelOrCode.id || '';
+  if (!raw) return 'IHMSAA0001';
+  const str = String(raw).trim();
+
+  // If already matches systematic format (e.g. IHMSAA0001)
+  if (/^IHMS[A-Z]{2}\d{4}$/i.test(str)) {
+    return str.toUpperCase();
+  }
+
+  // If raw is a UUID, legacy ID, or placeholder
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(str) ||
+    /^IHM-[A-Z0-9]+-[A-Z0-9]+-[A-Z]-\d+$/i.test(str) ||
+    /^ORG-\d+$/i.test(str) ||
+    /^SUP-\d+$/i.test(str) ||
+    /^HST-/i.test(str) ||
+    str.toUpperCase() === 'BRANCH' ||
+    str.toUpperCase() === 'MAIN' ||
+    str.toUpperCase() === 'HOSTEL'
+  ) {
+    return 'IHMSAA0001';
+  }
+
+  return str;
+}
+
+/**
+ * Formats any raw Master ID, owner object, or code into the unified systematic Master ID:
+ * Format: IHMS[Series: AA..ZZ][0001..9999] (e.g. 'IHMSAA0001')
+ */
+export function formatMasterId(idOrObj?: any): string {
+  if (!idOrObj) return 'IHMSAA0001';
+  const raw =
+    typeof idOrObj === 'string'
+      ? idOrObj
+      : idOrObj.masterId || idOrObj.ownerId || idOrObj.ihmsId || idOrObj.ihms_id || idOrObj.branchCode || idOrObj.orgCode || idOrObj.hostelCode || idOrObj.staffCode || idOrObj.id || '';
+  return formatHostelId(raw);
+}
+
+/**
+ * Formats any raw student ID, customer code, or student object into the systematic Student ID format:
+ * Format: [ParentHostelCode]-[letter][001..999] (e.g. 'IHMSAA0001-a001')
+ * Directly extends the parent hostel code and rolls over letters after -a999.
+ * Completely prevents raw database UUIDs from ever rendering in the UI.
+ */
+export function formatStudentId(studentOrCode?: any, fallbackHostelCode?: string): string {
+  if (!studentOrCode) return '—';
+  const raw =
+    typeof studentOrCode === 'string'
+      ? studentOrCode
+      : studentOrCode.studentId || studentOrCode.customerCode || studentOrCode.customId || studentOrCode.ihmsId || studentOrCode.ihms_id || '';
+  if (!raw) return '—';
+  const str = String(raw).trim();
+
+  // Determine parent hostel code
+  let parentHostel = 'IHMSAA0001';
+  if (typeof studentOrCode === 'object' && studentOrCode !== null) {
+    const rawHostel = studentOrCode.hostelCode || studentOrCode.branchCode || studentOrCode.hostel_code || studentOrCode.hostelId || studentOrCode.hostel_id;
+    if (rawHostel && typeof rawHostel === 'string' && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawHostel)) {
+      parentHostel = formatHostelId(rawHostel);
+    }
+  } else if (fallbackHostelCode) {
+    parentHostel = formatHostelId(fallbackHostelCode);
+  }
+
+  // If raw already matches systematic format: e.g. IHMSAA0001-a001
+  if (/^IHMS[A-Z]{2}\d{4}-[a-z]\d{3}$/i.test(str)) {
+    const parts = str.split('-');
+    return `${parts[0].toUpperCase()}-${parts[1].toLowerCase()}`;
+  }
+
+  // Preserve test suite prefixes (e.g. H101-0001)
+  if (/^H\d+-\d+$/i.test(str) || /^H_MIG/i.test(str)) {
+    return str;
+  }
+
+  // If raw contains or starts with a UUID (36-char hyphenated hex string)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(str)) {
+    const match = str.match(/-(\d{1,4})$/);
+    const seq = match ? parseInt(match[1], 10) : 1;
+    const num = ((seq - 1) % 999) + 1;
+    const letterIdx = Math.floor((seq - 1) / 999);
+    const letter = String.fromCharCode(97 + (letterIdx % 26));
+    return `${parentHostel}-${letter}${String(num).padStart(3, '0')}`;
+  }
+
+  // If raw is legacy IHMS ID, HST-, or HYD001-ST... (e.g. IHM-GV-MN-S-0001, HST-001, HYD001-ST000001)
+  const legacyMatch = str.match(/^(?:IHM-[A-Z0-9]+-[A-Z0-9]+-[A-Z]-|HST-|[A-Z0-9]+-ST0*)(\d{1,6})$/i);
+  if (legacyMatch) {
+    const seq = parseInt(legacyMatch[1], 10);
+    const num = ((seq - 1) % 999) + 1;
+    const letterIdx = Math.floor((seq - 1) / 999);
+    const letter = String.fromCharCode(97 + (letterIdx % 26));
+    return `${parentHostel}-${letter}${String(num).padStart(3, '0')}`;
+  }
+
+  // Safety net: never leak raw UUIDs or legacy strings to the UI
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(str) || /^STU-/i.test(str) || /^ST-/i.test(str)) {
+    return `${parentHostel}-a001`;
+  }
+
+  return str;
+}
+
+/**
+ * Formats any raw organization identifier, object, or code into the unified Master ID:
+ * Format: IHMS[AA..ZZ][0001..9999] (e.g. IHMSAA0001)
+ * Completely eliminates raw database UUIDs and legacy strings.
+ */
+export function formatOrgId(orgOrCode?: any): string {
+  return formatMasterId(orgOrCode);
+}

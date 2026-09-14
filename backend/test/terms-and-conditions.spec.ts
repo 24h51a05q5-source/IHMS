@@ -331,5 +331,183 @@ describe('Terms & Conditions System — Strict Mandatory Enforcement & Audit Tra
     const hasStudentOnly = ownerSpoofRes.body.sections.some((s: any) => s.applicableTo === 'STUDENT');
     expect(hasStudentOnly).toBe(false);
   });
+
+  it('12. Phase 1 Student Legal Terms: MUST contain exact mandatory clauses for UPI, convenience fee, direct settlement, and refund policy', async () => {
+    const res = await request(app).get('/api/terms?role=STUDENT');
+    expect(res.status).toBe(200);
+    const allContent = res.body.sections.map((s: any) => s.content).join('\n\n');
+
+    // 1. Payment Method & Platform Convenience Fee
+    expect(allContent).toContain('Payment Method & Platform Convenience Fee:');
+    expect(allContent).toContain('All hostel fee payments facilitated through the Platform are processed exclusively via UPI.');
+    expect(allContent).toContain("nominal, non-refundable 'Platform Convenience Fee' applied at checkout");
+
+    // 2. Direct Settlement to Hostel
+    expect(allContent).toContain('Direct Settlement to Hostel:');
+    expect(allContent).toContain('The Platform acts solely as a technology facilitator and is not a payment aggregator, banking entity, or custodian of student funds.');
+    expect(allContent).toContain('The base hostel fee is routed directly and immediately to the verified bank account of the designated hostel owner.');
+    expect(allContent).toContain("The Platform does not hold, escrow, or retain any portion of the student's base hostel fee.");
+
+    // 3. Refund & Dispute Policy
+    expect(allContent).toContain('Refund & Dispute Policy:');
+    expect(allContent).toContain('Any disputes, chargebacks, or requests for refunds regarding the base hostel fee must be resolved directly between the Student and the Hostel Owner.');
+    expect(allContent).toContain('The Platform holds zero liability and possesses no technical mechanism to reverse settled transactions from a hostel owner\'s bank account.');
+    expect(allContent).toContain('The Platform Convenience Fee is non-refundable under all circumstances');
+  });
+
+  it('13. Phase 2 Owner Legal Terms: MUST contain exact mandatory clauses for TSP role, ₹0 deduction, mandatory KYC, and refund liability', async () => {
+    const res = await request(app).get('/api/terms?role=OWNER');
+    expect(res.status).toBe(200);
+    const allContent = res.body.sections.map((s: any) => s.content).join('\n\n');
+
+    // 1. Role of the Platform
+    expect(allContent).toContain('Role of the Platform:');
+    expect(allContent).toContain('The Platform provides software services to assist the Hostel Owner in managing hostel operations, bed allocations, and payment routing.');
+    expect(allContent).toContain('The Platform is purely a Technology Service Provider and SaaS facilitator, and is not a bank, financial institution, or Payment Aggregator as defined by the Reserve Bank of India (RBI).');
+
+    // 2. Zero Transaction Fee & Settlement Routing
+    expect(allContent).toContain('Zero Transaction Fee & Settlement Routing:');
+    expect(allContent).toContain('The Hostel Owner shall receive 100% of the base hostel fee set by the Owner. The Platform deducts ₹0 from this base fee.');
+    expect(allContent).toContain('Payment routing is facilitated via our Payment Gateway partner (Cashfree Payments). Digital convenience fees are borne exclusively by the paying student.');
+
+    // 3. Mandatory KYC & Compliance
+    expect(allContent).toContain('Mandatory KYC & Compliance:');
+    expect(allContent).toContain("To receive payments, the Hostel Owner must complete the 'Sub-Merchant' onboarding process (PAN/Bank Verification) directly with our Payment Gateway partner.");
+    expect(allContent).toContain('The Platform is not liable for delayed settlements resulting from failed KYC or invalid bank accounts.');
+
+    // 4. Refund Liability
+    expect(allContent).toContain('Refund Liability:');
+    expect(allContent).toContain('The Hostel Owner assumes full liability for refunding Students in the event of double payments, cancellations, or disputes.');
+    expect(allContent).toContain("The Platform cannot automatically reverse funds once settled into the Owner's bank account.");
+  });
+
+  it('14. Phase 3 Owner Registration Clickwrap: registering with agreeToTerms=true logs tc_accepted_at and terms_acceptances', async () => {
+    const ownerEmail = `clickwrap_owner_${Date.now()}@example.com`;
+    const regRes = await request(app)
+      .post('/api/auth/register')
+      .send({
+        ownerName: 'Sunita Reddy',
+        ownerEmail,
+        ownerPhone: '+91 9988776655',
+        ownerPassword: 'Password@123',
+        hostelName: 'Reddy Luxury Residency',
+        city: 'Hyderabad',
+        hostelType: 'GIRLS',
+        agreeToTerms: true,
+        termsAccepted: true,
+      });
+
+    expect(regRes.status).toBe(201);
+    const registeredUserId = regRes.body.user.id;
+
+    // Check users table tc_accepted_at
+    const userRow = await queryOne<any>(
+      'SELECT terms_accepted, accepted_terms_version, tc_accepted_at FROM users WHERE id = $1',
+      [registeredUserId]
+    );
+    expect(userRow.terms_accepted).toBe(true);
+    expect(userRow.accepted_terms_version).toBe(CURRENT_TERMS_VERSION);
+    expect(userRow.tc_accepted_at).not.toBeNull();
+
+    // Check owners table tc_accepted_at
+    const ownerRow = await queryOne<any>(
+      'SELECT tc_accepted_at FROM owners WHERE user_id = $1',
+      [registeredUserId]
+    );
+    expect(ownerRow.tc_accepted_at).not.toBeNull();
+
+    // Check terms_acceptances table
+    const auditRow = await queryOne<any>(
+      'SELECT * FROM terms_acceptances WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 1',
+      [registeredUserId]
+    );
+    expect(auditRow).toBeDefined();
+    expect(auditRow.role).toBe('OWNER');
+    expect(auditRow.terms_version).toBe(CURRENT_TERMS_VERSION);
+  });
+
+  it('15. Phase 3 Student Activation Clickwrap: agreeToTerms=false is rejected (400), and agreeToTerms=true logs tc_accepted_at in users and students', async () => {
+    const org = await queryOne<any>('SELECT id FROM organizations LIMIT 1');
+    const hostel = await queryOne<any>('SELECT id FROM hostels LIMIT 1');
+
+    // Create student record pending activation
+    const studentDbId = require('crypto').randomUUID();
+    const studentEmail = `activate_terms_${Date.now()}@example.com`;
+    const customerCode = `H102-9901`;
+
+    await query(
+      `INSERT INTO students (
+        id, student_id, customer_code, ihms_id, organization_id, hostel_id, full_name, email,
+        admission_date, portal_access, portal_access_approved, portal_status, activation_status, password_set, status
+      ) VALUES ($1, $2, $2, $2, $3, $4, 'Test Student Clickwrap', $5,
+        CURRENT_TIMESTAMP, false, true, 'PENDING', 'ACCOUNT_CREATED', false, 'ACTIVE')`,
+      [studentDbId, customerCode, org.id, hostel.id, studentEmail]
+    );
+
+    // Create an activation token in password_reset_tokens
+    const rawActivationToken = require('crypto').randomBytes(32).toString('hex');
+    const tokenHash = require('crypto').createHash('sha256').update(rawActivationToken).digest('hex');
+
+    await query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')`,
+      [require('crypto').randomUUID(), studentDbId, tokenHash]
+    );
+
+    // 1. Attempt activation with agreeToTerms=false -> MUST BE REJECTED WITH 400
+    const rejectRes = await request(app)
+      .post('/api/auth/activate-student-account')
+      .send({
+        activationToken: rawActivationToken,
+        newPassword: 'StudentPass@123',
+        confirmPassword: 'StudentPass@123',
+        agreeToTerms: false,
+      });
+
+    expect(rejectRes.status).toBe(400);
+    expect(rejectRes.body.success).toBe(false);
+    expect(rejectRes.body.message).toContain('Terms & Conditions');
+
+    // 2. Successful activation with agreeToTerms=true
+    const successRes = await request(app)
+      .post('/api/auth/activate-student-account')
+      .send({
+        activationToken: rawActivationToken,
+        newPassword: 'StudentPass@123',
+        confirmPassword: 'StudentPass@123',
+        agreeToTerms: true,
+      });
+
+    expect(successRes.status).toBe(200);
+    expect(successRes.body.success).toBe(true);
+    const activatedUserId = successRes.body.user.id;
+
+    // Verify tc_accepted_at on users table
+    const userRow = await queryOne<any>(
+      'SELECT terms_accepted, accepted_terms_version, tc_accepted_at FROM users WHERE id = $1',
+      [activatedUserId]
+    );
+    expect(userRow.terms_accepted).toBe(true);
+    expect(userRow.accepted_terms_version).toBe(CURRENT_TERMS_VERSION);
+    expect(userRow.tc_accepted_at).not.toBeNull();
+
+    // Verify tc_accepted_at on students table
+    const studentRow = await queryOne<any>(
+      'SELECT tc_accepted_at, activation_status, password_set FROM students WHERE id = $1',
+      [studentDbId]
+    );
+    expect(studentRow.tc_accepted_at).not.toBeNull();
+    expect(studentRow.activation_status).toBe('ACTIVATED');
+    expect(studentRow.password_set).toBe(true);
+
+    // Verify record in terms_acceptances
+    const auditRow = await queryOne<any>(
+      'SELECT * FROM terms_acceptances WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 1',
+      [activatedUserId]
+    );
+    expect(auditRow).toBeDefined();
+    expect(auditRow.role).toBe('STUDENT');
+    expect(auditRow.terms_version).toBe(CURRENT_TERMS_VERSION);
+  });
 });
 
