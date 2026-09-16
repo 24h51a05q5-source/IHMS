@@ -588,7 +588,7 @@ function LoginForm() {
                       type="text"
                       required
                       autoCapitalize="none"
-                      placeholder="e.g. IHM-AA-MN-H-0001 or owner@ihms.com"
+                      placeholder="e.g. IHMSAA0001 or owner@ihms.com"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
                       style={{ paddingLeft: '50px' }}
@@ -658,7 +658,7 @@ function LoginForm() {
                       required
                       autoCapitalize="none"
                       autoFocus
-                      placeholder="e.g. H102-0001 or student@email.com"
+                      placeholder="e.g. IHMSAA0001-a001 or student@email.com"
                       value={identifier}
                       onChange={(e) => {
                         setIdentifier(e.target.value);

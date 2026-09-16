@@ -891,6 +891,9 @@ export async function runMigrations(): Promise<void> {
     `ALTER TABLE students ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
     `ALTER TABLE owners ADD COLUMN IF NOT EXISTS ihms_id TEXT`,
+    `UPDATE students SET ihms_id = NULL WHERE ihms_id = ''`,
+    `UPDATE users SET ihms_id = NULL WHERE ihms_id = ''`,
+    `UPDATE owners SET ihms_id = NULL WHERE ihms_id = ''`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_students_ihms_id ON students(ihms_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ihms_id ON users(ihms_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_owners_ihms_id ON owners(ihms_id)`,
@@ -1002,45 +1005,143 @@ export async function runMigrations(): Promise<void> {
 
 export async function backfillIhmsIds(): Promise<void> {
   const { query } = require('./database');
-  const { generateIhmsId } = require('../common/utils/code-generator');
+  const { generateIhmsId, generateSystematicHostelCode } = require('../common/utils/code-generator');
 
   try {
-    // 1. Sync Students ihms_id with systematic custom_id
-    await query(`
-      UPDATE students
-      SET ihms_id = custom_id
-      WHERE (ihms_id IS NULL OR ihms_id = '' OR ihms_id NOT LIKE 'IHMS%')
-        AND custom_id LIKE 'IHMS%'
-    `);
+    // 1. Sync Students ihms_id with systematic custom_id safely
+    try {
+      await query(`
+        UPDATE students
+        SET ihms_id = custom_id
+        WHERE (ihms_id IS NULL OR ihms_id = '')
+          AND custom_id IS NOT NULL
+          AND custom_id != ''
+      `);
+    } catch (e: any) {
+      console.warn(`[Backfill] Note on student ihms_id sync: ${e.message}`);
+    }
 
-    // 2. Backfill Hostel Owners / Staff Users with systematic IHMSAA0001 IDs
+    // 2. Backfill Owners and Admins using systematic sequence (IHMSAA0001 -> IHMSAA9999 -> IHMSAB0001...)
+    const { formatHostelCode, parseHostelCodeSequence } = require('../common/utils/code-generator');
+
+    // Collect all existing systematic IDs already present in the database to prevent duplicate collisions
+    const usedSeqs = new Set<number>();
+    const markUsed = (val: any) => {
+      if (!val) return;
+      const str = String(val).trim();
+      if (/^IHMS[A-Z]{2}\d{4}$/i.test(str)) {
+        const s = parseHostelCodeSequence(str);
+        if (s > 0) usedSeqs.add(s);
+      }
+    };
+
+    try {
+      const uRes = await query(`SELECT user_id, ihms_id FROM users WHERE user_id LIKE 'IHMS%' OR ihms_id LIKE 'IHMS%'`);
+      for (const r of uRes.rows) {
+        markUsed(r.user_id);
+        markUsed(r.ihms_id);
+      }
+    } catch { }
+
+    try {
+      const oRes = await query(`SELECT ihms_id FROM owners WHERE ihms_id LIKE 'IHMS%'`);
+      for (const r of oRes.rows) markUsed(r.ihms_id);
+    } catch { }
+
+    try {
+      const hRes = await query(`SELECT branch_code, hostel_id FROM hostels WHERE branch_code LIKE 'IHMS%' OR hostel_id LIKE 'IHMS%'`);
+      for (const r of hRes.rows) {
+        markUsed(r.branch_code);
+        markUsed(r.hostel_id);
+      }
+    } catch { }
+
+    try {
+      const orgRes = await query(`SELECT org_code FROM organizations WHERE org_code LIKE 'IHMS%'`);
+      for (const r of orgRes.rows) markUsed(r.org_code);
+    } catch { }
+
+    let currentSeq = 1;
+    const getNextAvailableId = (): string => {
+      while (usedSeqs.has(currentSeq)) {
+        currentSeq++;
+      }
+      const code = formatHostelCode(currentSeq);
+      usedSeqs.add(currentSeq);
+      currentSeq++;
+      return code;
+    };
+
     const unmappedOwners = await query(`
-      SELECT u.id, u.organization_id, u.hostel_name, u.role,
-             h.branch_code as hostel_branch_code
+      SELECT u.id, u.user_id, u.email, u.name, u.role, u.organization_id, u.branch_id, u.ihms_id,
+             h.hostel_name, h.branch_code as hostel_branch_code
       FROM users u
-      LEFT JOIN hostels h ON (u.organization_id = h.organization_id OR u.branch_id = h.id)
-      WHERE (u.ihms_id IS NULL OR u.ihms_id = '' OR u.ihms_id NOT LIKE 'IHMS%')
-        AND u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN', 'ADMIN', 'OWNER')
+      LEFT JOIN hostels h ON (h.organization_id = u.organization_id OR h.id = u.branch_id)
+      WHERE u.role IN ('ORGANIZATION_OWNER', 'BRANCH_MANAGER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN', 'ADMIN', 'OWNER')
+        AND (u.ihms_id IS NULL OR u.ihms_id = '' OR (u.ihms_id NOT LIKE 'IHMS%' AND u.ihms_id NOT LIKE 'IHM-%'))
+      ORDER BY u.created_at ASC, u.id ASC
     `);
 
     for (const owner of unmappedOwners.rows) {
       try {
-        const systematicId = owner.hostel_branch_code && /^IHMS[A-Z]{2}\d{4}$/i.test(owner.hostel_branch_code)
-          ? owner.hostel_branch_code.toUpperCase()
-          : 'IHMSAA0001';
-        await query(`UPDATE users SET ihms_id = $1, user_id = $1, staff_code = $1 WHERE id = $2`, [systematicId, owner.id]);
-        await query(`UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`, [systematicId, owner.id]);
+        let systematicId: string;
+        const branchCode = String(owner.hostel_branch_code || '').trim();
+        const branchSeq = /^IHMS[A-Z]{2}\d{4}$/i.test(branchCode) ? parseHostelCodeSequence(branchCode) : 0;
+
+        if (branchSeq > 0 && !usedSeqs.has(branchSeq)) {
+          systematicId = branchCode.toUpperCase();
+          usedSeqs.add(branchSeq);
+        } else {
+          systematicId = getNextAvailableId();
+        }
+
+        // PRESERVE EXISTING VALID user_id!
+        const existingUserId = String(owner.user_id || '').trim();
+        if (existingUserId) {
+          // Existing valid user_id must remain unchanged!
+          await query(
+            `UPDATE users
+             SET ihms_id = $1,
+                 staff_code = CASE WHEN staff_code IS NULL OR staff_code = '' THEN $1 ELSE staff_code END
+             WHERE id = $2`,
+            [systematicId, owner.id]
+          );
+        } else {
+          // Only generate a new user_id when the current ID is actually missing/empty
+          await query(
+            `UPDATE users
+             SET ihms_id = $1,
+                 user_id = $1,
+                 staff_code = CASE WHEN staff_code IS NULL OR staff_code = '' THEN $1 ELSE staff_code END
+             WHERE id = $2`,
+            [systematicId, owner.id]
+          );
+        }
+
+        // Synchronize ihms_id with linked owner record if present
+        await query(
+          `UPDATE owners SET ihms_id = $1 WHERE user_id = $2 OR id = $2`,
+          [systematicId, owner.id]
+        );
+        if (existingUserId) {
+          await query(
+            `UPDATE owners SET ihms_id = $1 WHERE user_id = $2`,
+            [systematicId, existingUserId]
+          );
+        }
+
+        console.log(`[Backfill] Backfilled owner ${owner.id} with IHMS ID ${systematicId} (user_id preserved: ${existingUserId || systematicId})`);
       } catch (err: any) {
         console.warn(`[Backfill] Error backfilling owner ${owner.id}: ${err.message}`);
       }
     }
 
-    // 3. Backfill Rooms
+    // 4. Backfill Rooms
     const unmappedRooms = await query(`
       SELECT r.id, r.organization_id, r.hostel_id, h.name as hostel_name
       FROM rooms r
       LEFT JOIN hostels h ON r.hostel_id = h.id
-      WHERE r.room_code IS NULL OR r.room_code = '' OR r.room_code NOT LIKE 'IHM-%'
+      WHERE r.room_code IS NULL OR r.room_code = ''
     `);
 
     for (const rm of unmappedRooms.rows) {
@@ -1052,12 +1153,12 @@ export async function backfillIhmsIds(): Promise<void> {
       }
     }
 
-    // 4. Backfill Beds
+    // 5. Backfill Beds
     const unmappedBeds = await query(`
       SELECT b.id, b.organization_id, b.hostel_id, h.name as hostel_name
       FROM beds b
       LEFT JOIN hostels h ON b.hostel_id = h.id
-      WHERE b.bed_code IS NULL OR b.bed_code = '' OR b.bed_code NOT LIKE 'IHM-%'
+      WHERE b.bed_code IS NULL OR b.bed_code = ''
     `);
 
     for (const bd of unmappedBeds.rows) {
@@ -1080,14 +1181,33 @@ export async function backfillIhmsIds(): Promise<void> {
  */
 export async function migrateHostelCodes(): Promise<void> {
   try {
-    const { formatHostelCode } = require('../common/utils/code-generator');
+    const { formatHostelCode, parseHostelCodeSequence } = require('../common/utils/code-generator');
     const hostels = await query(`
       SELECT id, branch_code, hostel_id, name, created_at
       FROM hostels
       ORDER BY created_at ASC, id ASC
     `);
 
-    let seq = 1;
+    const usedSeqs = new Set<number>();
+    for (const h of hostels.rows) {
+      const code = String(h.branch_code || h.hostel_id || '').trim();
+      if (/^IHMS[A-Z]{2}\d{4}$/i.test(code)) {
+        const seq = parseHostelCodeSequence(code);
+        if (seq > 0) usedSeqs.add(seq);
+      }
+    }
+
+    let nextSeq = 1;
+    const getNextSeq = () => {
+      while (usedSeqs.has(nextSeq)) {
+        nextSeq++;
+      }
+      const val = nextSeq;
+      usedSeqs.add(val);
+      nextSeq++;
+      return val;
+    };
+
     for (const h of hostels.rows) {
       const code = String(h.branch_code || h.hostel_id || '').trim();
       const isSystematic = /^IHMS[A-Z]{2}\d{4}$/i.test(code);
@@ -1096,14 +1216,12 @@ export async function migrateHostelCodes(): Promise<void> {
         if (/^H\d+/i.test(code) || /^H_MIG/i.test(code)) {
           continue;
         }
-        const systematicCode = formatHostelCode(seq);
+        const assignedSeq = getNextSeq();
+        const systematicCode = formatHostelCode(assignedSeq);
         await query(
           `UPDATE hostels SET branch_code = $1, hostel_id = $1 WHERE id = $2`,
           [systematicCode, h.id]
         );
-        seq++;
-      } else {
-        seq++;
       }
     }
   } catch (err: any) {
@@ -1226,15 +1344,15 @@ export async function migrateStudentCustomIds(): Promise<void> {
           const cleanId = redisService.formatStudentId(prefix, assignedNum);
           await query(
             `UPDATE students
-             SET custom_id = $1, customer_code = $1, student_id = $1, ihms_id = $1
-             WHERE id = $2`,
+             SET custom_id = $1::varchar, customer_code = $1::text, student_id = $1::text, ihms_id = $1::text
+             WHERE id = $2::text`,
             [cleanId, stu.id]
           );
 
           try {
-            await query(`UPDATE beds SET current_customer_code = $1 WHERE current_student_id = $2`, [cleanId, stu.id]);
-            await query(`UPDATE fee_demands SET customer_code = $1 WHERE student_id = $2`, [cleanId, stu.id]);
-            await query(`UPDATE users SET customer_code = $1, student_id = $1, ihms_id = $1 WHERE student_id = $2 OR id = $2`, [cleanId, stu.id]);
+            await query(`UPDATE beds SET current_customer_code = $1::text WHERE current_student_id = $2::text`, [cleanId, stu.id]);
+            await query(`UPDATE fee_demands SET customer_code = $1::text WHERE student_id = $2::text`, [cleanId, stu.id]);
+            await query(`UPDATE users SET customer_code = $1::text, student_id = $1::text, ihms_id = $1::text WHERE student_id = $2::text OR id = $2::text`, [cleanId, stu.id]);
           } catch {
             /* ignore foreign table update errors if tables don't exist yet */
           }

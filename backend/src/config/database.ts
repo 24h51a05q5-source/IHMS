@@ -103,6 +103,18 @@ export async function connectDatabase(): Promise<Pool> {
         return s.padStart(len, p);
       },
     });
+    db.public.registerFunction({
+      name: 'nullif',
+      args: [DataType.text, DataType.text],
+      returns: DataType.text,
+      implementation: (a: string, b: string) => (a === b ? null : a),
+    });
+    db.public.registerFunction({
+      name: 'trim',
+      args: [DataType.text],
+      returns: DataType.text,
+      implementation: (str: string) => (str === null || str === undefined ? null : String(str).trim()),
+    });
     
     const pgAdapter = db.adapters.createPg();
     pool = new pgAdapter.Pool() as unknown as Pool;
