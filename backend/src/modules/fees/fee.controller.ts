@@ -11,8 +11,46 @@ import { AppError } from '../../common/filters/http-exception.filter';
 const router = Router();
 
 // 1. Cashfree Webhook Listener (Cryptographically verified via HMAC-SHA256 signature)
+const handleWebhookProbe = (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    status: 'ACTIVE',
+    service: 'IHMS ERP Cashfree Webhook Gateway',
+    message: 'Cashfree Webhook receiver endpoint is operational and ready to accept event notifications.',
+    timestamp: new Date().toISOString(),
+  });
+};
+
 const handleCashfreeWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const signature = String(
+      req.headers['x-webhook-signature'] ||
+      req.headers['signature'] ||
+      ''
+    );
+    const timestamp = String(
+      req.headers['x-webhook-timestamp'] ||
+      ''
+    );
+
+    // Cashfree Dashboard "Test & Add" or test verification payload detection
+    const isTestWebhook =
+      req.body?.type === 'TEST_WEBHOOK' ||
+      req.body?.event === 'TEST' ||
+      req.body?.eventType === 'TEST_WEBHOOK' ||
+      req.body?.data?.order_id === 'TEST_ORDER' ||
+      req.body?.order_id === 'TEST_ORDER' ||
+      (!signature && typeof req.body === 'object' && Object.keys(req.body).length === 0);
+
+    if (isTestWebhook) {
+      return res.status(200).json({
+        success: true,
+        status: 'ACTIVE',
+        message: 'Cashfree test webhook ping verified successfully.',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // Production IP whitelisting validation (enabled when CASHFREE_ENFORCE_IP_WHITELIST=true)
     if (process.env.CASHFREE_ENFORCE_IP_WHITELIST === 'true') {
       const clientIp = (
@@ -41,15 +79,6 @@ const handleCashfreeWebhook = async (req: Request, res: Response, next: NextFunc
       }
     }
 
-    const signature = String(
-      req.headers['x-webhook-signature'] ||
-      req.headers['signature'] ||
-      ''
-    );
-    const timestamp = String(
-      req.headers['x-webhook-timestamp'] ||
-      ''
-    );
     const rawBody = (req as any).rawBody || JSON.stringify(req.body);
     const result = await feeService.processCashfreeWebhook(rawBody, signature, timestamp, req.body);
     res.json(result);
@@ -58,8 +87,14 @@ const handleCashfreeWebhook = async (req: Request, res: Response, next: NextFunc
   }
 };
 
-router.post('/webhooks/cashfree', handleCashfreeWebhook);
-router.post('/payments/webhooks/cashfree', handleCashfreeWebhook);
+// Cashfree Webhook Probe Endpoints (Supports GET, HEAD, OPTIONS for dashboard health verification)
+router.get(['/webhooks/cashfree', '/payments/webhooks/cashfree', '/webhooks', '/cashfree'], handleWebhookProbe);
+router.head(['/webhooks/cashfree', '/payments/webhooks/cashfree', '/webhooks', '/cashfree'], handleWebhookProbe);
+router.options(['/webhooks/cashfree', '/payments/webhooks/cashfree', '/webhooks', '/cashfree'], (_req: Request, res: Response) => {
+  res.status(200).end();
+});
+
+router.post(['/webhooks/cashfree', '/payments/webhooks/cashfree', '/webhooks', '/cashfree'], handleCashfreeWebhook);
 
 // Phase 0: Deprecate legacy gateway webhooks
 const handleDeprecatedWebhook = (_req: Request, res: Response) => {
@@ -810,7 +845,20 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
   }
 };
 
-router.post(['/orders/create-upi-qr', '/create-upi-qr', '/payments/dynamic-qr', '/dynamic-qr', '/orders/create', '/orders', '/create'], verifyHostelActive, handleCreateCashfreeUpiQr);
+router.post(
+  [
+    '/orders/create-upi-qr',
+    '/create-upi-qr',
+    '/payments/create-upi-qr',
+    '/payments/dynamic-qr',
+    '/dynamic-qr',
+    '/orders/create',
+    '/orders',
+    '/create',
+  ],
+  verifyHostelActive,
+  handleCreateCashfreeUpiQr
+);
 
 // GET /payments/:id/status (Verified server-side status check with expiry check)
 router.get('/payments/:id/status', async (req: Request, res: Response, next: NextFunction) => {

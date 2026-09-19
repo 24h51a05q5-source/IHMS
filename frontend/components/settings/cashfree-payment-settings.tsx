@@ -54,11 +54,21 @@ export function CashfreePaymentSettings({ showHeader = false }: CashfreePaymentS
   const [loadingCashfreeStatus, setLoadingCashfreeStatus] = useState(false);
   const [generatingOnboardingLink, setGeneratingOnboardingLink] = useState(false);
 
-  const [webhookUrl, setWebhookUrl] = useState('/api/webhooks/cashfree');
+  const [webhookUrl, setWebhookUrl] = useState('');
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      setWebhookUrl(`${window.location.origin}/api/webhooks/cashfree`);
+      const apiEnv = process.env.NEXT_PUBLIC_API_URL;
+      if (apiEnv && (apiEnv.startsWith('http://') || apiEnv.startsWith('https://'))) {
+        const cleanBase = apiEnv.replace(/\/$/, '');
+        const target = cleanBase.endsWith('/api')
+          ? `${cleanBase}/webhooks/cashfree`
+          : `${cleanBase}/api/webhooks/cashfree`;
+        setWebhookUrl(target);
+      } else {
+        // Default local backend fallback
+        setWebhookUrl('http://localhost:5000/api/webhooks/cashfree');
+      }
     }
   }, []);
 

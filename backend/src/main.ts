@@ -166,6 +166,14 @@ app.use('/api/webhooks/cashfree', (req, res, next) => {
   req.url = '/webhooks/cashfree';
   feeRouter(req, res, next);
 });
+app.use('/webhooks', (req, res, next) => {
+  req.url = '/webhooks' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+app.use('/api/webhooks', (req, res, next) => {
+  req.url = '/webhooks' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
 
 app.use('/orders', (req, res, next) => {
   req.url = '/orders' + (req.url === '/' ? '' : req.url);
@@ -173,6 +181,26 @@ app.use('/orders', (req, res, next) => {
 });
 app.use('/api/orders', (req, res, next) => {
   req.url = '/orders' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+
+// Direct Dynamic UPI QR Mounts (supports both /create-upi-qr and /api/create-upi-qr)
+app.use('/create-upi-qr', (req, res, next) => {
+  req.url = '/create-upi-qr';
+  feeRouter(req, res, next);
+});
+app.use('/api/create-upi-qr', (req, res, next) => {
+  req.url = '/create-upi-qr';
+  feeRouter(req, res, next);
+});
+
+// Direct Status Check Mounts
+app.use('/status', (req, res, next) => {
+  req.url = '/orders/status';
+  feeRouter(req, res, next);
+});
+app.use('/api/status', (req, res, next) => {
+  req.url = '/orders/status';
   feeRouter(req, res, next);
 });
 
