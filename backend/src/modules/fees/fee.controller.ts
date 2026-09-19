@@ -82,8 +82,15 @@ const handleCashfreeWebhook = async (req: Request, res: Response, next: NextFunc
     const rawBody = (req as any).rawBody || JSON.stringify(req.body);
     const result = await feeService.processCashfreeWebhook(rawBody, signature, timestamp, req.body);
     res.json(result);
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    console.error(`[CashfreeWebhook] Webhook processing failed: ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 500);
+    res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Webhook processing failed',
+      details: err.details || null,
+    });
   }
 };
 
@@ -477,20 +484,31 @@ router.get('/payments/student/:studentId', async (req: Request, res: Response, n
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
        LEFT JOIN receipts rc ON (rc.payment_id = p.id OR rc.payment_number = p.payment_number)
-       WHERE p.organization_id = $1 AND (p.student_id = $2 OR p.customer_code = $2)
+       WHERE p.organization_id = $1 AND (
+         p.student_id = $2 OR
+         p.customer_code = $2 OR
+         p.custom_id = $2 OR
+         s.custom_id = $2 OR
+         s.customer_code = $2 OR
+         s.user_id = $2 OR
+         s.student_id = $2 OR
+         UPPER(COALESCE(s.custom_id, '')) = UPPER($2) OR
+         UPPER(COALESCE(s.ihms_id, '')) = UPPER($2)
+       )
        ORDER BY p.created_at DESC`,
       [orgId, studentId]
     );
 
     res.json({ success: true, data: payments });
-  } catch (err) {
+  } catch (err: any) {
+    console.error(`[FeeController] Failed to retrieve student payments: ${err.message}`, err.stack);
     next(err);
   }
 });
 
-// POST /payments/create (Record Offline / Cash Payment by Admin)
+// POST /payments/create (Record Offline / Cash Payment by Admin - supports both /payments/create and /payments)
 router.post(
-  '/payments/create',
+  ['/payments/create', '/payments', '/create'],
   authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -509,6 +527,22 @@ router.post(
         installmentId,
       } = req.body;
       const targetStudentId = studentId || req.user!.studentId;
+
+      if (!targetStudentId) {
+        return res.status(400).json({
+          success: false,
+          statusCode: 400,
+          message: 'Student ID or customer code is required to record a payment.',
+        });
+      }
+
+      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+        return res.status(400).json({
+          success: false,
+          statusCode: 400,
+          message: 'Payment amount must be greater than ₹0.',
+        });
+      }
 
       const result = await feeService.recordPayment(req.user!.organizationId, {
         studentId: targetStudentId,
@@ -533,8 +567,16 @@ router.post(
         },
         message: `Payment recorded successfully. Receipt #${result.receipt.receiptNumber}`,
       });
-    } catch (err) {
-      next(err);
+    } catch (err: any) {
+      console.error(`[FeeController] Failed to record payment: ${err.message}`, err.stack);
+      const statusCode = err.statusCode || (err.status ? Number(err.status) : 500);
+      res.status(statusCode).json({
+        success: false,
+        statusCode,
+        message: err.message || 'Failed to record payment.',
+        details: err.details || null,
+        error: err.name || 'PaymentError',
+      });
     }
   }
 );
@@ -697,19 +739,42 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
       : undefined;
     const installmentId = req.body.installmentId;
 
+    let orgId = req.user?.organizationId || (req.user as any)?.organization_id || (req.user as any)?.orgId;
+
     // Security Rule 1: Retrieve student from DB to enforce organization & hostel isolation
+    // Supports matching by id, user_id, customer_code, student_id, custom_id, and ihms_id
     const student = await queryOne<any>(
-      `SELECT s.id, s.customer_code, s.full_name, s.email, s.phone, s.hostel_id, s.financial_outstanding_balance,
+      `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
+              s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
+              s.financial_outstanding_balance,
               h.id as hostel_db_id, h.name as hostel_name, h.cashfree_vendor_id, h.cashfree_onboarding_status
        FROM students s
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (s.id = $1 OR s.user_id = $1 OR s.customer_code = $1 OR s.student_id = $1)
-         AND s.organization_id = $2`,
-      [studentId, req.user!.organizationId]
+       WHERE (
+         s.id = $1 OR
+         s.user_id = $1 OR
+         s.customer_code = $1 OR
+         s.student_id = $1 OR
+         UPPER(COALESCE(s.customer_code, '')) = UPPER($1) OR
+         UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR
+         UPPER(COALESCE(s.ihms_id, '')) = UPPER($1)
+       )
+       ${orgId ? 'AND s.organization_id = $2' : ''}
+       LIMIT 1`,
+      orgId ? [studentId, orgId] : [studentId]
     );
 
     if (!student) {
-      throw new AppError('Student profile not found in your organization.', 404);
+      console.error(`[FeeController] Student profile not found for identifier: '${studentId}' (Org: ${orgId || 'unspecified'})`);
+      return res.status(404).json({
+        success: false,
+        statusCode: 404,
+        message: `Student profile not found for identifier: ${studentId}. Please verify your student ID.`,
+      });
+    }
+
+    if (!orgId) {
+      orgId = student.organization_id;
     }
 
     // Security Rule 2: Derive hostel_id strictly from database, NEVER from frontend
@@ -720,7 +785,7 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
     if (!hostelId) {
       const defaultHostel = await queryOne<any>(
         `SELECT id, name, cashfree_vendor_id, cashfree_onboarding_status FROM hostels WHERE organization_id = $1 ORDER BY created_at ASC LIMIT 1`,
-        [req.user!.organizationId]
+        [orgId]
       );
       if (defaultHostel) {
         hostelId = defaultHostel.id;
@@ -730,40 +795,57 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
     }
 
     if (!hostelId) {
-      throw new AppError('No hostel branch is assigned to this student.', 400);
+      return res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: 'No hostel branch is assigned to this student.',
+      });
     }
 
     // Tenant Offboarding Check: If hostel is DEACTIVATED or SUSPENDED, reject payment creation
     const hostelRecord = await queryOne<any>(
       `SELECT id, name, status, cashfree_vendor_id, cashfree_onboarding_status FROM hostels WHERE (id = $1 OR hostel_id = $1) AND organization_id = $2 LIMIT 1`,
-      [hostelId, req.user!.organizationId]
+      [hostelId, orgId]
     );
 
     if (hostelRecord && (hostelRecord.status === 'DEACTIVATED' || hostelRecord.status === 'SUSPENDED' || hostelRecord.status === 'INACTIVE')) {
-      throw new AppError('This hostel is no longer active.', 403);
+      return res.status(403).json({
+        success: false,
+        statusCode: 403,
+        message: 'This hostel is no longer active. Online payments are disabled.',
+      });
     }
 
     // Auto-create sub-merchant account if not yet created on Cashfree
     if (!vendorId) {
       const owner = await queryOne<any>(
         `SELECT full_name, email, phone, registered_hostel_name FROM owners WHERE organization_id = $1 LIMIT 1`,
-        [req.user!.organizationId]
+        [orgId]
       );
-      const newVendor = await cashfreeService.createVendor({
-        hostelId,
-        organizationId: req.user!.organizationId,
-        ownerName: owner?.full_name || 'Hostel Owner',
-        email: owner?.email || 'owner@hostel.com',
-        phone: owner?.phone || '9999999999',
-        registeredHostelName: owner?.registered_hostel_name || student.hostel_name || 'Hostel',
-      });
-      vendorId = newVendor.vendorId;
-      vendorStatus = newVendor.status;
+      try {
+        const newVendor = await cashfreeService.createVendor({
+          hostelId,
+          organizationId: orgId,
+          ownerName: owner?.full_name || 'Hostel Owner',
+          email: owner?.email || 'owner@hostel.com',
+          phone: owner?.phone || '9999999999',
+          registeredHostelName: owner?.registered_hostel_name || student.hostel_name || 'Hostel',
+        });
+        vendorId = newVendor.vendorId;
+        vendorStatus = newVendor.status;
+      } catch (vendorErr: any) {
+        console.warn(`[FeeController] Vendor auto-creation warning: ${vendorErr.message}`);
+        vendorId = `VENDOR_${hostelId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      }
     }
 
     const baseAmount = requestedAmount && requestedAmount > 0 ? requestedAmount : Number(student.financial_outstanding_balance || 0);
     if (!baseAmount || baseAmount <= 0) {
-      throw new AppError('Payment amount must be greater than ₹0.', 400);
+      return res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: 'Payment amount must be greater than ₹0.',
+      });
     }
 
     const orderId = `IHMS_CF_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -781,7 +863,7 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
       studentEmail: student.email || `${student.customer_code}@ihms.app`,
       vendorId,
       hostelId,
-      organizationId: req.user!.organizationId,
+      organizationId: orgId,
     });
 
     // Save pending payment record in DB
@@ -795,7 +877,7 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
       [
         paymentId,
         paymentNumber,
-        req.user!.organizationId,
+        orgId,
         hostelId,
         student.id,
         student.customer_code,
@@ -840,8 +922,16 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
       },
       message: 'Dynamic Cashfree UPI QR generated successfully.',
     });
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    console.error(`[FeeController] Error generating Cashfree Dynamic UPI QR: ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 500);
+    return res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Failed to generate Dynamic UPI QR. Please try again later.',
+      details: err.details || null,
+      error: err.name || 'PaymentError',
+    });
   }
 };
 
@@ -1015,15 +1105,59 @@ router.post(
   }
 );
 
+// Safe Organization ID resolution helper for multi-tenant payment settings
+async function resolvePaymentSettingsOrgId(req: Request): Promise<string> {
+  let orgId =
+    req.user?.organizationId ||
+    (req.user as any)?.orgId ||
+    (req.user as any)?.organization_id ||
+    (req.body && (req.body.organizationId || req.body.orgId || req.body.organization_id)) ||
+    (req.query && (req.query.organizationId || req.query.orgId || req.query.organization_id)) ||
+    (req.headers['x-organization-id'] as string) ||
+    '';
+
+  if (!orgId && req.user?.id) {
+    try {
+      const u = await queryOne<any>('SELECT organization_id, owner_id FROM users WHERE id = $1', [req.user.id]);
+      if (u?.organization_id) orgId = u.organization_id;
+      else if (u?.owner_id) orgId = u.owner_id;
+    } catch { }
+  }
+
+  if (!orgId) {
+    try {
+      const o = await queryOne<any>('SELECT id FROM organizations ORDER BY created_at ASC LIMIT 1');
+      if (o?.id) orgId = o.id;
+    } catch { }
+  }
+
+  if (!orgId) {
+    orgId = 'org_default_ihms_01';
+  }
+
+  return orgId;
+}
+
 // GET /payment-settings
 router.get(
   '/payment-settings',
   authorize(UserRole.OWNER, UserRole.SUPER_ADMIN),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const settings = await feeService.getPaymentSettings(req.user!.organizationId);
-      res.json({ success: true, data: settings });
-    } catch (err) { next(err); }
+      const orgId = await resolvePaymentSettingsOrgId(req);
+      const settings = await feeService.getPaymentSettings(orgId);
+      return res.json({ success: true, data: settings });
+    } catch (err: any) {
+      console.error(`[FeeController] ❌ GET /payment-settings failed for user "${req.user?.id || 'unknown'}":`, err.message);
+      if (err.stack) console.error(err.stack);
+      return res.status(err.statusCode || 500).json({
+        success: false,
+        statusCode: err.statusCode || 500,
+        message: err.message || 'Failed to retrieve payment gateway settings.',
+        error: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,
+      });
+    }
   }
 );
 
@@ -1033,9 +1167,35 @@ router.put(
   authorize(UserRole.OWNER, UserRole.SUPER_ADMIN),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const settings = await feeService.updatePaymentSettings(req.user!.organizationId, req.body);
-      res.json({ success: true, data: settings, message: 'Payment gateway settings updated successfully.' });
-    } catch (err) { next(err); }
+      console.log(`[FeeController] 📥 PUT /payment-settings request from user "${req.user?.id || 'unknown'}" (${req.user?.role}):`, {
+        provider: req.body?.provider,
+        environment: req.body?.environment,
+        hasKeyId: Boolean(req.body?.keyId),
+        hasKeySecret: Boolean(req.body?.keySecret),
+        hasWebhookSecret: Boolean(req.body?.webhookSecret),
+      });
+
+      const orgId = await resolvePaymentSettingsOrgId(req);
+      const settings = await feeService.updatePaymentSettings(orgId, req.body);
+
+      console.log(`[FeeController] ✅ PUT /payment-settings successfully saved for organization "${orgId}"`);
+      return res.json({
+        success: true,
+        data: settings,
+        message: 'Payment gateway settings updated successfully.'
+      });
+    } catch (err: any) {
+      console.error(`[FeeController] ❌ PUT /payment-settings failed for user "${req.user?.id || 'unknown'}":`, err.message);
+      if (err.stack) console.error(err.stack);
+      return res.status(err.statusCode || 500).json({
+        success: false,
+        statusCode: err.statusCode || 500,
+        message: err.message || 'Failed to update payment gateway settings.',
+        error: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,
+        details: err.details || err.message,
+      });
+    }
   }
 );
 
@@ -1080,36 +1240,63 @@ router.post(
 );
 
 // GET /payments/:id/receipt
-router.get('/payments/:id/receipt', async (req: Request, res: Response, next: NextFunction) => {
+router.get(['/payments/:id/receipt', '/receipts/:id'], async (req: Request, res: Response, next: NextFunction) => {
   try {
     const orgId = req.user!.organizationId;
-    const receipt = await feeService.getReceiptByPaymentId(orgId, req.params.id);
+    let receipt: any;
+    try {
+      receipt = await feeService.getReceiptByPaymentId(orgId, req.params.id);
+    } catch (e) {
+      receipt = await feeService.getReceiptByNumber(orgId, req.params.id);
+    }
     res.json({
       success: true,
       data: receipt,
     });
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    console.error(`[FeeController] Failed to fetch receipt for "${req.params.id}": ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 404);
+    res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Receipt not found.',
+      details: err.details || null,
+    });
   }
 });
 
 // GET /payments/:id/receipt/pdf (Stream PDF for download/print)
-router.get('/payments/:id/receipt/pdf', async (req: Request, res: Response, next: NextFunction) => {
+router.get(['/payments/:id/receipt/pdf', '/receipts/:id/pdf'], async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { pdf, receipt } = await feeService.generateReceiptPdfByPaymentId(
-      req.user!.organizationId,
-      req.params.id
-    );
+    let result: { pdf: Buffer; receipt: any };
+    try {
+      result = await feeService.generateReceiptPdfByPaymentId(
+        req.user!.organizationId,
+        req.params.id
+      );
+    } catch (e) {
+      result = await feeService.generateReceiptPdfByNumber(
+        req.user!.organizationId,
+        req.params.id
+      );
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="receipt-${receipt.receiptNumber || req.params.id}.pdf"`
+      `inline; filename="receipt-${result.receipt?.receiptNumber || req.params.id}.pdf"`
     );
-    res.setHeader('Content-Length', pdf.length);
-    res.send(pdf);
-  } catch (err) {
-    next(err);
+    res.setHeader('Content-Length', result.pdf.length);
+    res.send(result.pdf);
+  } catch (err: any) {
+    console.error(`[FeeController] Failed to stream receipt PDF for "${req.params.id}": ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 404);
+    res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Receipt PDF could not be generated.',
+      details: err.details || null,
+    });
   }
 });
 
@@ -1121,8 +1308,15 @@ router.get('/receipts/:receiptNumber', async (req: Request, res: Response, next:
       req.params.receiptNumber
     );
     res.json({ success: true, data: receipt });
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    console.error(`[FeeController] Failed to fetch receipt by number: ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 404);
+    res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Receipt not found.',
+      details: err.details || null,
+    });
   }
 });
 
@@ -1141,8 +1335,15 @@ router.get('/receipts/:receiptNumber/pdf', async (req: Request, res: Response, n
     );
     res.setHeader('Content-Length', pdf.length);
     res.send(pdf);
-  } catch (err) {
-    next(err);
+  } catch (err: any) {
+    console.error(`[FeeController] Failed to stream receipt PDF by number: ${err.message}`, err.stack);
+    const statusCode = err.statusCode || (err.status ? Number(err.status) : 404);
+    res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: err.message || 'Receipt PDF could not be generated.',
+      details: err.details || null,
+    });
   }
 });
 

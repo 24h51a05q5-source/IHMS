@@ -44,7 +44,21 @@ app.use(helmet({
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-webhook-signature', 'x-webhook-timestamp', 'x-client-id', 'x-client-secret', 'x-api-version', 'signature'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'Origin',
+    'X-Requested-With',
+    'x-organization-id',
+    'x-request-id',
+    'x-webhook-signature',
+    'x-webhook-timestamp',
+    'x-client-id',
+    'x-client-secret',
+    'x-api-version',
+    'signature',
+  ],
 }));
 
 // Multi-instance identification header
@@ -210,6 +224,16 @@ app.use('/receipts', (req, res, next) => {
 });
 app.use('/api/receipts', (req, res, next) => {
   req.url = '/receipts' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+
+// Direct Payment Settings Mounts
+app.use('/payment-settings', (req, res, next) => {
+  req.url = '/payment-settings' + (req.url === '/' ? '' : req.url);
+  feeRouter(req, res, next);
+});
+app.use('/api/payment-settings', (req, res, next) => {
+  req.url = '/payment-settings' + (req.url === '/' ? '' : req.url);
   feeRouter(req, res, next);
 });
 

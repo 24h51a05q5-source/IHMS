@@ -41,7 +41,13 @@ export function errorHandler(
   } else if (statusCode === 404 && !err.message) {
     message = 'Requested resource not found.';
   } else if (statusCode === 500) {
-    message = 'Something went wrong on our side. Please try again later.';
+    if (err instanceof AppError && err.message) {
+      message = err.message;
+    } else if (process.env.NODE_ENV !== 'production' && err.message) {
+      message = err.message;
+    } else {
+      message = 'Something went wrong on our side. Please try again later.';
+    }
   }
 
   // Developer logging on server console
@@ -56,7 +62,8 @@ export function errorHandler(
     statusCode,
     code: err.code || (err.details && err.details.code) || undefined,
     message,
-    details: err.details || null,
+    error: err.name || 'Error',
+    details: err.details || (process.env.NODE_ENV !== 'production' ? err.message : null),
     timestamp,
     path: req.originalUrl,
   });

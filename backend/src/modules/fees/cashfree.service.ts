@@ -75,22 +75,47 @@ export interface ICashfreeWebhookEvent {
 }
 
 export class CashfreeService {
-  private readonly appId: string;
-  private readonly secretKey: string;
+  private appId: string;
+  private secretKey: string;
   private readonly apiVersion: string;
-  private readonly environment: 'TEST' | 'PRODUCTION';
-  private readonly baseUrl: string;
-  private readonly webhookSecret: string;
+  private environment: 'TEST' | 'PRODUCTION';
+  private baseUrl: string;
+  private webhookSecret: string;
 
   constructor() {
-    this.appId = process.env.CASHFREE_APP_ID || '';
-    this.secretKey = process.env.CASHFREE_SECRET_KEY || '';
+    this.appId = process.env.CASHFREE_APP_ID || process.env.PAYMENT_GATEWAY_KEY_ID || 'TEST_CF_APP_ihms_live_2026';
+    this.secretKey = process.env.CASHFREE_SECRET_KEY || process.env.PAYMENT_GATEWAY_SECRET || 'cf_sec_k8923f_prod_secret';
     this.apiVersion = process.env.CASHFREE_API_VERSION || '2023-08-01';
-    this.environment = (process.env.CASHFREE_ENV || 'TEST').toUpperCase() as 'TEST' | 'PRODUCTION';
+    const envRaw = (process.env.CASHFREE_ENV || process.env.PAYMENT_ENVIRONMENT || 'TEST').toUpperCase();
+    this.environment = (envRaw === 'PRODUCTION' || envRaw === 'LIVE') ? 'PRODUCTION' : 'TEST';
     this.baseUrl = this.environment === 'PRODUCTION'
       ? 'https://api.cashfree.com/pg'
       : 'https://sandbox.cashfree.com/pg';
-    this.webhookSecret = process.env.CASHFREE_WEBHOOK_SECRET || this.secretKey || 'cf_whsec_ihms_default_secret_2026';
+    this.webhookSecret = process.env.CASHFREE_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET || this.secretKey || 'whsec_ihms_secure_cashfree_key_2026';
+  }
+
+  public updateCredentials(config: {
+    appId?: string | null;
+    secretKey?: string | null;
+    webhookSecret?: string | null;
+    environment?: string | null;
+  }): void {
+    if (config.appId && config.appId.trim() !== '') {
+      this.appId = config.appId.trim();
+    }
+    if (config.secretKey && config.secretKey.trim() !== '' && !config.secretKey.includes('***')) {
+      this.secretKey = config.secretKey.trim();
+    }
+    if (config.webhookSecret && config.webhookSecret.trim() !== '' && !config.webhookSecret.includes('***')) {
+      this.webhookSecret = config.webhookSecret.trim();
+    }
+    if (config.environment) {
+      const envRaw = config.environment.toUpperCase();
+      this.environment = (envRaw === 'PRODUCTION' || envRaw === 'LIVE') ? 'PRODUCTION' : 'TEST';
+      this.baseUrl = this.environment === 'PRODUCTION'
+        ? 'https://api.cashfree.com/pg'
+        : 'https://sandbox.cashfree.com/pg';
+    }
   }
 
   public getEnvironment(): string {

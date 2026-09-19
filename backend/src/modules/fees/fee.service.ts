@@ -216,7 +216,7 @@ export class FeeService {
     }
 
     const student = await queryOne<any>(
-      'SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
+      'SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
       [data.studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found in this organization.', 404);
@@ -258,7 +258,7 @@ export class FeeService {
 
   async getStudentFeeAccount(orgId: string, studentId: string, branchId?: string): Promise<any> {
     const student = await queryOne<any>(
-      'SELECT id, customer_code, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
+      'SELECT id, customer_code, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
       [studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found', 404);
@@ -625,7 +625,7 @@ export class FeeService {
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
        LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR UPPER(s.ihms_id) = UPPER($1) OR s.user_id = $1) AND s.organization_id = $2`,
+       WHERE (s.id = $1 OR s.student_id = $1 OR UPPER(s.customer_code) = UPPER($1) OR UPPER(s.ihms_id) = UPPER($1) OR UPPER(s.custom_id) = UPPER($1) OR s.user_id = $1) AND s.organization_id = $2`,
       [data.studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found.', 404);
@@ -994,7 +994,7 @@ export class FeeService {
 
     const execute = async () => {
       const student = await queryOne<any>(
-        'SELECT id, customer_code, full_name, hostel_id, financial_outstanding_balance FROM students WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1) AND organization_id = $2',
+        'SELECT id, customer_code, full_name, hostel_id, financial_outstanding_balance FROM students WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR UPPER(ihms_id) = UPPER($1) OR user_id = $1) AND organization_id = $2',
         [studentId, orgId]
       );
       if (!student) throw new AppError('Student not found in this organization', 404);
@@ -1554,12 +1554,8 @@ export class FeeService {
     // 1. Cryptographic Signature Verification
     const isValid = cashfreeService.verifyWebhookSignature(rawBody, signature, timestamp);
     if (!isValid) {
-      if (
-        process.env.CASHFREE_ENV === 'TEST' ||
-        process.env.BYPASS_WEBHOOK_SIGNATURE === 'true' ||
-        process.env.NODE_ENV === 'development'
-      ) {
-        console.warn('[Cashfree Webhook] Webhook signature verification bypassed in TEST/development environment.');
+      if (process.env.BYPASS_WEBHOOK_SIGNATURE === 'true') {
+        console.warn('[Cashfree Webhook] Webhook signature verification bypassed via BYPASS_WEBHOOK_SIGNATURE=true.');
       } else {
         throw new AppError('Cryptographic signature verification failed.', 401);
       }
@@ -2175,71 +2171,158 @@ export class FeeService {
     });
   }
 
+  private paymentConfigsTableEnsured = false;
+
+  async ensurePaymentGatewayConfigsTable(): Promise<void> {
+    if (this.paymentConfigsTableEnsured) return;
+    try {
+      const tableCheck = await queryOne<any>(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = 'payment_gateway_configs'"
+      );
+      if (!tableCheck) {
+        await query(`
+          CREATE TABLE IF NOT EXISTS payment_gateway_configs (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT UNIQUE NOT NULL,
+            provider TEXT DEFAULT 'CASHFREE',
+            environment TEXT DEFAULT 'TEST',
+            key_id TEXT,
+            key_secret TEXT,
+            webhook_secret TEXT,
+            merchant_id TEXT,
+            provider_account_id TEXT,
+            onboarding_status TEXT DEFAULT 'CONNECTED',
+            account_verification_status TEXT DEFAULT 'VERIFIED',
+            payout_status TEXT DEFAULT 'ACTIVE',
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      } else {
+        const colStatements = [
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'CASHFREE'`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'TEST'`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS key_id TEXT`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS key_secret TEXT`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS webhook_secret TEXT`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS merchant_id TEXT`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS provider_account_id TEXT`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS onboarding_status TEXT DEFAULT 'CONNECTED'`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS account_verification_status TEXT DEFAULT 'VERIFIED'`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS payout_status TEXT DEFAULT 'ACTIVE'`,
+          `ALTER TABLE payment_gateway_configs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP`,
+        ];
+        for (const stmt of colStatements) {
+          await query(stmt).catch(() => {});
+        }
+      }
+      this.paymentConfigsTableEnsured = true;
+    } catch (e: any) {
+      console.warn(`[FeeService] Note ensuring payment_gateway_configs table: ${e.message}`);
+    }
+  }
+
   async getPaymentSettings(orgId: string) {
+    if (!orgId) {
+      orgId = 'org_default_ihms_01';
+    }
+    await this.ensurePaymentGatewayConfigsTable();
     const config = await paymentGatewayService.getOrgConfig(orgId);
+    const envUpper = String(config.environment || 'TEST').toUpperCase();
+    const isLive = envUpper === 'PRODUCTION' || envUpper === 'LIVE';
+
     return {
       provider: config.provider || 'CASHFREE',
-      environment: config.environment,
-      keyId: config.keyId,
+      environment: isLive ? 'LIVE' : 'TEST',
+      keyId: config.keyId || '',
       maskedSecret: paymentGatewayService.maskKey(config.keySecret),
       webhookSecret: paymentGatewayService.maskKey(config.webhookSecret),
       webhookUrl: '/api/webhooks/cashfree',
       merchantId: config.merchantId || '',
-      onboardingStatus: config.onboardingStatus,
-      payoutStatus: config.payoutStatus,
+      onboardingStatus: config.onboardingStatus || 'CONNECTED',
+      payoutStatus: config.payoutStatus || 'ACTIVE',
+      isConfigured: Boolean(config.keyId && config.keySecret && !config.keyId.startsWith('TEST_CF_APP_')),
     };
   }
 
   async updatePaymentSettings(orgId: string, data: any) {
-    const existing = await queryOne<any>(
-      'SELECT id FROM payment_gateway_configs WHERE organization_id = $1',
-      [orgId]
+    if (!orgId) {
+      throw new AppError('Organization ID is required to configure payment settings.', 400);
+    }
+    await this.ensurePaymentGatewayConfigsTable();
+
+    const provider = String(data.provider || 'CASHFREE').toUpperCase();
+    const rawEnv = String(data.environment || 'TEST').toUpperCase();
+    const normalizedEnv = (rawEnv === 'LIVE' || rawEnv === 'PRODUCTION') ? 'PRODUCTION' : 'TEST';
+
+    const keyId = typeof data.keyId === 'string' && data.keyId.trim() !== '' ? data.keyId.trim() : null;
+    const isMaskedSecret = typeof data.keySecret === 'string' && data.keySecret.includes('***');
+    const keySecret = (data.keySecret && !isMaskedSecret && String(data.keySecret).trim() !== '') ? String(data.keySecret).trim() : null;
+
+    const isMaskedWebhook = typeof data.webhookSecret === 'string' && data.webhookSecret.includes('***');
+    const webhookSecret = (data.webhookSecret && !isMaskedWebhook && String(data.webhookSecret).trim() !== '') ? String(data.webhookSecret).trim() : null;
+
+    const merchantId = typeof data.merchantId === 'string' && data.merchantId.trim() !== '' ? data.merchantId.trim() : null;
+    const onboardingStatus = data.onboardingStatus || 'CONNECTED';
+    const payoutStatus = data.payoutStatus || 'ACTIVE';
+
+    const configId = require('crypto').randomUUID();
+
+    await query(
+      `INSERT INTO payment_gateway_configs (
+        id, organization_id, provider, environment, key_id, key_secret,
+        webhook_secret, merchant_id, onboarding_status, payout_status,
+        created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT (organization_id) DO UPDATE SET
+        provider = COALESCE(EXCLUDED.provider, payment_gateway_configs.provider),
+        environment = COALESCE(EXCLUDED.environment, payment_gateway_configs.environment),
+        key_id = CASE
+          WHEN EXCLUDED.key_id IS NOT NULL AND EXCLUDED.key_id != '' THEN EXCLUDED.key_id
+          ELSE payment_gateway_configs.key_id
+        END,
+        key_secret = CASE
+          WHEN EXCLUDED.key_secret IS NOT NULL AND EXCLUDED.key_secret != '' AND EXCLUDED.key_secret NOT LIKE '%***%' THEN EXCLUDED.key_secret
+          ELSE payment_gateway_configs.key_secret
+        END,
+        webhook_secret = CASE
+          WHEN EXCLUDED.webhook_secret IS NOT NULL AND EXCLUDED.webhook_secret != '' AND EXCLUDED.webhook_secret NOT LIKE '%***%' THEN EXCLUDED.webhook_secret
+          ELSE payment_gateway_configs.webhook_secret
+        END,
+        merchant_id = COALESCE(EXCLUDED.merchant_id, payment_gateway_configs.merchant_id),
+        onboarding_status = COALESCE(EXCLUDED.onboarding_status, payment_gateway_configs.onboarding_status),
+        payout_status = COALESCE(EXCLUDED.payout_status, payment_gateway_configs.payout_status),
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        configId,
+        orgId,
+        provider,
+        normalizedEnv,
+        keyId,
+        keySecret,
+        webhookSecret,
+        merchantId,
+        onboardingStatus,
+        payoutStatus,
+      ]
     );
 
-    if (existing) {
-      await query(
-        `UPDATE payment_gateway_configs
-         SET provider = COALESCE($2, provider),
-             environment = COALESCE($3, environment),
-             key_id = COALESCE($4, key_id),
-             key_secret = CASE WHEN $5 IS NOT NULL AND $5 != '' AND $5 NOT LIKE '%***%' THEN $5 ELSE key_secret END,
-             webhook_secret = CASE WHEN $6 IS NOT NULL AND $6 != '' AND $6 NOT LIKE '%***%' THEN $6 ELSE webhook_secret END,
-             merchant_id = COALESCE($7, merchant_id),
-             onboarding_status = COALESCE($8, onboarding_status),
-             payout_status = COALESCE($9, payout_status),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE organization_id = $1`,
-        [
-          orgId,
-          data.provider || 'CASHFREE',
-          data.environment,
-          data.keyId,
-          data.keySecret,
-          data.webhookSecret,
-          data.merchantId,
-          data.onboardingStatus,
-          data.payoutStatus,
-        ]
-      );
-    } else {
-      await query(
-        `INSERT INTO payment_gateway_configs (
-          id, organization_id, provider, environment, key_id, key_secret,
-          webhook_secret, merchant_id, onboarding_status, payout_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          require('crypto').randomUUID(),
-          orgId,
-          data.provider || 'CASHFREE',
-          data.environment || 'TEST',
-          data.keyId || paymentGatewayService.getKeyId(),
-          data.keySecret || 'cf_sec_k8923f_prod_secret',
-          data.webhookSecret || 'whsec_ihms_secure_cashfree_key_2026',
-          data.merchantId || '',
-          data.onboardingStatus || 'CONNECTED',
-          data.payoutStatus || 'ACTIVE',
-        ]
-      );
+    // Sync in-memory cashfreeService instance dynamically with newly saved credentials
+    try {
+      const { cashfreeService } = await import('./cashfree.service');
+      if (cashfreeService && typeof cashfreeService.updateCredentials === 'function') {
+        cashfreeService.updateCredentials({
+          appId: keyId,
+          secretKey: keySecret,
+          webhookSecret: webhookSecret,
+          environment: normalizedEnv as any,
+        });
+      }
+    } catch {
+      // Non-fatal error during runtime sync
     }
 
     return this.getPaymentSettings(orgId);
@@ -2357,7 +2440,7 @@ export class FeeService {
     if (amount <= 0) throw new AppError('Adjustment amount must be greater than 0', 400);
 
     const student = await queryOne<any>(
-      'SELECT id, customer_code, hostel_id, full_name, financial_total_demanded, financial_total_paid FROM students WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1) AND organization_id = $2',
+      'SELECT id, customer_code, hostel_id, full_name, financial_total_demanded, financial_total_paid FROM students WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR UPPER(ihms_id) = UPPER($1) OR user_id = $1) AND organization_id = $2',
       [studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found', 404);
@@ -2561,7 +2644,7 @@ export class FeeService {
 
   async getReceiptByPaymentId(orgId: string, paymentId: string): Promise<IReceipt> {
     const payment = await queryOne<any>(
-      'SELECT id, payment_number, receipt_number, student_id, amount, status, payment_method, transaction_ref, received_by, created_at, hostel_id FROM payments WHERE (id = $1 OR payment_number = $1 OR gateway_order_id = $1) AND organization_id = $2',
+      'SELECT id, payment_number, receipt_number, student_id, amount, status, payment_method, transaction_ref, received_by, created_at, hostel_id FROM payments WHERE (id = $1 OR payment_number = $1 OR gateway_order_id = $1 OR cashfree_order_id = $1 OR receipt_number = $1) AND organization_id = $2',
       [paymentId, orgId]
     );
     if (!payment) throw new AppError('Payment not found.', 404);
