@@ -15,6 +15,7 @@ import { emitRealTimeEvent } from '../../events/events.gateway';
 import { dashboardService } from '../dashboard/dashboard.service';
 import { PaymentProviderFactory } from './provider-factory';
 import { notificationService } from '../notifications/notification.service';
+import { sanitizeStudentDisplayId } from '../students/student.service';
 
 export interface IFeeAccount {
   id: string;
@@ -258,7 +259,7 @@ export class FeeService {
 
   async getStudentFeeAccount(orgId: string, studentId: string, branchId?: string): Promise<any> {
     const student = await queryOne<any>(
-      'SELECT id, customer_code, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
+      'SELECT id, customer_code, custom_id, ihms_id, student_id, full_name, email, phone, room_id, bed_id, hostel_id, financial_total_demanded, financial_total_paid, financial_outstanding_balance FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1 OR UPPER(ihms_id) = UPPER($1) OR UPPER(custom_id) = UPPER($1) OR student_id = $1) AND organization_id = $2',
       [studentId, orgId]
     );
     if (!student) throw new AppError('Student profile not found', 404);
@@ -384,9 +385,10 @@ export class FeeService {
       null;
 
     const hostel = student.hostel_id
-      ? await queryOne<any>('SELECT hostel_name, name FROM hostels WHERE id = $1', [student.hostel_id])
+      ? await queryOne<any>('SELECT hostel_name, name, branch_code, hostel_id FROM hostels WHERE id = $1', [student.hostel_id])
       : null;
     const hostelName = hostel?.hostel_name || hostel?.name || '';
+    const fallbackHostelCode = hostel?.branch_code || hostel?.hostel_id || student.branch_code || student.hostel_id || 'IHMSAA0001';
 
     const demandedFromDemands = demands.length > 0 ? demands.reduce((acc, d) => acc + Number(d.totalAmount), 0) : 0;
     const demandedFromInsts = installments.length > 0 ? installments.reduce((acc, i) => acc + Number(i.amount), 0) : 0;
@@ -420,11 +422,27 @@ export class FeeService {
       }
     }
 
+    const rawStudentCode = student.custom_id || student.customer_code || student.student_id || student.ihms_id;
+    const studentDisplayCode = rawStudentCode ? sanitizeStudentDisplayId(rawStudentCode, fallbackHostelCode) : sDbId;
+
     return {
       id: account?.id || sDbId,
       _id: account?.id || sDbId,
-      studentId: sDbId,
-      customerCode: student.customer_code,
+      studentId: studentDisplayCode || sDbId,
+      studentDbId: sDbId,
+      customerCode: studentDisplayCode || student.customer_code,
+      customId: studentDisplayCode || student.custom_id || student.customer_code,
+      ihmsId: studentDisplayCode || student.ihms_id,
+      student: {
+        id: sDbId,
+        studentId: studentDisplayCode || sDbId,
+        customerCode: studentDisplayCode || student.customer_code,
+        customId: studentDisplayCode || student.custom_id || student.customer_code,
+        name: student.full_name,
+        email: student.email,
+        phone: student.phone,
+        hostelId: student.hostel_id,
+      },
       studentName: student.full_name,
       hostelName,
       paymentPlan: account?.payment_plan || PaymentPlan.MONTHLY,
@@ -1853,19 +1871,21 @@ export class FeeService {
         }
 
         // Insert Immutable Fee Ledger Entry
+        const studentDisplayId = student?.custom_id || student?.customer_code || (lockedPayment as any).custom_id || lockedPayment.customer_code;
         const ledgerId = crypto.randomUUID();
         await client.query(
           `INSERT INTO fee_ledgers (
-            id, organization_id, hostel_id, student_id, customer_code,
+            id, organization_id, hostel_id, student_id, customer_code, custom_id,
             payment_id, transaction_type, amount, currency,
             reference_number, description
-          ) VALUES ($1, $2, $3, $4, $5, $6, 'PAYMENT', $7, 'INR', $8, $9)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'PAYMENT', $8, 'INR', $9, $10)`,
           [
             ledgerId,
             pmtOrgId,
             lockedPayment.hostel_id,
             lockedPayment.student_id,
-            student?.customer_code || lockedPayment.customer_code,
+            studentDisplayId,
+            studentDisplayId,
             lockedPayment.id,
             receivedAmount,
             receiptNumber,
@@ -1888,14 +1908,15 @@ export class FeeService {
         };
         const splitAuditJson = JSON.stringify(splitAudit);
 
-        // Update payment with split details
+        // Update payment with split details and ensure custom_id is synced
         await client.query(
           `UPDATE payments
            SET split_hostel_amount = $1, split_platform_amount = $2,
                split_hostel_vendor_id = $3, split_platform_vendor_id = $4,
-               split_details = $5
-           WHERE id = $6`,
-          [hostelSplitAmt, platformFee, hostelVendorId, platformVendorId, splitAuditJson, lockedPayment.id]
+               split_details = $5,
+               custom_id = COALESCE(custom_id, $6)
+           WHERE id = $7`,
+          [hostelSplitAmt, platformFee, hostelVendorId, platformVendorId, splitAuditJson, studentDisplayId, lockedPayment.id]
         );
 
         // Reconcile matching monthly invoice in fee_ledgers, mark PAID, record timestamp, stop notifications, and log split
@@ -1907,11 +1928,12 @@ export class FeeService {
                amount_due = GREATEST(0, amount_due - $2),
                stop_notifications = TRUE,
                split_details = $3,
+               custom_id = COALESCE(custom_id, $4),
                updated_at = CURRENT_TIMESTAMP
-           WHERE student_id = $4
+           WHERE student_id = $5
              AND transaction_type = 'MONTHLY_INVOICE'
              AND status IN ('PENDING', 'OVERDUE')`,
-          [lockedPayment.id, receivedAmount, splitAuditJson, lockedPayment.student_id]
+          [lockedPayment.id, receivedAmount, splitAuditJson, studentDisplayId, lockedPayment.student_id]
         );
 
         console.log(`[Cashfree Easy Split] 💸 Inflow split verified for Payment ${lockedPayment.payment_number}:`);
@@ -1920,14 +1942,14 @@ export class FeeService {
 
         // Generate Canonical Digital Receipt Record
         const receiptId = crypto.randomUUID();
-        const qrPayload = `IHMS-REC:${receiptNumber}:${student?.customer_code}:${receivedAmount}`;
+        const qrPayload = `IHMS-REC:${receiptNumber}:${studentDisplayId}:${receivedAmount}`;
 
         await client.query(
           `INSERT INTO receipts (
             id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
-            student_id, customer_code, student_name, amount, payment_method, remaining_balance,
+            student_id, customer_code, custom_id, student_name, amount, payment_method, remaining_balance,
             issued_by, qr_payload, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
           ON CONFLICT (receipt_number) DO NOTHING`,
           [
             receiptId,
@@ -1937,7 +1959,8 @@ export class FeeService {
             pmtOrgId,
             lockedPayment.hostel_id,
             lockedPayment.student_id,
-            student?.customer_code || lockedPayment.customer_code,
+            studentDisplayId,
+            studentDisplayId,
             student?.full_name || 'Student',
             receivedAmount,
             'UPI',
@@ -2626,13 +2649,13 @@ export class FeeService {
       `SELECT r.id, r.id as "_id", r.receipt_number as "receiptNumber",
               r.payment_number as "paymentNumber", r.organization_id as "organizationId",
               r.hostel_id as "branchId", r.student_id as "studentId",
-              r.customer_code as "customerCode", r.student_name as "studentName",
+              r.customer_code as "customerCode", r.custom_id as "customId", r.student_name as "studentName",
               r.room_number as "roomNumber", r.bed_number as "bedNumber",
               r.fee_type as "feeType", r.installment_month as "installmentMonth",
               r.amount, r.payment_method as "paymentMethod",
               r.remaining_balance as "remainingBalance", r.issued_by as "issuedBy",
               r.notes, r.qr_payload as "qrPayload", r.issued_at as "issuedAt", r.created_at as "createdAt",
-              h.name as "hostelName"
+              h.name as "hostelName", h.branch_code as "hostelBranchCode"
        FROM receipts r
        LEFT JOIN hostels h ON h.id = r.hostel_id
        WHERE UPPER(r.receipt_number) = $1 AND r.organization_id = $2`,
@@ -2644,7 +2667,7 @@ export class FeeService {
 
   async getReceiptByPaymentId(orgId: string, paymentId: string): Promise<IReceipt> {
     const payment = await queryOne<any>(
-      'SELECT id, payment_number, receipt_number, student_id, amount, status, payment_method, transaction_ref, received_by, created_at, hostel_id FROM payments WHERE (id = $1 OR payment_number = $1 OR gateway_order_id = $1 OR cashfree_order_id = $1 OR receipt_number = $1) AND organization_id = $2',
+      'SELECT id, payment_number, receipt_number, student_id, custom_id, customer_code, amount, status, payment_method, transaction_ref, received_by, created_at, hostel_id FROM payments WHERE (id = $1 OR payment_number = $1 OR gateway_order_id = $1 OR cashfree_order_id = $1 OR receipt_number = $1) AND organization_id = $2',
       [paymentId, orgId]
     );
     if (!payment) throw new AppError('Payment not found.', 404);
@@ -2657,13 +2680,13 @@ export class FeeService {
       `SELECT r.id, r.id as "_id", r.receipt_number as "receiptNumber",
               r.payment_id as "paymentId", r.payment_number as "paymentNumber", r.organization_id as "organizationId",
               r.hostel_id as "branchId", r.student_id as "studentId",
-              r.customer_code as "customerCode", r.student_name as "studentName",
+              r.customer_code as "customerCode", r.custom_id as "customId", r.student_name as "studentName",
               r.room_number as "roomNumber", r.bed_number as "bedNumber",
               r.fee_type as "feeType", r.installment_month as "installmentMonth",
               r.amount, r.payment_method as "paymentMethod",
               r.remaining_balance as "remainingBalance", r.issued_by as "issuedBy",
               r.notes, r.qr_payload as "qrPayload", r.issued_at as "issuedAt", r.created_at as "createdAt",
-              h.name as "hostelName"
+              h.name as "hostelName", h.branch_code as "hostelBranchCode"
        FROM receipts r
        LEFT JOIN hostels h ON h.id = r.hostel_id
        WHERE (r.payment_id = $1 OR r.payment_number = $2 OR (r.receipt_number = $3 AND $3 != ''))
@@ -2674,14 +2697,14 @@ export class FeeService {
 
     if (receipt) {
       if (!receipt.qrPayload) {
-        receipt.qrPayload = `IHMS-REC:${receipt.receiptNumber}:${receipt.customerCode || 'STU'}:${receipt.amount}`;
+        receipt.qrPayload = `IHMS-REC:${receipt.receiptNumber}:${receipt.customId || receipt.customerCode || 'STU'}:${receipt.amount}`;
       }
       return receipt;
     }
 
     // Generate the single canonical receipt if missing
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name
+      `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name, h.branch_code as hostel_branch_code
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
@@ -2690,16 +2713,17 @@ export class FeeService {
       [payment.student_id, orgId]
     );
 
+    const studentDisplayCode = student?.custom_id || student?.customer_code || payment.custom_id || payment.customer_code || '';
     const receiptNumber = payment.receipt_number || (await getNextReceiptNumber(orgId));
     const receiptId = require('crypto').randomUUID();
-    const qrPayload = `IHMS-REC:${receiptNumber}:${student?.customer_code || ''}:${payment.amount}`;
+    const qrPayload = `IHMS-REC:${receiptNumber}:${studentDisplayCode}:${payment.amount}`;
 
     await query(
       `INSERT INTO receipts (
         id, receipt_number, payment_id, payment_number, organization_id, hostel_id,
-        student_id, customer_code, student_name, room_number, bed_number, fee_type,
+        student_id, customer_code, custom_id, student_name, room_number, bed_number, fee_type,
         installment_month, amount, payment_method, remaining_balance, issued_by, notes, qr_payload
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       ON CONFLICT (receipt_number) DO NOTHING`,
       [
         receiptId,
@@ -2709,7 +2733,8 @@ export class FeeService {
         orgId,
         payment.hostel_id,
         student?.id || payment.student_id,
-        student?.customer_code || '',
+        studentDisplayCode,
+        studentDisplayCode,
         student?.full_name || 'Student',
         student?.room_number || '',
         student?.bed_code || '',
@@ -2724,33 +2749,35 @@ export class FeeService {
       ]
     );
 
-      if (!payment.receipt_number) {
-        await query('UPDATE payments SET receipt_number = $1 WHERE id = $2', [receiptNumber, payment.id]);
-      }
+    if (!payment.receipt_number) {
+      await query('UPDATE payments SET receipt_number = $1 WHERE id = $2', [receiptNumber, payment.id]);
+    }
 
-      receipt = {
-        id: receiptId,
-        receiptNumber,
-        paymentId: payment.id,
-        paymentNumber: payment.payment_number,
-        organizationId: orgId,
-        branchId: payment.hostel_id,
-        hostelName: student?.hostel_name || 'Main Hostel',
-        studentId: payment.student_id,
-        customerCode: student?.customer_code || '',
-        studentName: student?.full_name || 'Student',
-        roomNumber: student?.room_number || '',
-        bedNumber: student?.bed_code || '',
-        feeType: 'Hostel Rent',
-        installmentMonth: this.getCurrentMonthString(),
-        amount: Number(payment.amount),
-        paymentMethod: payment.payment_method || 'ONLINE',
-        remainingBalance: Number(student?.financial_outstanding_balance || 0),
-        issuedBy: payment.received_by || 'Authorized Staff',
-        issuedAt: payment.created_at,
-        notes: payment.notes || '',
-        qrPayload: `IHMS-REC:${receiptNumber}:${student?.customer_code}:${payment.amount}`,
-      };
+    receipt = {
+      id: receiptId,
+      receiptNumber,
+      paymentId: payment.id,
+      paymentNumber: payment.payment_number,
+      organizationId: orgId,
+      branchId: payment.hostel_id,
+      hostelName: student?.hostel_name || 'Main Hostel',
+      hostelBranchCode: student?.hostel_branch_code,
+      studentId: payment.student_id,
+      customerCode: studentDisplayCode,
+      customId: studentDisplayCode,
+      studentName: student?.full_name || 'Student',
+      roomNumber: student?.room_number || '',
+      bedNumber: student?.bed_code || '',
+      feeType: 'Hostel Rent',
+      installmentMonth: this.getCurrentMonthString(),
+      amount: Number(payment.amount),
+      paymentMethod: payment.payment_method || 'ONLINE',
+      remainingBalance: Number(student?.financial_outstanding_balance || 0),
+      issuedBy: payment.received_by || 'Authorized Staff',
+      issuedAt: payment.created_at,
+      notes: payment.notes || '',
+      qrPayload,
+    };
 
     return receipt;
   }

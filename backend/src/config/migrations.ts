@@ -960,6 +960,8 @@ export async function runMigrations(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_payments_cf_order ON payments(cashfree_order_id)`,
     `CREATE INDEX IF NOT EXISTS idx_payments_custom_id ON payments(custom_id)`,
     `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS custom_id VARCHAR(50)`,
+    `ALTER TABLE receipts ADD COLUMN IF NOT EXISTS custom_id VARCHAR(50)`,
+    `CREATE INDEX IF NOT EXISTS idx_receipts_custom_id ON receipts(custom_id)`,
     `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS billing_month VARCHAR(20)`,
     `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS amount_due NUMERIC(12, 2) DEFAULT 0.00`,
     `ALTER TABLE fee_ledgers ADD COLUMN IF NOT EXISTS base_amount NUMERIC(12, 2) DEFAULT 0.00`,

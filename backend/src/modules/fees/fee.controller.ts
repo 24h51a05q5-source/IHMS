@@ -732,8 +732,13 @@ router.post('/payments/:id/confirm', async (req: Request, res: Response, next: N
 const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { cashfreeService } = await import('./cashfree.service');
-    const isStaff = req.user!.role !== UserRole.STUDENT;
-    const studentId = isStaff && req.body.studentId ? req.body.studentId : (req.user!.studentId || req.user!.id);
+    const isStaff = req.user!.role !== UserRole.STUDENT && (req.user!.role as any) !== 'STUDENT';
+    const requestedStudentId = req.body.studentId ? String(req.body.studentId).trim() : '';
+    const userStudentId = req.user?.studentId ? String(req.user.studentId).trim() : '';
+    const userCustomerCode = req.user?.customerCode ? String(req.user.customerCode).trim() : '';
+    const authUserId = req.user?.id ? String(req.user.id).trim() : '';
+
+    const targetStudentId = requestedStudentId || userCustomerCode || userStudentId || authUserId;
     const requestedAmount = (req.body.amount !== undefined && req.body.amount !== null && req.body.amount !== '')
       ? Number(req.body.amount)
       : undefined;
@@ -742,39 +747,96 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
     let orgId = req.user?.organizationId || (req.user as any)?.organization_id || (req.user as any)?.orgId;
 
     // Security Rule 1: Retrieve student from DB to enforce organization & hostel isolation
-    // Supports matching by id, user_id, customer_code, student_id, custom_id, and ihms_id
-    const student = await queryOne<any>(
-      `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
-              s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
-              s.financial_outstanding_balance,
-              h.id as hostel_db_id, h.name as hostel_name, h.cashfree_vendor_id, h.cashfree_onboarding_status
-       FROM students s
-       LEFT JOIN hostels h ON h.id = s.hostel_id
-       WHERE (
-         s.id = $1 OR
-         s.user_id = $1 OR
-         s.customer_code = $1 OR
-         s.student_id = $1 OR
-         UPPER(COALESCE(s.customer_code, '')) = UPPER($1) OR
-         UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR
-         UPPER(COALESCE(s.ihms_id, '')) = UPPER($1)
-       )
-       ${orgId ? 'AND s.organization_id = $2' : ''}
-       LIMIT 1`,
-      orgId ? [studentId, orgId] : [studentId]
-    );
+    // For students: match authenticated user's student record (s.user_id = authUserId) or provided identifiers
+    // For staff: match by target student ID
+    let student: any = null;
+
+    if (!isStaff) {
+      // Authenticated student flow: Prioritize their own student row linked by user_id = authUserId or s.id = authUserId
+      student = await queryOne<any>(
+        `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
+                s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
+                s.financial_outstanding_balance,
+                h.id as hostel_db_id, h.name as hostel_name, h.branch_code as hostel_branch_code, h.cashfree_vendor_id, h.cashfree_onboarding_status
+         FROM students s
+         LEFT JOIN hostels h ON h.id = s.hostel_id
+         WHERE (
+           s.user_id = $1 OR
+           s.id = $1
+         )
+         ${orgId ? 'AND s.organization_id = $2' : ''}
+         LIMIT 1`,
+        orgId ? [authUserId, orgId] : [authUserId]
+      );
+
+      // Fallback for students where targetStudentId was specified (e.g., token without linked user_id)
+      if (!student && targetStudentId) {
+        student = await queryOne<any>(
+          `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
+                  s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
+                  s.financial_outstanding_balance,
+                  h.id as hostel_db_id, h.name as hostel_name, h.branch_code as hostel_branch_code, h.cashfree_vendor_id, h.cashfree_onboarding_status
+           FROM students s
+           LEFT JOIN hostels h ON h.id = s.hostel_id
+           WHERE (
+             s.id = $1 OR
+             s.customer_code = $1 OR
+             s.custom_id = $1 OR
+             s.student_id = $1 OR
+             UPPER(COALESCE(s.customer_code, '')) = UPPER($1) OR
+             UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR
+             UPPER(COALESCE(s.ihms_id, '')) = UPPER($1)
+           )
+           ${orgId ? 'AND s.organization_id = $2' : ''}
+           LIMIT 1`,
+          orgId ? [targetStudentId, orgId] : [targetStudentId]
+        );
+      }
+    } else {
+      // Staff flow: search by target student identifier
+      student = await queryOne<any>(
+        `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
+                s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
+                s.financial_outstanding_balance,
+                h.id as hostel_db_id, h.name as hostel_name, h.branch_code as hostel_branch_code, h.cashfree_vendor_id, h.cashfree_onboarding_status
+         FROM students s
+         LEFT JOIN hostels h ON h.id = s.hostel_id
+         WHERE (
+           s.id = $1 OR
+           s.user_id = $1 OR
+           s.customer_code = $1 OR
+           s.custom_id = $1 OR
+           s.student_id = $1 OR
+           UPPER(COALESCE(s.customer_code, '')) = UPPER($1) OR
+           UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR
+           UPPER(COALESCE(s.ihms_id, '')) = UPPER($1)
+         )
+         ${orgId ? 'AND s.organization_id = $2' : ''}
+         LIMIT 1`,
+        orgId ? [targetStudentId, orgId] : [targetStudentId]
+      );
+    }
 
     if (!student) {
-      console.error(`[FeeController] Student profile not found for identifier: '${studentId}' (Org: ${orgId || 'unspecified'})`);
+      console.error(`[FeeController] Student profile not found for identifier: '${targetStudentId}' (AuthUser: ${authUserId}, Role: ${req.user?.role}, Org: ${orgId || 'unspecified'})`);
       return res.status(404).json({
         success: false,
         statusCode: 404,
-        message: `Student profile not found for identifier: ${studentId}. Please verify your student ID.`,
+        message: `Student profile not found for identifier: ${targetStudentId}. Please verify your student ID.`,
       });
     }
 
     if (!orgId) {
       orgId = student.organization_id;
+    }
+
+    // Security Rule 1.1: Ensure non-staff cannot initiate orders for another student's account
+    if (!isStaff && student.user_id && authUserId && student.user_id !== authUserId && student.id !== authUserId) {
+      return res.status(403).json({
+        success: false,
+        statusCode: 403,
+        message: 'Unauthorized: You can only initiate payments for your own student fee account.',
+      });
     }
 
     // Security Rule 2: Derive hostel_id strictly from database, NEVER from frontend
@@ -852,15 +914,17 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
     const paymentId = crypto.randomUUID();
     const paymentNumber = `PAY-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
+    const studentDisplayCode = student.custom_id || student.customer_code || student.ihms_id || student.student_id || student.id;
+
     // Call Cashfree Platform Order API (Customer Fee Bearer Model)
     const qrResult = await cashfreeService.createDynamicUPIOrder({
       orderId,
       amount: baseAmount,
       studentId: student.id,
-      studentCustomerCode: student.customer_code,
+      studentCustomerCode: studentDisplayCode,
       studentName: student.full_name,
       studentPhone: student.phone || '9876543210',
-      studentEmail: student.email || `${student.customer_code}@ihms.app`,
+      studentEmail: student.email || `${studentDisplayCode}@ihms.app`,
       vendorId,
       hostelId,
       organizationId: orgId,
@@ -869,18 +933,19 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
     // Save pending payment record in DB
     await query(
       `INSERT INTO payments (
-        id, payment_number, organization_id, hostel_id, student_id, customer_code,
+        id, payment_number, organization_id, hostel_id, student_id, customer_code, custom_id,
         installment_id, amount, expected_amount, base_amount, convenience_fee, currency, payment_method,
         gateway_name, gateway_order_id, cashfree_order_id, cashfree_split_vendor_id,
         fee_bearer, status, expires_at, qr_code_data, received_by, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, 'INR', 'UPI', 'CASHFREE', $11, $11, $12, 'customer', 'PENDING', $13, $14, 'Cashfree Platform', $15)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, 'INR', 'UPI', 'CASHFREE', $12, $12, $13, 'customer', 'PENDING', $14, $15, 'Cashfree Platform', $16)`,
       [
         paymentId,
         paymentNumber,
         orgId,
         hostelId,
         student.id,
-        student.customer_code,
+        studentDisplayCode,
+        studentDisplayCode,
         installmentId || null,
         qrResult.amount,
         baseAmount,
@@ -889,7 +954,7 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
         vendorId,
         qrResult.expiresAt,
         qrResult.qrDataUrl,
-        `Cashfree Dynamic UPI QR Order for ${student.customer_code} (Vendor: ${vendorId})`,
+        `Cashfree Dynamic UPI QR Order for ${studentDisplayCode} (Vendor: ${vendorId})`,
       ]
     );
 
@@ -914,9 +979,14 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
         expiresAt: qrResult.expiresAt,
         expiresInSeconds: qrResult.expiresInSeconds,
         hostelName: student.hostel_name || 'Hostel',
+        studentId: studentDisplayCode,
+        studentCustomerCode: studentDisplayCode,
+        customerCode: studentDisplayCode,
         student: {
           id: student.id,
-          customerCode: student.customer_code,
+          studentId: studentDisplayCode,
+          customerCode: studentDisplayCode,
+          customId: studentDisplayCode,
           name: student.full_name,
         },
       },

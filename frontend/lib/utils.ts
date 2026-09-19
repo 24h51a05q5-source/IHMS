@@ -62,25 +62,60 @@ export function formatMasterId(idOrObj?: any): string {
  */
 export function formatStudentId(studentOrCode?: any, fallbackHostelCode?: string): string {
   if (!studentOrCode) return '—';
+
+  // If passed an object, inspect candidate fields to find an existing systematic ID first
+  if (typeof studentOrCode === 'object' && studentOrCode !== null) {
+    const candidates = [
+      studentOrCode.customId,
+      studentOrCode.customerCode,
+      studentOrCode.customer_code,
+      studentOrCode.ihmsId,
+      studentOrCode.ihms_id,
+      studentOrCode.studentId,
+      studentOrCode.student_id,
+      studentOrCode.id,
+    ];
+
+    // Priority 1: Direct systematic format match (e.g. IHMSAA0003-a001)
+    for (const c of candidates) {
+      if (typeof c === 'string') {
+        const trimmed = c.trim();
+        if (/^IHMS[A-Z]{2}\d{4}-[a-z]\d{3}$/i.test(trimmed)) {
+          const parts = trimmed.split('-');
+          return `${parts[0].toUpperCase()}-${parts[1].toLowerCase()}`;
+        }
+      }
+    }
+
+    // Priority 2: Direct test suite match (e.g. H101-0001)
+    for (const c of candidates) {
+      if (typeof c === 'string') {
+        const trimmed = c.trim();
+        if (/^H\d+-\d+$/i.test(trimmed) || /^H_MIG/i.test(trimmed)) {
+          return trimmed;
+        }
+      }
+    }
+  }
+
+  // Extract raw string candidate, prioritizing custom/customer identifiers over internal database UUIDs
   const raw =
     typeof studentOrCode === 'string'
       ? studentOrCode
-      : studentOrCode.studentId || studentOrCode.customerCode || studentOrCode.customId || studentOrCode.ihmsId || studentOrCode.ihms_id || '';
+      : studentOrCode.customId ||
+        studentOrCode.customerCode ||
+        studentOrCode.customer_code ||
+        studentOrCode.ihmsId ||
+        studentOrCode.ihms_id ||
+        studentOrCode.studentId ||
+        studentOrCode.student_id ||
+        studentOrCode.id ||
+        '';
+
   if (!raw) return '—';
   const str = String(raw).trim();
 
-  // Determine parent hostel code
-  let parentHostel = 'IHMSAA0001';
-  if (typeof studentOrCode === 'object' && studentOrCode !== null) {
-    const rawHostel = studentOrCode.hostelCode || studentOrCode.branchCode || studentOrCode.hostel_code || studentOrCode.hostelId || studentOrCode.hostel_id;
-    if (rawHostel && typeof rawHostel === 'string' && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawHostel)) {
-      parentHostel = formatHostelId(rawHostel);
-    }
-  } else if (fallbackHostelCode) {
-    parentHostel = formatHostelId(fallbackHostelCode);
-  }
-
-  // If raw already matches systematic format: e.g. IHMSAA0001-a001
+  // If raw string directly matches systematic format
   if (/^IHMS[A-Z]{2}\d{4}-[a-z]\d{3}$/i.test(str)) {
     const parts = str.split('-');
     return `${parts[0].toUpperCase()}-${parts[1].toLowerCase()}`;
@@ -89,6 +124,26 @@ export function formatStudentId(studentOrCode?: any, fallbackHostelCode?: string
   // Preserve test suite prefixes (e.g. H101-0001)
   if (/^H\d+-\d+$/i.test(str) || /^H_MIG/i.test(str)) {
     return str;
+  }
+
+  // Determine parent hostel code from available branch/hostel context
+  let parentHostel = 'IHMSAA0001';
+  if (typeof studentOrCode === 'object' && studentOrCode !== null) {
+    const rawHostel =
+      studentOrCode.hostelCode ||
+      studentOrCode.branchCode ||
+      studentOrCode.hostel_code ||
+      studentOrCode.hostelBranchId ||
+      studentOrCode.branchId ||
+      studentOrCode.hostelId ||
+      studentOrCode.hostel_id;
+    if (rawHostel && typeof rawHostel === 'string' && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawHostel)) {
+      parentHostel = formatHostelId(rawHostel);
+    } else if (fallbackHostelCode) {
+      parentHostel = formatHostelId(fallbackHostelCode);
+    }
+  } else if (fallbackHostelCode) {
+    parentHostel = formatHostelId(fallbackHostelCode);
   }
 
   // If raw contains or starts with a UUID (36-char hyphenated hex string)

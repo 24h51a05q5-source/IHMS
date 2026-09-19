@@ -67,9 +67,14 @@ export interface DynamicUpiQrResponse {
   };
   student?: {
     id: string;
+    studentId?: string;
     customerCode: string;
+    customId?: string;
     name: string;
   };
+  studentId?: string;
+  studentCustomerCode?: string;
+  customerCode?: string;
 }
 
 export interface OrderStatusResponse {

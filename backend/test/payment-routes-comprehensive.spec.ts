@@ -4,6 +4,7 @@ import express, { Express } from 'express';
 import { connectDatabase, disconnectDatabase, query, queryOne } from '../src/config/database';
 import { cashfreeService } from '../src/modules/fees/cashfree.service';
 import feeRouter from '../src/modules/fees/fee.controller';
+import { authService } from '../src/modules/auth/auth.service';
 import { errorHandler } from '../src/common/filters/http-exception.filter';
 
 describe('Comprehensive Payment System Route & Error Handling Verification', () => {
@@ -32,8 +33,11 @@ describe('Comprehensive Payment System Route & Error Handling Verification', () 
     app.use(express.urlencoded({ extended: true }));
 
     // Mock authentication middleware
+    let activeMockUser: any = null;
+    (app as any).setMockUser = (u: any) => { activeMockUser = u; };
+
     app.use((req: any, _res, next) => {
-      req.user = {
+      req.user = activeMockUser || {
         id: ownerId,
         userId: ownerId,
         organizationId: orgId,
@@ -279,6 +283,120 @@ describe('Comprehensive Payment System Route & Error Handling Verification', () 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.status).toBe('ACTIVE');
+    });
+  });
+
+  describe('7. Student ID Mismatch Resolution & Self-Service Fee Checkout', () => {
+    const activeStudentId = 'IHMSAA0003-a001';
+    const activeStudentUserUuid = 'stu_user_comp_003';
+    const activeStudentDbUuid = 'stu_comp_uuid_003';
+
+    beforeAll(async () => {
+      // Seed student user
+      await query(
+        `INSERT INTO users (
+          id, user_id, organization_id, branch_id, student_id, name, email,
+          password_hash, role, customer_code, status
+        ) VALUES ($1, $2, $3, $4, $5, 'Ananya Sharma', 'ananya@comp.test',
+          'hashed_pwd', 'STUDENT', $2, 'ACTIVE')
+         ON CONFLICT (id) DO UPDATE SET student_id = $5, customer_code = $2`,
+        [activeStudentUserUuid, activeStudentId, orgId, hostelId, activeStudentDbUuid]
+      );
+
+      // Seed student profile with systematic custom_id IHMSAA0003-a001
+      await query(
+        `INSERT INTO students (
+          id, student_id, customer_code, custom_id, ihms_id, user_id, organization_id, hostel_id,
+          full_name, email, phone, status, is_active, financial_total_demanded, financial_outstanding_balance
+        ) VALUES ($1, $2, $2, $2, $2, $3, $4, $5, 'Ananya Sharma', 'ananya@comp.test', '9876512345', 'ACTIVE', true, 8000.00, 8000.00)
+         ON CONFLICT (id) DO UPDATE SET custom_id = $2, customer_code = $2, user_id = $3, financial_outstanding_balance = 8000.00`,
+        [activeStudentDbUuid, activeStudentId, activeStudentUserUuid, orgId, hostelId]
+      );
+    });
+
+    afterEach(() => {
+      (app as any).setMockUser(null);
+    });
+
+    it('authService.getMe should resolve true systematic custom_id instead of IHMSAA0001-a001', async () => {
+      const me = await authService.getMe(activeStudentUserUuid);
+      expect(me.studentId).toBe(activeStudentId);
+      expect(me.customerCode).toBe(activeStudentId);
+      expect(me.customId).toBe(activeStudentId);
+    });
+
+    it('should generate Dynamic UPI QR when student sends their correct studentId', async () => {
+      (app as any).setMockUser({
+        id: activeStudentUserUuid,
+        userId: activeStudentUserUuid,
+        organizationId: orgId,
+        role: 'STUDENT',
+        studentId: activeStudentId,
+        customerCode: activeStudentId,
+        email: 'ananya@comp.test',
+        name: 'Ananya Sharma',
+      });
+
+      const res = await request(app)
+        .post('/orders/create-upi-qr')
+        .send({
+          studentId: activeStudentId,
+          amount: 4000.00,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.studentId).toBe(activeStudentId);
+      expect(res.body.data.customerCode).toBe(activeStudentId);
+    });
+
+    it('should correctly resolve student and create UPI QR even if body omits studentId', async () => {
+      (app as any).setMockUser({
+        id: activeStudentUserUuid,
+        userId: activeStudentUserUuid,
+        organizationId: orgId,
+        role: 'STUDENT',
+        studentId: activeStudentId,
+        customerCode: activeStudentId,
+        email: 'ananya@comp.test',
+        name: 'Ananya Sharma',
+      });
+
+      const res = await request(app)
+        .post('/orders/create-upi-qr')
+        .send({
+          amount: 4000.00,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.studentId).toBe(activeStudentId);
+    });
+
+    it('should resolve student via user_id even if token had the stale fallback IHMSAA0001-a001', async () => {
+      (app as any).setMockUser({
+        id: activeStudentUserUuid,
+        userId: activeStudentUserUuid,
+        organizationId: orgId,
+        role: 'STUDENT',
+        studentId: 'IHMSAA0001-a001', // Stale or fallback token ID
+        customerCode: 'IHMSAA0001-a001',
+        email: 'ananya@comp.test',
+        name: 'Ananya Sharma',
+      });
+
+      // Student generates QR without studentId in body (using stale token)
+      const res = await request(app)
+        .post('/orders/create-upi-qr')
+        .send({
+          amount: 4000.00,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      // Resolved to actual DB student record Ananya Sharma (IHMSAA0003-a001), not IHMSAA0001-a001
+      expect(res.body.data.studentId).toBe(activeStudentId);
+      expect(res.body.data.customerCode).toBe(activeStudentId);
     });
   });
 });

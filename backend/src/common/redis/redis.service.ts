@@ -1,5 +1,5 @@
 import Redis, { RedisOptions } from 'ioredis';
-import { query } from '../../config/database';
+import { query, queryOne } from '../../config/database';
 
 /**
  * Enterprise Redis Atomic Sequence Engine
@@ -12,6 +12,7 @@ export class RedisService {
   private connectionAttempted: boolean = false;
   private readonly inMemoryCounters: Map<string, number> = new Map();
   private readonly sequenceLocks: Map<string, Promise<any>> = new Map();
+  private readonly resolvedHostelPrefixes: Map<string, string> = new Map();
 
   constructor() {
     this.initClient();
@@ -83,11 +84,14 @@ export class RedisService {
 
   /**
    * Sanitizes any input hostel ID/code into a structured prefix.
-   * If input is a raw database UUID or empty, normalizes to 'IHMSAA0001'.
+   * If input is a raw database UUID, checks in-memory resolved cache or normalizes to 'IHMSAA0001'.
    */
   sanitizeHostelPrefix(hostelId: string): string {
     if (!hostelId) return 'IHMSAA0001';
     const trimmed = String(hostelId).trim();
+    if (this.resolvedHostelPrefixes.has(trimmed)) {
+      return this.resolvedHostelPrefixes.get(trimmed)!;
+    }
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
       return 'IHMSAA0001';
     }
@@ -101,10 +105,42 @@ export class RedisService {
   }
 
   /**
+   * Asynchronously resolves any hostel identifier (including UUID) into the true systematic branch code (e.g. IHMSAA0003).
+   */
+  async resolveHostelPrefix(hostelId: string): Promise<string> {
+    if (!hostelId) return 'IHMSAA0001';
+    const trimmed = String(hostelId).trim();
+    if (/^IHMS[A-Z]{2}\d{4}$/i.test(trimmed)) {
+      return trimmed.toUpperCase();
+    }
+    if (this.resolvedHostelPrefixes.has(trimmed)) {
+      return this.resolvedHostelPrefixes.get(trimmed)!;
+    }
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+      try {
+        const row = await queryOne<any>(
+          'SELECT branch_code, hostel_id FROM hostels WHERE id = $1 LIMIT 1',
+          [trimmed]
+        );
+        const code = row?.branch_code || row?.hostel_id;
+        if (code && /^IHMS[A-Z]{2}\d{4}$/i.test(code)) {
+          const res = code.toUpperCase();
+          this.resolvedHostelPrefixes.set(trimmed, res);
+          return res;
+        }
+      } catch {
+        /* fallback on query error */
+      }
+      return 'IHMSAA0001';
+    }
+    return trimmed;
+  }
+
+  /**
    * Hydrates hostel counter from PostgreSQL if not present in memory / Redis
    */
   async getOrHydrateCounter(hostelId: string): Promise<number> {
-    const cleanHostelId = this.sanitizeHostelPrefix(hostelId);
+    const cleanHostelId = await this.resolveHostelPrefix(hostelId);
     if (this.inMemoryCounters.has(cleanHostelId)) {
       return this.inMemoryCounters.get(cleanHostelId)!;
     }
@@ -159,7 +195,7 @@ export class RedisService {
    * Concurrency is serialized per hostel to avoid in-memory / hydration race conditions.
    */
   async incrementHostelCounter(hostelId: string): Promise<number> {
-    const cleanHostelId = this.sanitizeHostelPrefix(hostelId);
+    const cleanHostelId = await this.resolveHostelPrefix(hostelId);
     const prevLock = this.sequenceLocks.get(cleanHostelId) || Promise.resolve();
 
     let resolveLock!: () => void;
@@ -260,7 +296,7 @@ export class RedisService {
    * 2. Format to [HostelID]-[SequentialNumber]
    */
   async generateStudentCustomId(hostelId: string): Promise<string> {
-    const cleanPrefix = this.sanitizeHostelPrefix(hostelId);
+    const cleanPrefix = await this.resolveHostelPrefix(hostelId);
     const seq = await this.incrementHostelCounter(cleanPrefix);
     return this.formatStudentId(cleanPrefix, seq);
   }
@@ -270,7 +306,7 @@ export class RedisService {
    * Used during legacy migration hand-off and counter hydration
    */
   async setHostelCounter(hostelId: string, value: number): Promise<void> {
-    const cleanHostelId = this.sanitizeHostelPrefix(hostelId);
+    const cleanHostelId = await this.resolveHostelPrefix(hostelId);
     const key = `hostel_counter:${cleanHostelId}`;
 
     this.inMemoryCounters.set(cleanHostelId, value);
@@ -289,7 +325,7 @@ export class RedisService {
    * Query current counter value
    */
   async getHostelCounter(hostelId: string): Promise<number> {
-    const cleanHostelId = (hostelId || 'H000').trim();
+    const cleanHostelId = await this.resolveHostelPrefix(hostelId || 'H000');
     const key = `hostel_counter:${cleanHostelId}`;
 
     const connected = await this.ensureConnected();

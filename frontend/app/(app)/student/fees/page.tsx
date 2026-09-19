@@ -274,7 +274,18 @@ export default function StudentFeesPage() {
 
     setLoadingPaymentDetails(true);
     try {
+      const activeStudentId =
+        (feeData as any)?.student?.customId ||
+        (feeData as any)?.student?.customerCode ||
+        (feeData as any)?.customId ||
+        (feeData as any)?.customerCode ||
+        (feeData as any)?.studentId ||
+        user?.customerCode ||
+        user?.studentId ||
+        (user as any)?.customId;
+
       const res = await paymentsApi.createUpiQrOrder({
+        studentId: activeStudentId,
         amount: payAmountNumber,
         installmentId: selectedInstallmentId || currentDueInst?.id,
       });
@@ -892,7 +903,12 @@ export default function StudentFeesPage() {
                 : 'Dynamic UPI QR Checkout'}
             </DialogTitle>
             <DialogDescription className="text-center text-xs text-slate-500 font-medium">
-              {cashfreeOrder?.hostelName || 'Hostel Fee Portal'} • Cashfree Easy Split Routing
+              <span>{cashfreeOrder?.hostelName || 'Hostel Fee Portal'} • Cashfree Easy Split Routing</span>
+              {(cashfreeOrder?.studentCustomerCode || cashfreeOrder?.customerCode || cashfreeOrder?.studentId || user?.customerCode || user?.studentId || feeData?.customerCode) && (
+                <span className="block text-[11px] font-mono text-slate-600 font-semibold mt-0.5">
+                  Student ID: <span className="font-bold text-slate-900">{cashfreeOrder?.studentCustomerCode || cashfreeOrder?.customerCode || cashfreeOrder?.studentId || user?.customerCode || user?.studentId || feeData?.customerCode}</span>
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
 

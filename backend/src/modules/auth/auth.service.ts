@@ -41,9 +41,46 @@ export class AuthService {
     const hostelName = cleanHostelName(org?.name) || cleanHostelName(user.hostel_name || user.hostelName) || cleanHostelName(hostelBranchName) || '';
 
     const isStudent = mappedRole === 'STUDENT' || rawRole === 'STUDENT';
-    const studentDisplayId = isStudent
-      ? sanitizeStudentDisplayId(user.student_id || user.studentId || user.customer_code || user.customerCode || user.ihms_id, 'IHMSAA0001')
-      : undefined;
+    let studentDisplayId: string | undefined = undefined;
+    if (isStudent) {
+      const studentRec = await queryOne<any>(
+        `SELECT s.id, s.custom_id, s.customer_code, s.student_id, s.ihms_id, s.hostel_id,
+                h.branch_code
+         FROM students s
+         LEFT JOIN hostels h ON h.id = s.hostel_id
+         WHERE s.user_id = $1 OR s.id = $2
+         ORDER BY (CASE WHEN s.user_id = $1 THEN 1 ELSE 2 END) ASC
+         LIMIT 1`,
+        [user.id, user.student_id || user.studentId || user.id]
+      );
+
+      let studentHostelCode = studentRec?.branch_code || '';
+      if (!studentHostelCode && studentRec?.hostel_id && /^IHMS[A-Z]{2}\d{4}$/i.test(studentRec.hostel_id)) {
+        studentHostelCode = studentRec.hostel_id;
+      }
+      if (!studentHostelCode && user.branch_id && /^IHMS[A-Z]{2}\d{4}$/i.test(user.branch_id)) {
+        studentHostelCode = user.branch_id;
+      }
+      if (!studentHostelCode) {
+        studentHostelCode = 'IHMSAA0001';
+      }
+
+      const rawCode =
+        studentRec?.custom_id ||
+        studentRec?.customer_code ||
+        studentRec?.ihms_id ||
+        studentRec?.student_id ||
+        user.customer_code ||
+        user.customerCode ||
+        user.student_id ||
+        user.studentId;
+
+      studentDisplayId = sanitizeStudentDisplayId(rawCode, studentHostelCode);
+
+      if (studentDisplayId && user.customer_code !== studentDisplayId) {
+        await query('UPDATE users SET customer_code = $1 WHERE id = $2', [studentDisplayId, user.id]).catch(() => {});
+      }
+    }
 
     const rawMaster = user.ihms_id || user.ihmsId || user.owner_id || user.ownerId;
     const masterDisplayId = isStudent
@@ -775,6 +812,42 @@ export class AuthService {
       : rawRole === UserRole.SUPER_ADMIN ? 'PLATFORM_SUPER_ADMIN'
         : rawRole;
 
+    const isStudent = mappedRole === 'STUDENT' || rawRole === 'STUDENT';
+    let studentDisplayId: string | undefined = undefined;
+    if (isStudent) {
+      const studentRec = await queryOne<any>(
+        `SELECT s.id, s.custom_id, s.customer_code, s.student_id, s.ihms_id, s.hostel_id,
+                h.branch_code
+         FROM students s
+         LEFT JOIN hostels h ON h.id = s.hostel_id
+         WHERE s.user_id = $1 OR s.id = $2
+         ORDER BY (CASE WHEN s.user_id = $1 THEN 1 ELSE 2 END) ASC
+         LIMIT 1`,
+        [user.id, user.student_id || user.id]
+      );
+
+      let studentHostelCode = studentRec?.branch_code || '';
+      if (!studentHostelCode && studentRec?.hostel_id && /^IHMS[A-Z]{2}\d{4}$/i.test(studentRec.hostel_id)) {
+        studentHostelCode = studentRec.hostel_id;
+      }
+      if (!studentHostelCode && user.branch_id && /^IHMS[A-Z]{2}\d{4}$/i.test(user.branch_id)) {
+        studentHostelCode = user.branch_id;
+      }
+      if (!studentHostelCode) {
+        studentHostelCode = 'IHMSAA0001';
+      }
+
+      const rawCode =
+        studentRec?.custom_id ||
+        studentRec?.customer_code ||
+        studentRec?.ihms_id ||
+        studentRec?.student_id ||
+        user.customer_code ||
+        user.student_id;
+
+      studentDisplayId = sanitizeStudentDisplayId(rawCode, studentHostelCode);
+    }
+
     return {
       id: user.id,
       name: user.name,
@@ -785,11 +858,12 @@ export class AuthService {
       hostelName,
       organizationName: hostelName,
       hostelBranchId: user.branch_id,
-      studentId: user.student_id,
+      studentId: isStudent ? (studentDisplayId || user.student_id) : user.student_id,
       ownerId: user.user_id || user.staff_code,
-      customerCode: user.customer_code,
-      ihmsId: user.ihms_id,
-      ihms_id: user.ihms_id,
+      customerCode: isStudent ? (studentDisplayId || user.customer_code) : user.customer_code,
+      customId: isStudent ? (studentDisplayId || user.customer_code) : undefined,
+      ihmsId: isStudent ? (studentDisplayId || user.ihms_id) : user.ihms_id,
+      ihms_id: isStudent ? (studentDisplayId || user.ihms_id) : user.ihms_id,
       mustChangePassword: user.must_change_password || false,
       termsAccepted: Boolean(user.terms_accepted),
       acceptedTermsVersion: user.accepted_terms_version || null,

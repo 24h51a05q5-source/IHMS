@@ -11,7 +11,9 @@ export interface IReceipt {
   hostelName?: string;
   studentName: string;
   customerCode: string;
+  customId?: string;
   studentId?: string;
+  hostelBranchCode?: string;
   roomNumber?: string;
   bedNumber?: string;
   feeType?: string;
@@ -95,7 +97,8 @@ export class ReceiptPdfService {
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student Name:', 55, y + 34);
       doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(receipt.studentName, 145, y + 34);
 
-      const displayStudentId = sanitizeStudentDisplayId(receipt.customerCode || receipt.studentId, 'IHMSAA0001');
+      const fallbackHostelCode = (receipt as any).hostelBranchCode || (receipt as any).branchCode || receipt.branchId || (receipt as any).hostelCode || 'IHMSAA0001';
+      const displayStudentId = sanitizeStudentDisplayId((receipt as any).customId || receipt.customerCode || receipt.studentId, fallbackHostelCode);
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student ID:', 55, y + 54);
       doc.fillColor('#E87545').fontSize(9.5).font('Helvetica-Bold').text(displayStudentId, 145, y + 54);
 

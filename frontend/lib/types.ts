@@ -30,6 +30,7 @@ export interface AuthUser {
   hostelBranchId?: string;
   studentId?: string;
   customerCode?: string;
+  customId?: string;
   ihmsId?: string;
   mustChangePassword?: boolean;
   avatarUrl?: string;
@@ -192,6 +193,17 @@ export interface FeeInstallment {
 export interface FeeSummaryData {
   studentId: string;
   customerCode: string;
+  customId?: string;
+  student?: {
+    id: string;
+    studentId?: string;
+    customerCode?: string;
+    customId?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    hostelId?: string;
+  };
   studentName: string;
   hostelName?: string;
   paymentPlan: PaymentPlan;
