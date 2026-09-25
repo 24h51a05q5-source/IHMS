@@ -30,6 +30,9 @@ jobs:
       - name: Validate Frontend Typecheck
         run: npm --workspace=frontend run typecheck
 
+      - name: Run Backend Test Suite
+        run: npm run test:backend
+
       - name: Run Automated System Integrity Suite
         run: npm run test:integrity
 

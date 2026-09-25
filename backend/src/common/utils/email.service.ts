@@ -23,6 +23,15 @@ export interface SendSupportEmailOptions {
   submittedAt?: Date;
 }
 
+export interface SendNotificationEmailOptions {
+  to: string;
+  subject: string;
+  title: string;
+  message: string;
+  actionLabel?: string;
+  actionUrl?: string;
+}
+
 class EmailService {
   private getResendClient(): { resend: Resend | null; apiKey: string; from: string } {
     const apiKey = (
@@ -464,6 +473,70 @@ class EmailService {
       messageId: `dev-support-msg-${options.ticketNumber}`,
     };
   }
+
+  async sendNotificationEmail(options: SendNotificationEmailOptions): Promise<{ success: boolean; messageId: string }> {
+    const recipientEmail = (options.to || '').trim().toLowerCase();
+    if (!recipientEmail) {
+      throw new AppError('Recipient email is required.', 400);
+    }
+
+    const { resend, from: resendFrom } = this.getResendClient();
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
+        <div style="background-color: #111827; padding: 16px 20px; border-radius: 8px; text-align: center;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 20px;">IHMS Hostel Portal</h2>
+        </div>
+        <div style="padding: 24px 10px; color: #1f2937;">
+          <h3 style="color: #111827; margin-top: 0;">${options.title}</h3>
+          <p style="font-size: 14px; line-height: 1.5; color: #4b5563;">${options.message}</p>
+          ${options.actionUrl ? `<div style="text-align: center; margin: 24px 0;"><a href="${options.actionUrl}" style="background-color: #e87545; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">${options.actionLabel || 'Continue'}</a></div>` : ''}
+        </div>
+      </div>
+    `;
+
+    if (resend) {
+      try {
+        const { data, error } = await resend.emails.send({
+          from: resendFrom,
+          to: [recipientEmail],
+          subject: options.subject,
+          html: htmlContent,
+          text: `${options.title}\n\n${options.message}`,
+        });
+        if (!error && data) {
+          return { success: true, messageId: data.id };
+        }
+      } catch (err: any) {
+        console.warn(`[EMAIL-SERVICE] Resend notification failed: ${err.message}`);
+      }
+    }
+
+    const smtp = this.getSmtpConfig();
+    if (smtp.user && smtp.pass && smtp.host) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: smtp.host,
+          port: smtp.port,
+          secure: process.env.SMTP_SECURE === 'true' || smtp.port === 465,
+          auth: { user: smtp.user, pass: smtp.pass },
+        });
+        const info = await transporter.sendMail({
+          from: smtp.from,
+          to: recipientEmail,
+          subject: options.subject,
+          html: htmlContent,
+          text: `${options.title}\n\n${options.message}`,
+        });
+        return { success: true, messageId: info.messageId };
+      } catch (err: any) {
+        console.warn(`[EMAIL-SERVICE] SMTP notification failed: ${err.message}`);
+      }
+    }
+
+    console.log(`[EMAIL-SERVICE] 📧 Notification mock email sent to ${recipientEmail}`);
+    return { success: true, messageId: `mock-notif-${Date.now()}` };
+  }
 }
 
 export const emailService = new EmailService();
+

@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { sanitizeStudentDisplayId } from '../students/student.service';
+import { sanitizeStudentDisplayId, cleanBedNumber } from '../students/student.service';
 
 export interface IReceipt {
   id?: string;
@@ -102,8 +102,9 @@ export class ReceiptPdfService {
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Student ID:', 55, y + 54);
       doc.fillColor('#E87545').fontSize(9.5).font('Helvetica-Bold').text(displayStudentId, 145, y + 54);
 
+      const cleanBed = receipt.bedNumber ? cleanBedNumber(receipt.bedNumber) : '—';
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Room / Bed:', 55, y + 74);
-      doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(`Room ${receipt.roomNumber || '—'} · Bed ${receipt.bedNumber || '—'}`, 145, y + 74);
+      doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(`Room ${receipt.roomNumber || '—'} · Bed ${cleanBed}`, 145, y + 74);
 
       doc.fillColor('#475569').fontSize(9).font('Helvetica').text('Fee Category:', doc.page.width / 2 + 20, y + 34);
       doc.fillColor('#000000').fontSize(9.5).font('Helvetica-Bold').text(receipt.feeType || receipt.installmentMonth || 'Hostel Rent', doc.page.width / 2 + 120, y + 34);

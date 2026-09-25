@@ -11,6 +11,15 @@ export const feesApi = {
   list: (params?: PaginationParams & { studentId?: string; status?: Fee['status'] }) =>
     api.get<Paginated<Fee>>('/fees', { query: params as Record<string, unknown> as Record<string, string | number | boolean | undefined> }),
 
+  getPolicies: (params?: { branchId?: string; hostelId?: string }) =>
+    api.get<{
+      hostelId: string | null;
+      advanceEnabled: boolean;
+      advanceAmount: number;
+      annualMaintenanceEnabled: boolean;
+      annualMaintenanceAmount: number;
+    }>('/fees/policies', { query: params as Record<string, string | number | boolean | undefined> }),
+
   getByStudent: (studentId: string) => api.get<any>(`/fees/student/${studentId}`),
 
   recordAdjustment: (studentId: string, data: { amount: number; reason: string }) =>
@@ -63,4 +72,9 @@ export const feesApi = {
 
   rejectPaymentSubmission: (paymentId: string, reason: string) =>
     api.post<any>(`/fees/payments/${paymentId}/reject-submission`, { reason }),
+  getOverduesSummary: () => api.get<any>('/fees/overdues/summary'),
+
+  listOverdues: (params?: { search?: string; page?: number; pageSize?: number; status?: string }) =>
+    api.get<Paginated<Fee>>('/fees', { query: { ...params, overdueOnly: true } as Record<string, string | number | boolean | undefined> }),
 };
+

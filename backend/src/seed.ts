@@ -5,6 +5,11 @@ import { BedStatus, ComplaintPriority, PaymentMethod, UserRole } from './config/
 import { generateQrDataUrl } from './common/utils/qr-generator';
 
 export async function runSeed() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PRODUCTION_SEED !== 'true') {
+    console.error('[Seed] ❌ DANGER: Seeding is blocked in production environment to prevent data loss.');
+    throw new Error('Seeding blocked in production to prevent data loss. Set ALLOW_PRODUCTION_SEED=true to override.');
+  }
+
   console.log('[Seed] Connecting to PostgreSQL database & running migrations...');
   await connectDatabase();
   await runMigrations();
@@ -61,7 +66,11 @@ export async function runSeed() {
     [orgId]
   );
 
-  const defaultPasswordHash = await bcrypt.hash('Admin@123', 10);
+  const adminPassword = process.env.ADMIN_SEED_PASSWORD || (process.env.NODE_ENV === 'production' ? require('crypto').randomBytes(12).toString('hex') : 'Admin@123');
+  const defaultPasswordHash = await bcrypt.hash(adminPassword, 10);
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`[Seed] 🔑 Generated Production Bootstrap Admin Password: ${adminPassword}`);
+  }
 
   // Super Admin
   await query(

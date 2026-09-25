@@ -46,8 +46,12 @@ function OwnerDashboardPageContent() {
   }, [currentBranchId]);
 
   useEffect(() => {
+    if (user?.role === 'WARDEN') {
+      window.location.href = '/warden/dashboard';
+      return;
+    }
     load();
-  }, [load]);
+  }, [user, load]);
 
   // Real-time refresh hooks
   useRealtimeEvent('payment.success', load);
@@ -57,6 +61,8 @@ function OwnerDashboardPageContent() {
   useRealtimeEvent('bed.updated', load);
 
   if (error) return <ErrorState message={error} onRetry={load} />;
+
+  const isOwnerOrAdmin = user?.role === 'ORGANIZATION_OWNER' || user?.role === 'OWNER' || user?.role === 'SUPER_ADMIN';
 
   return (
     <div className="w-full max-w-full min-w-0 space-y-3.5 sm:space-y-5">
@@ -122,8 +128,8 @@ function OwnerDashboardPageContent() {
         </div>
       )}
 
-      {/* Cashfree Sub-Merchant KYC Incomplete Banner */}
-      {data?.cashfreeOnboardingStatus && data.cashfreeOnboardingStatus !== 'ACTIVE' && (
+      {/* Cashfree Sub-Merchant KYC Incomplete Banner (OWNER / SUPER ADMIN ONLY) */}
+      {isOwnerOrAdmin && data?.cashfreeOnboardingStatus && data.cashfreeOnboardingStatus !== 'ACTIVE' && (
         <div className="w-full min-w-0 rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm mt-0.5">

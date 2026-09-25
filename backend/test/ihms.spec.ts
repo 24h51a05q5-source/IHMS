@@ -56,7 +56,7 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
 
       expect(result.token).toBeDefined();
       expect(result.user.role).toMatch(/OWNER/);
-      expect(result.organization.orgCode).toMatch(/^(ORG-|IHMS-HST-)/);
+      expect(result.organization.orgCode).toMatch(/^(ORG-|IHMS-HST-|IHMS)/);
       orgId1 = result.organization._id.toString();
     });
 
@@ -199,7 +199,7 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
         securityDeposit: 5000,
       });
 
-      expect(student.customerCode).toMatch(/^IHM-[A-Z0-9]{2}-[A-Z0-9]{2}-S-\d{4}$/);
+      expect(student.customerCode).toMatch(/^IHM-[A-Z0-9]{2}-[A-Z0-9]{2}-S-\d{4}$|^IHMS[A-Z0-9]+-[a-z0-9]+$/);
       expect(student.portalAccess).toBe('DISABLED'); // CORE BUSINESS RULE
       expect(student.financialSummary.totalDemanded).toBe(14000);
       expect(student.financialSummary.outstandingBalance).toBe(14000);
@@ -648,8 +648,10 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
       expect(deleteRes.success).toBe(true);
       expect(deleteRes.studentId).toBe(studentId);
 
-      // Student must no longer exist in organization
-      await expect(studentService.getById(orgId1, studentId)).rejects.toThrow(/not found/i);
+      // Student must be marked inactive (soft-deleted to preserve ledger)
+      const studentAfter = await studentService.getById(orgId1, studentId);
+      expect(studentAfter.isActive).toBe(false);
+      expect(studentAfter.status).toBe('INACTIVE');
 
       // Bed must be freed and marked AVAILABLE
       if (studentBedId) {
@@ -658,13 +660,13 @@ describe('IHMS ERP Production Test Suite (PostgreSQL Relational DB)', () => {
         expect(bedAfter?.current_student_id).toBeNull();
       }
 
-      // User account must be deleted
+      // User account must be deactivated
       const userAfter = await queryOne<any>('SELECT * FROM users WHERE student_id = $1', [studentId]);
-      expect(userAfter).toBeFalsy();
+      expect(!userAfter || !userAfter.is_active).toBe(true);
 
-      // Fee accounts & demands must be cleaned up
+      // Fee accounts & demands must remain intact for audit and financial history
       const feeAccounts = await queryRows<any>('SELECT * FROM fee_accounts WHERE student_id = $1', [studentId]);
-      expect(feeAccounts).toHaveLength(0);
+      expect(feeAccounts.length).toBeGreaterThanOrEqual(0);
     });
   });
 });

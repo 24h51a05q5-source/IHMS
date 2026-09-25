@@ -16,6 +16,7 @@
     "build:backend": "npm --workspace=backend run build",
     "build:frontend": "npm --workspace=frontend run build",
     "build:mobile": "npm --workspace=mobile run build",
+    "test": "npm --workspace=backend test",
     "test:backend": "npm --workspace=backend test",
     "test:e2e": "npm --workspace=backend run test:e2e",
     "test:integrity": "npm --workspace=backend run test:integrity",

@@ -38,6 +38,10 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    if (user?.role === 'WARDEN') {
+      window.location.href = '/warden/settings';
+      return;
+    }
     if (user?.hostelName) {
       setHostelName(user.hostelName);
     } else if (currentBranch?.hostelName) {
@@ -153,7 +157,7 @@ export default function SettingsPage() {
         </div>
 
         {/* 1. HOSTEL PROFILE & NAME SETTINGS (Admin/Owner) */}
-        {!hasRole('STUDENT') && (
+        {(hasRole('ORGANIZATION_OWNER') || hasRole('OWNER') || hasRole('SUPER_ADMIN')) && (
           <form
             onSubmit={saveHostelSettings}
             className="space-y-3.5 sm:space-y-4 rounded-xl border border-[#CBD5E1] bg-white p-4 sm:p-6 lg:col-span-2"
@@ -218,7 +222,7 @@ export default function SettingsPage() {
         )}
 
         {/* 2. CASHFREE PAYMENTS (PLATFORM / EASY SPLIT) - SINGLE SOURCE OF TRUTH */}
-        {!hasRole('STUDENT') && (
+        {(hasRole('ORGANIZATION_OWNER') || hasRole('OWNER') || hasRole('SUPER_ADMIN')) && (
           <div className="lg:col-span-2">
             <CashfreePaymentSettings showHeader={false} />
           </div>

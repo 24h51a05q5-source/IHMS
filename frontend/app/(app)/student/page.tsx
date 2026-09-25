@@ -21,6 +21,7 @@ import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { formatBedLabel } from '@/lib/utils';
 import type { StudentDashboardData, Announcement, ApiError } from '@/lib/types';
 
 export default function StudentDashboardPage() {
@@ -42,6 +43,10 @@ export default function StudentDashboardPage() {
       if (res.status === 'fulfilled') {
         setData(res.value);
         setError(null);
+        if (res.value?.profile?.hostelName && typeof window !== 'undefined') {
+          window.localStorage.setItem('ihms_student_hostel_name', res.value.profile.hostelName.trim());
+          window.dispatchEvent(new CustomEvent('ihms:student-hostel-updated', { detail: res.value.profile.hostelName.trim() }));
+        }
       }
       if (annRes.status === 'fulfilled') {
         setAnnouncements(annRes.value || []);
@@ -56,6 +61,12 @@ export default function StudentDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (data?.profile?.hostelName && typeof window !== 'undefined') {
+      window.localStorage.setItem('ihms_student_hostel_name', data.profile.hostelName.trim());
+    }
+  }, [data?.profile?.hostelName]);
 
   useRealtimeEvent('announcement.created', load);
   useRealtimeEvent('payment.success', load);
@@ -129,11 +140,11 @@ export default function StudentDashboardPage() {
           </div>
           <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
             <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Room Number</span>
-            <p className="mt-1 text-sm font-black text-[#111827] font-mono">{data?.profile?.roomNumber || '101'}</p>
+            <p className="mt-1 text-sm font-black text-[#111827] font-mono">{data?.profile?.roomNumber ? `Room ${String(data.profile.roomNumber).replace(/^Room\s+/i, '')}` : 'Room 101'}</p>
           </div>
           <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
             <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Bed Number</span>
-            <p className="mt-1 text-sm font-black text-[#E87545] font-mono">{data?.profile?.bedNumber || 'B01'}</p>
+            <p className="mt-1 text-sm font-black text-[#E87545] font-mono">{formatBedLabel(data?.profile?.bedNumber || '1')}</p>
           </div>
         </div>
       </div>

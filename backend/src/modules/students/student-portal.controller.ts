@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { studentService, sanitizeStudentDisplayId } from './student.service';
+import { studentService, sanitizeStudentDisplayId, cleanBedNumber } from './student.service';
 import { feeService } from '../fees/fee.service';
 import { feeReminderService } from '../fees/fee-reminder.service';
 import { queryOne, queryRows } from '../../config/database';
@@ -12,8 +12,8 @@ router.use(authenticate);
 async function getAuthenticatedStudent(req: Request) {
   const user = req.user!;
   const student = await queryOne<any>(
-    `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.monthly_rate as bed_monthly_rate,
-            COALESCE(o.name, h.hostel_name, h.name, 'Hostel') as hostel_name, h.branch_code
+    `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.bed_number, b.monthly_rate as bed_monthly_rate,
+            COALESCE(h.hostel_name, h.name, o.name, 'Hostel') as hostel_name, h.branch_code
      FROM students s
      LEFT JOIN rooms r ON r.id = s.room_id
      LEFT JOIN beds b ON b.id = s.bed_id
@@ -78,7 +78,8 @@ const handleGetProfile = async (req: Request, res: Response, next: NextFunction)
       roomId: student.room_id,
       roomNumber: student.room_number || '',
       bedId: student.bed_id,
-      bedNumber: student.bed_code || '',
+      bedNumber: student.bed_number ? String(student.bed_number) : (student.bed_code ? cleanBedNumber(student.bed_code) : '1'),
+      bedCode: student.bed_code || '',
       monthlyRent: Number(student.bed_monthly_rate || 0),
       stayDurationMonths: 1,
       totalHostelFee: totalDemanded,
@@ -153,7 +154,8 @@ router.get('/room', async (req: Request, res: Response, next: NextFunction) => {
       roomId: student.room_id,
       roomNumber: student.room_number || '101',
       bedId: student.bed_id,
-      bedNumber: student.bed_code || 'B01',
+      bedNumber: student.bed_number ? String(student.bed_number) : (student.bed_code ? cleanBedNumber(student.bed_code) : '1'),
+      bedCode: student.bed_code || '',
       bedStatus: 'OCCUPIED',
       monthlyRent: Number(student.bed_monthly_rate || 0),
       stayDurationMonths: 1,

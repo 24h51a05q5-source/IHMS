@@ -8,7 +8,7 @@ import { ErrorState } from '@/components/dashboard/states';
 import { Badge, Money } from '@/components/dashboard/confirm-dialog';
 import { studentsApi } from '@/lib/api/students.api';
 import { getCachedData } from '@/lib/api/client';
-import { formatStudentId } from '@/lib/utils';
+import { formatStudentId, formatRoomAndBed, formatBedLabel } from '@/lib/utils';
 import type { ApiError } from '@/lib/types';
 
 interface StudentRoomData {
@@ -41,6 +41,10 @@ export default function StudentRoomPage() {
       const res = await studentsApi.getMyRoom();
       setData(res);
       setError(null);
+      if (res?.hostelName && typeof window !== 'undefined') {
+        window.localStorage.setItem('ihms_student_hostel_name', res.hostelName.trim());
+        window.dispatchEvent(new CustomEvent('ihms:student-hostel-updated', { detail: res.hostelName.trim() }));
+      }
     } catch (err) {
       if (!data) {
         setError((err as ApiError)?.message || 'Unable to load your room and bed details.');
@@ -111,7 +115,7 @@ export default function StudentRoomPage() {
             </div>
             <div className="min-w-0">
               <p className="text-[11px] font-bold text-[#64748B] uppercase">Room & Bed</p>
-              <p className="truncate text-sm font-black text-[#111827]">Room {data.roomNumber} · Bed {data.bedNumber}</p>
+              <p className="truncate text-sm font-black text-[#111827]">{formatRoomAndBed(data.roomNumber, data.bedNumber)}</p>
             </div>
           </div>
         </div>
@@ -148,8 +152,8 @@ export default function StudentRoomPage() {
           <InfoItem label="Hostel Branch" value={data.hostelName} />
           <InfoItem label="Building Name" value={data.buildingName} />
           <InfoItem label="Floor Number" value={`Floor ${data.floorNumber}`} />
-          <InfoItem label="Room Number" value={data.roomNumber} highlight />
-          <InfoItem label="Bed Number" value={data.bedNumber} highlight />
+          <InfoItem label="Room Number" value={data.roomNumber ? `Room ${String(data.roomNumber).replace(/^Room\s+/i, '')}` : '—'} highlight />
+          <InfoItem label="Bed Number" value={formatBedLabel(data.bedNumber)} highlight />
           <InfoItem label="Monthly Rent / Bed" value={`₹${data.monthlyRent?.toLocaleString('en-IN')}`} />
           <InfoItem label="Stay Duration" value={`${data.stayDurationMonths || 1} Month${(data.stayDurationMonths || 1) > 1 ? 's' : ''}`} />
           <InfoItem label="Total Hostel Fee" value={`₹${data.totalHostelFee?.toLocaleString('en-IN')}`} />

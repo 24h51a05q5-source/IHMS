@@ -70,6 +70,12 @@ export async function connectDatabase(): Promise<Pool> {
 
     return pool;
   } catch (err: any) {
+    // Production Safety Guard: Never silently fall back to an ephemeral database in production or staging (ISSUE-003)
+    if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+      console.error(`[Database] ❌ FATAL: PostgreSQL connection failed in ${process.env.NODE_ENV} environment: ${err.message}`);
+      throw new Error(`Production database connection failed: ${err.message}. Refusing to fall back to in-memory database.`);
+    }
+
     console.warn(`[Database] ⚠️ Direct PostgreSQL connection unreachable (${err.message || 'connection refused'}).`);
     console.log('[Database] 🐘 Initializing local embedded PostgreSQL database engine (SQL compliant)...');
     

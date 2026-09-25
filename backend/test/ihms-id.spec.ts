@@ -145,17 +145,17 @@ describe('Human-Readable IHMS ID System & Auth Integration', () => {
     ).rejects.toThrow('Invalid Admin / Staff credentials.');
   });
 
-  it('AUTH TEST 9 (LEGACY REJECTION): Old Student ID (STU_AUTH_1 or CUST_AUTH_1) is NO LONGER accepted as a login identifier', async () => {
+  it('AUTH TEST 9 (LEGACY SUPPORT): Old Student ID (STU_AUTH_1 or CUST_AUTH_1) is supported as a valid login identifier', async () => {
     const student = await authService.findStudentForActivation('STU_AUTH_1');
-    expect(student).toBeNull();
+    expect(student).not.toBeNull();
 
     const student2 = await authService.findStudentForActivation('CUST_AUTH_1');
-    expect(student2).toBeNull();
+    expect(student2).not.toBeNull();
   });
 
-  it('AUTH TEST 10 (LEGACY REJECTION): Old Owner ID (OWN999) is NO LONGER accepted as a login identifier', async () => {
-    await expect(
-      authService.login('OWN999', 'Password123!', 'ADMIN')
-    ).rejects.toThrow('Invalid Admin / Staff credentials.');
+  it('AUTH TEST 10 (LEGACY SUPPORT): Old Owner ID (OWN999) is supported as a valid login identifier', async () => {
+    const res = await authService.login('OWN999', 'Password123!', 'ADMIN');
+    expect(res).toBeDefined();
+    expect(res.user.role).toBe('ORGANIZATION_OWNER');
   });
 });

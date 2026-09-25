@@ -12,19 +12,46 @@ router.use(authenticate);
 // Attendance routes
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { studentId, page = 1, pageSize = 50 } = req.query;
+    const { studentId, hostelId, branchId, date, page = 1, pageSize = 50 } = req.query;
     const orgId = req.user!.organizationId;
+    const userRole = req.user!.role;
 
     let sql = 'SELECT * FROM attendances WHERE organization_id = $1';
     const params: any[] = [orgId];
 
-    if (req.user!.role === UserRole.STUDENT) {
+    if (userRole === UserRole.STUDENT) {
       const sId = req.user!.studentId || req.user!.id;
       params.push(sId);
       sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
-    } else if (studentId) {
+    } else if (userRole === UserRole.WARDEN) {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const requestedHostel = (hostelId || branchId) as string;
+      if (requestedHostel && requestedHostel !== 'ALL' && wardenHostelId && requestedHostel !== wardenHostelId) {
+        return res.status(403).json({ success: false, message: 'Access denied: Warden cannot view attendance for another hostel.' });
+      }
+      if (wardenHostelId) {
+        params.push(wardenHostelId);
+        sql += ` AND (branch_id = $${params.length} OR hostel_id = $${params.length})`;
+      }
+    } else {
+      const targetHostel = (hostelId || branchId) as string;
+      if (targetHostel && targetHostel !== 'ALL') {
+        params.push(targetHostel);
+        sql += ` AND (branch_id = $${params.length} OR hostel_id = $${params.length})`;
+      }
+    }
+
+    if (studentId) {
       params.push(studentId);
       sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
+    }
+
+    if (date) {
+      const parsedDate = new Date(date as string);
+      if (!isNaN(parsedDate.getTime())) {
+        params.push(parsedDate.toISOString().split('T')[0]);
+        sql += ` AND date = $${params.length}::date`;
+      }
     }
 
     const countSql = `SELECT COUNT(*)::int as total FROM (${sql}) as sub`;
@@ -45,6 +72,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       customerCode: r.customer_code || '',
       date: r.date,
       status: r.status || 'PRESENT',
+      markedBy: r.marked_by || 'Staff',
+      markedByRole: r.marked_by_role || (userRole === UserRole.WARDEN ? 'WARDEN' : 'OWNER'),
+      hostelId: r.hostel_id || r.branch_id,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
       checkInTime: r.created_at,
       checkOutTime: r.created_at,
     }));
@@ -67,6 +99,26 @@ router.get('/student/:studentId', async (req: Request, res: Response, next: Next
     const { studentId } = req.params;
     const { startDate, endDate, page = 1, pageSize = 50 } = req.query;
     const orgId = req.user!.organizationId;
+    const userRole = req.user!.role;
+
+    if (userRole === UserRole.STUDENT) {
+      const myId = req.user!.studentId || req.user!.id;
+      const myCode = req.user!.customerCode || '';
+      if (studentId !== myId && studentId !== myCode && studentId !== req.user!.id) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to view other students’ attendance.' });
+      }
+    }
+
+    if (userRole === UserRole.WARDEN) {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const studentRec = await queryOne<any>(
+        'SELECT hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
+        [studentId, orgId]
+      );
+      if (studentRec && wardenHostelId && studentRec.hostel_id && studentRec.hostel_id !== wardenHostelId) {
+        return res.status(403).json({ success: false, message: 'Access denied: Warden cannot view attendance for another hostel.' });
+      }
+    }
 
     let sql = 'SELECT * FROM attendances WHERE organization_id = $1 AND (student_id = $2 OR customer_code = $2)';
     const params: any[] = [orgId, studentId];
@@ -98,6 +150,11 @@ router.get('/student/:studentId', async (req: Request, res: Response, next: Next
       customerCode: r.customer_code || '',
       date: r.date,
       status: r.status || 'PRESENT',
+      markedBy: r.marked_by || 'Staff',
+      markedByRole: r.marked_by_role || (userRole === UserRole.WARDEN ? 'WARDEN' : 'OWNER'),
+      hostelId: r.hostel_id || r.branch_id,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
       checkInTime: r.created_at,
       checkOutTime: r.created_at,
     }));
@@ -119,35 +176,77 @@ const handleMarkAttendance = async (req: Request, res: Response, next: NextFunct
   try {
     const { studentId, date, status } = req.body;
     const orgId = req.user!.organizationId;
-    const student = await queryOne<any>('SELECT * FROM students WHERE (id = $1 OR user_id = $1) AND organization_id = $2', [studentId, orgId]);
+    const userRole = req.user!.role;
+
+    if (userRole === UserRole.STUDENT) {
+      return res.status(403).json({ success: false, message: 'Students are not authorized to mark attendance.' });
+    }
+
+    const student = await queryOne<any>(
+      'SELECT * FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
+      [studentId, orgId]
+    );
+
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student record not found in this hostel organization.' });
+    }
+
+    if (userRole === UserRole.WARDEN) {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      if (wardenHostelId && student.hostel_id && student.hostel_id !== wardenHostelId) {
+        return res.status(403).json({ success: false, message: 'Access denied: Warden cannot mark attendance for a student in another hostel.' });
+      }
+    }
 
     const attDate = date ? new Date(date) : new Date();
     attDate.setHours(0, 0, 0, 0);
 
     const attId = require('crypto').randomUUID();
-    const branchId = student?.hostel_id || req.user!.branchId || 'default-branch';
+    const branchId = student.hostel_id || req.user!.branchId || 'default-branch';
+    const hostelId = student.hostel_id || req.user!.branchId || branchId;
+
+    const markedBy = req.user!.name || req.user!.email || 'Staff';
+    const markedByRole = userRole === UserRole.WARDEN ? 'WARDEN' : (userRole === UserRole.OWNER || (userRole as string) === 'ORGANIZATION_OWNER' ? 'OWNER' : userRole);
 
     const record = await queryOne<any>(
       `INSERT INTO attendances (
-        id, organization_id, branch_id, student_id, customer_code,
-        student_name, date, status, marked_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        id, organization_id, branch_id, hostel_id, student_id, customer_code,
+        student_name, date, status, marked_by, marked_by_role
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (organization_id, branch_id, student_id, date)
-      DO UPDATE SET status = $8, updated_at = CURRENT_TIMESTAMP
+      DO UPDATE SET status = $9, marked_by = $10, marked_by_role = $11, updated_at = CURRENT_TIMESTAMP
       RETURNING *`,
       [
         attId,
         orgId,
         branchId,
-        studentId,
+        hostelId,
+        student.id,
         student?.customer_code || '',
         student?.full_name || 'Resident',
         attDate,
         status || 'PRESENT',
-        req.user!.name || req.user!.email || 'Staff'
+        markedBy,
+        markedByRole,
       ]
     );
-    res.status(201).json({ success: true, data: record });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: record.id,
+        studentId: record.student_id,
+        customerCode: record.customer_code,
+        studentName: record.student_name,
+        date: record.date,
+        status: record.status,
+        markedBy: record.marked_by,
+        markedByRole: record.marked_by_role,
+        hostelId: record.hostel_id || record.branch_id,
+        createdAt: record.created_at,
+        updatedAt: record.updated_at,
+      },
+    });
   } catch (err) { next(err); }
 };
 
@@ -218,7 +317,9 @@ const handleApplyLeave = async (req: Request, res: Response, next: NextFunction)
   try {
     const { studentId, fromDate, toDate, startDate, endDate, reason } = req.body;
     const orgId = req.user!.organizationId;
-    const targetStudentId = studentId || req.user!.studentId || req.user!.id;
+    const targetStudentId = req.user!.role === UserRole.STUDENT
+      ? (req.user!.studentId || req.user!.id)
+      : (studentId || req.user!.studentId || req.user!.id);
 
     const student = await queryOne<any>(
       'SELECT * FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
@@ -288,16 +389,24 @@ const handleApproveLeave = async (req: Request, res: Response, next: NextFunctio
   } catch (err) { next(err); }
 };
 
-router.patch('/leave/:id/approve', handleApproveLeave);
-router.patch('/leave/:id/status', handleApproveLeave);
-router.patch('/:id/approve', handleApproveLeave);
-router.patch('/:id/status', handleApproveLeave);
+router.patch('/leave/:id/approve', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.BRANCH_MANAGER), handleApproveLeave);
+router.patch('/leave/:id/status', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.BRANCH_MANAGER), handleApproveLeave);
+router.patch('/:id/approve', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.BRANCH_MANAGER), handleApproveLeave);
+router.patch('/:id/status', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.BRANCH_MANAGER), handleApproveLeave);
 
 const handleGetStudentLeaves = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { studentId } = req.params;
     const { status, page = 1, pageSize = 50 } = req.query;
     const orgId = req.user!.organizationId;
+
+    if (req.user!.role === UserRole.STUDENT) {
+      const myId = req.user!.studentId || req.user!.id;
+      const myCode = req.user!.customerCode || '';
+      if (studentId !== myId && studentId !== myCode && studentId !== req.user!.id) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to view other students’ leave requests.' });
+      }
+    }
 
     let sql = 'SELECT * FROM leave_requests WHERE organization_id = $1 AND (student_id = $2 OR customer_code = $2)';
     const params: any[] = [orgId, studentId];

@@ -20,7 +20,7 @@ import { PageErrorBoundary } from '@/components/dashboard/error-boundary';
 import type { AttendanceRecord, LeaveRequest, ApiError } from '@/lib/types';
 
 function AttendancePageContent() {
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   const cachedAttendance = getCachedData<{ items: AttendanceRecord[] }>('/attendance', { date: selectedDate, pageSize: 100 });
@@ -54,14 +54,14 @@ function AttendancePageContent() {
     loadData();
   }, [loadData]);
 
-  const handleMark = async (studentId: string, status: AttendanceRecord['status']) => {
+  const handleMark = async (studentId: string, status: AttendanceRecord['status'], studentName?: string) => {
     try {
       await attendanceApi.mark({
         studentId,
         date: selectedDate,
         status,
       });
-      toast.success(`Attendance marked as ${status}`);
+      toast.success(`Attendance marked as ${status}${studentName ? ` for ${studentName}` : ''}`);
       loadData();
     } catch (err) {
       toast.error((err as ApiError)?.message || 'Failed to mark attendance.');
@@ -78,9 +78,38 @@ function AttendancePageContent() {
     }
   };
 
-  const presentCount = attendance.filter((a) => a.status === 'PRESENT').length;
-  const absentCount = attendance.filter((a) => a.status === 'ABSENT').length;
+  // Combine active students with existing date attendance records
+  const displayAttendance = (students.length ? students : attendance).map((s) => {
+    const isStudentItem = Boolean(s.fullName || s.name);
+    const stuId = isStudentItem ? s.id : s.studentId;
+    const stuCode = isStudentItem ? (s.customerCode || s.studentId) : (s.customerCode || s.studentId);
+    const stuName = isStudentItem ? (s.fullName || s.name) : (s.studentName || 'Resident');
+
+    const existing = attendance.find(
+      (a) => a.studentId === stuId || a.customerCode === stuCode || a.studentId === stuCode
+    );
+
+    return {
+      id: existing?.id || `roster-${stuId}`,
+      studentId: stuId,
+      customerCode: stuCode,
+      studentName: stuName,
+      roomNumber: s.roomNumber || '',
+      date: selectedDate,
+      status: existing?.status || 'UNMARKED',
+      markedBy: existing?.markedBy,
+      markedByRole: existing?.markedByRole,
+      createdAt: existing?.createdAt,
+      updatedAt: existing?.updatedAt,
+      checkInTime: existing?.checkInTime,
+    };
+  });
+
+  const presentCount = displayAttendance.filter((a) => a.status === 'PRESENT').length;
+  const absentCount = displayAttendance.filter((a) => a.status === 'ABSENT').length;
   const pendingLeaves = leaves.filter((l) => l.status === 'PENDING').length;
+
+  const canMarkAttendance = hasRole('ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'WARDEN') && !hasRole('STUDENT');
 
   const attendanceColumns: Column<any>[] = [
     {
@@ -89,7 +118,10 @@ function AttendancePageContent() {
       cell: (a) => (
         <div>
           <p className="font-semibold text-foreground">{a.studentName || 'Resident'}</p>
-          <p className="text-xs font-mono text-muted-foreground">{formatStudentId(a.customerCode || a.studentId)}</p>
+          <p className="text-xs font-mono text-muted-foreground">
+            {formatStudentId(a.customerCode || a.studentId)}
+            {a.roomNumber ? ` • Room ${a.roomNumber}` : ''}
+          </p>
         </div>
       ),
     },
@@ -99,19 +131,75 @@ function AttendancePageContent() {
       cell: (a) => new Date(a.date).toLocaleDateString('en-IN'),
     },
     {
-      key: 'checkIn',
-      header: 'Check-in Time',
-      cell: (a) => a.checkInTime || '—',
-      hideOnMobile: true,
-    },
-    {
       key: 'status',
       header: 'Attendance Status',
       cell: (a) => (
-        <Badge variant={a.status === 'PRESENT' ? 'success' : a.status === 'ABSENT' ? 'error' : 'warning'}>
+        <Badge
+          variant={
+            a.status === 'PRESENT'
+              ? 'success'
+              : a.status === 'ABSENT'
+              ? 'error'
+              : 'warning'
+          }
+        >
           {a.status}
         </Badge>
       ),
+    },
+    {
+      key: 'markedBy',
+      header: 'Marked By / Audit',
+      cell: (a) => (
+        <div className="text-xs">
+          {a.markedBy ? (
+            <div>
+              <span className="font-semibold text-slate-800">{a.markedBy}</span>
+              <span className="ml-1 text-[10px] font-bold uppercase text-slate-500">
+                ({a.markedByRole || 'Staff'})
+              </span>
+            </div>
+          ) : (
+            <span className="text-slate-400 italic">Not Marked</span>
+          )}
+        </div>
+      ),
+      hideOnMobile: true,
+    },
+    {
+      key: 'actions',
+      header: 'Mark Attendance',
+      cell: (a) =>
+        canMarkAttendance ? (
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className={`h-7 px-2.5 text-xs font-bold transition-all ${
+                a.status === 'PRESENT'
+                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-xs'
+                  : 'text-emerald-700 hover:bg-emerald-50 border-emerald-300 bg-white'
+              }`}
+              onClick={() => handleMark(a.studentId, 'PRESENT', a.studentName)}
+            >
+              Present
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className={`h-7 px-2.5 text-xs font-bold transition-all ${
+                a.status === 'ABSENT'
+                  ? 'bg-rose-600 text-white border-rose-600 hover:bg-rose-700 shadow-xs'
+                  : 'text-rose-700 hover:bg-rose-50 border-rose-300 bg-white'
+              }`}
+              onClick={() => handleMark(a.studentId, 'ABSENT', a.studentName)}
+            >
+              Absent
+            </Button>
+          </div>
+        ) : (
+          <span className="text-xs text-slate-400 italic">View Only</span>
+        ),
     },
   ];
 
@@ -178,14 +266,14 @@ function AttendancePageContent() {
     },
   ];
 
-  const filteredAttendance = attendance.filter((a) => {
+  const filteredAttendance = displayAttendance.filter((a) => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
     return (
       (a.studentName || '').toLowerCase().includes(q) ||
       (a.customerCode || a.studentId || '').toLowerCase().includes(q) ||
       (a.status || '').toLowerCase().includes(q) ||
-      (a.checkInTime || '').toLowerCase().includes(q) ||
+      (a.markedBy || '').toLowerCase().includes(q) ||
       (a.date ? new Date(a.date).toLocaleDateString('en-IN') : '').toLowerCase().includes(q)
     );
   });
@@ -220,10 +308,34 @@ function AttendancePageContent() {
           <p className="font-bold text-[#111827]">{new Date(a.date).toLocaleDateString('en-IN')}</p>
         </div>
         <div>
-          <span className="text-[10px] font-extrabold uppercase tracking-wide text-[#64748B]">Check-in</span>
-          <p className="font-bold text-[#111827]">{a.checkInTime || '—'}</p>
+          <span className="text-[10px] font-extrabold uppercase tracking-wide text-[#64748B]">Marked By</span>
+          <p className="font-bold text-[#111827]">{a.markedBy ? `${a.markedBy} (${a.markedByRole || 'Staff'})` : '—'}</p>
         </div>
       </div>
+      {canMarkAttendance && (
+        <div className="flex items-center justify-end gap-2 border-t border-[#E4E0D7] pt-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-8 text-xs font-bold ${
+              a.status === 'PRESENT' ? 'bg-emerald-600 text-white border-emerald-600' : 'text-emerald-600 border-emerald-300 bg-white'
+            }`}
+            onClick={() => handleMark(a.studentId, 'PRESENT', a.studentName)}
+          >
+            Present
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={`h-8 text-xs font-bold ${
+              a.status === 'ABSENT' ? 'bg-rose-600 text-white border-rose-600' : 'text-rose-600 border-rose-300 bg-white'
+            }`}
+            onClick={() => handleMark(a.studentId, 'ABSENT', a.studentName)}
+          >
+            Absent
+          </Button>
+        </div>
+      )}
     </div>
   );
 

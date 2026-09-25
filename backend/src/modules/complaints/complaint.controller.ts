@@ -75,6 +75,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 router.get('/student/:studentId', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const orgId = req.user!.organizationId;
+
+    if (req.user!.role === UserRole.STUDENT) {
+      const myId = req.user!.studentId || req.user!.id;
+      const myCode = req.user!.customerCode || '';
+      if (req.params.studentId !== myId && req.params.studentId !== myCode && req.params.studentId !== req.user!.id) {
+        return res.status(403).json({ success: false, message: 'You do not have permission to view other students’ complaints.' });
+      }
+    }
+
     const complaints = await queryRows<any>(
       `SELECT * FROM complaints
        WHERE organization_id = $1 AND (student_id = $2 OR customer_code = $2)
@@ -104,7 +113,9 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { title, description, category, priority, studentId } = req.body;
     const orgId = req.user!.organizationId;
-    const targetStudentId = studentId || req.user!.studentId || req.user!.id;
+    const targetStudentId = req.user!.role === UserRole.STUDENT
+      ? (req.user!.studentId || req.user!.id)
+      : (studentId || req.user!.studentId || req.user!.id);
 
     const student = await queryOne<any>(
       'SELECT id, customer_code, full_name, hostel_id FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2',
@@ -184,7 +195,9 @@ const handleUpdateStatus = async (req: Request, res: Response, next: NextFunctio
   } catch (err) { next(err); }
 };
 
-router.patch('/:id/status', handleUpdateStatus);
-router.patch('/:id/resolve', handleUpdateStatus);
+const staffComplaintGuard = authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.MAINTENANCE_STAFF, UserRole.BRANCH_MANAGER);
+
+router.patch('/:id/status', staffComplaintGuard, handleUpdateStatus);
+router.patch('/:id/resolve', staffComplaintGuard, handleUpdateStatus);
 
 export const complaintRouter = router;

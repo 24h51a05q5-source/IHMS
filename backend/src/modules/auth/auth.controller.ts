@@ -101,7 +101,20 @@ router.post('/logout', (req: Request, res: Response) => {
 
 router.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json({ success: true, message: 'Session refreshed' });
+    const refreshToken = req.body?.refreshToken || (req.headers['x-refresh-token'] as string);
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, message: 'Refresh token is required' });
+    }
+    const result = await authService.refreshSession(refreshToken);
+    res.json({
+      success: true,
+      message: 'Session refreshed successfully',
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      token: result.token,
+      user: result.user,
+      data: result,
+    });
   } catch (err) { next(err); }
 });
 
@@ -155,14 +168,45 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
   }
 });
 
+const handleUpdateUserProfile = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user!.id;
+    const { name, phone, language, preferredLanguage } = req.body;
+    const targetLang = language || preferredLanguage;
+
+    const queryOne = require('../../config/database').queryOne;
+    const updatedUser = await queryOne(
+      `UPDATE users
+       SET name = COALESCE(NULLIF($1, ''), name),
+           phone = COALESCE(NULLIF($2, ''), phone),
+           preferred_language = COALESCE(NULLIF($3, ''), preferred_language),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+       RETURNING id, name, email, role, phone, preferred_language as "preferredLanguage", organization_id as "organizationId", branch_id as "branchId"`,
+      [name || null, phone || null, targetLang || null, userId]
+    );
+
+    res.json({
+      success: true,
+      data: updatedUser,
+      user: updatedUser,
+      message: 'Profile updated successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+router.put('/profile', authenticate, handleUpdateUserProfile);
+router.patch('/profile', authenticate, handleUpdateUserProfile);
+
 router.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { identifier, email, newPassword } = req.body;
+    const { identifier, email } = req.body;
     const target = identifier || email;
 
-    if (newPassword) {
-      const result = await authService.forgotPassword(target, newPassword);
-      return res.json({ success: true, data: result, message: result.message });
+    if (!target || typeof target !== 'string' || !target.trim()) {
+      return res.status(400).json({ success: false, message: 'Identifier or registered email is required' });
     }
 
     const result = await authService.requestPasswordResetOtp(target);
@@ -343,6 +387,94 @@ router.post('/activate-student-account', async (req: Request, res: Response, nex
     const targetPassword = newPassword || password;
     const isAgree = agreeToTerms !== undefined ? Boolean(agreeToTerms) : (termsAccepted !== undefined ? Boolean(termsAccepted) : undefined);
     const result = await authService.activateStudentAccount(targetToken, targetPassword, confirmPassword, isAgree);
+    res.json({
+      success: true,
+      data: result,
+      token: result.token,
+      accessToken: result.token,
+      refreshToken: result.refreshToken,
+      user: result.user,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ----------------------------------------------------
+// WARDEN ACCOUNT ACTIVATION ENDPOINTS
+// ----------------------------------------------------
+
+router.post('/warden/send-otp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { identifier, email } = req.body;
+    const target = identifier || email;
+    const result = await authService.sendWardenActivationOtp(target);
+    res.json({
+      success: true,
+      data: result,
+      ...result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/warden/warden-status', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { identifier, email } = req.body;
+    const target = identifier || email;
+    const result = await authService.getWardenLoginStatus(target);
+    res.json({
+      success: true,
+      data: result,
+      ...result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/warden/verify-otp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { identifier, email, otp, code } = req.body;
+    const target = identifier || email;
+    const otpValue = otp || code;
+    const result = await authService.verifyWardenActivationOtp(target, otpValue);
+    res.json({
+      success: true,
+      data: result,
+      activationToken: result.activationToken,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/warden/resend-otp', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { identifier, email } = req.body;
+    const target = identifier || email;
+    const result = await authService.resendWardenActivationOtp(target);
+    res.json({
+      success: true,
+      data: result,
+      ...result,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/warden/activate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { activationToken, token, newPassword, password, confirmPassword, agreeToTerms, termsAccepted } = req.body;
+    const targetToken = activationToken || token;
+    const targetPassword = newPassword || password;
+    const isAgree = agreeToTerms !== undefined ? Boolean(agreeToTerms) : (termsAccepted !== undefined ? Boolean(termsAccepted) : undefined);
+    const result = await authService.activateWardenAccount(targetToken, targetPassword, confirmPassword, isAgree);
     res.json({
       success: true,
       data: result,

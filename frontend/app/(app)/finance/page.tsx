@@ -286,12 +286,12 @@ function FinancePageContent() {
       </div>
 
       <Tabs defaultValue="expenses" className="space-y-4">
-        <TabsList className="bg-[#ECE9E1] border border-[#DDD8CC]">
-          <TabsTrigger value="expenses" className="gap-2">
-            <Receipt className="h-4 w-4" /> Expenses ({expenses.length})
+        <TabsList className="w-full sm:w-auto flex items-center justify-start overflow-x-auto overflow-y-hidden max-w-full min-w-0 no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden bg-[#ECE9E1] border border-[#DDD8CC] p-1 pr-2.5 sm:pr-1">
+          <TabsTrigger value="expenses" className="shrink-0 gap-2">
+            <Receipt className="h-4 w-4 shrink-0" /> Expenses ({expenses.length})
           </TabsTrigger>
-          <TabsTrigger value="vouchers" className="gap-2">
-            <BarChart3 className="h-4 w-4" /> Double-Entry Vouchers ({vouchers.length})
+          <TabsTrigger value="vouchers" className="shrink-0 gap-2">
+            <BarChart3 className="h-4 w-4 shrink-0" /> Double-Entry Vouchers ({vouchers.length})
           </TabsTrigger>
         </TabsList>
 

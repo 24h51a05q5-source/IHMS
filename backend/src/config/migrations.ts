@@ -500,10 +500,14 @@ export async function runMigrations(): Promise<void> {
       status TEXT DEFAULT 'PRESENT',
       type TEXT DEFAULT 'NIGHT_CHECK',
       marked_by TEXT,
+      marked_by_role TEXT,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_att_org_branch_stud_date ON attendances(organization_id, branch_id, student_id, date)`,
+    `ALTER TABLE attendances ADD COLUMN IF NOT EXISTS marked_by_role TEXT`,
+    `ALTER TABLE attendances ADD COLUMN IF NOT EXISTS hostel_id TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'en'`,
 
     // 20. Leave Requests
     `CREATE TABLE IF NOT EXISTS leave_requests (
@@ -999,21 +1003,84 @@ export async function runMigrations(): Promise<void> {
      FROM room_allocations ra
      JOIN students s ON s.id = ra.student_id
      WHERE ra.status = 'ACTIVE' AND s.is_active = TRUE`,
+    // Warden Role & Access Control Migrations
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_given BOOLEAN DEFAULT FALSE`,
+    `CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status)`,
+    // Optional Advance Fee & Annual Maintenance Fee Policy Migrations
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS advance_enabled BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS advance_amount NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS annual_maintenance_enabled BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE hostels ADD COLUMN IF NOT EXISTS annual_maintenance_amount NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_accounts ADD COLUMN IF NOT EXISTS advance_credit NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_accounts ADD COLUMN IF NOT EXISTS advance_balance NUMERIC(12, 2) DEFAULT 0.00`,
+    `ALTER TABLE fee_accounts ADD COLUMN IF NOT EXISTS advance_applied NUMERIC(12, 2) DEFAULT 0.00`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_demands_annual_maint_unique ON fee_demands(organization_id, student_id, fee_structure_id, academic_period) WHERE fee_structure_id = 'ANNUAL_MAINTENANCE'`,
   ];
 
-  for (const stmt of statements) {
+  const isPg = !isEmbeddedPostgres();
+  if (isPg) {
     try {
-      await query(stmt);
-    } catch (e: any) {
-      console.warn(`[Migrations] Note on executing statement: ${e.message}`);
+      await query('SELECT pg_advisory_lock(7429148)');
+    } catch {
+      /* ignore if custom adapter does not support advisory lock */
     }
   }
 
-  await migrateHostelCodes();
-  await migrateStudentCustomIds();
-  await backfillIhmsIds();
+  try {
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version VARCHAR(255) PRIMARY KEY,
+          name TEXT NOT NULL,
+          executed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (e: any) {
+      console.warn(`[Migrations] Note on schema_migrations table: ${e.message}`);
+    }
 
-  console.log('[Migrations] ✅ All PostgreSQL tables, indexes, and IHMS IDs are ready.');
+    let executedSet = new Set<string>();
+    try {
+      const executedRows = await query('SELECT version FROM schema_migrations');
+      executedSet = new Set(executedRows.rows.map((r: any) => r.version));
+    } catch {
+      /* proceed */
+    }
+
+    for (let i = 0; i < statements.length; i++) {
+      const version = `v1_stmt_${String(i).padStart(4, '0')}`;
+      if (executedSet.has(version)) {
+        continue;
+      }
+      const stmt = statements[i];
+      try {
+        await query(stmt);
+        try {
+          await query(
+            'INSERT INTO schema_migrations (version, name) VALUES ($1, $2) ON CONFLICT (version) DO NOTHING',
+            [version, stmt.slice(0, 80).replace(/\s+/g, ' ')]
+          );
+          executedSet.add(version);
+        } catch { }
+      } catch (e: any) {
+        console.warn(`[Migrations] Note on executing statement ${version}: ${e.message}`);
+      }
+    }
+
+    await migrateHostelCodes();
+    await migrateStudentCustomIds();
+    await backfillIhmsIds();
+
+    console.log('[Migrations] ✅ All PostgreSQL tables, indexes, and IHMS IDs are ready.');
+  } finally {
+    if (isPg) {
+      try {
+        await query('SELECT pg_advisory_unlock(7429148)');
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 export async function backfillIhmsIds(): Promise<void> {

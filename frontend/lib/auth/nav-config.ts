@@ -13,6 +13,7 @@ export const OWNER_NAV: NavItem[] = [
   { section: 'MAIN', label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER'] },
   
   { section: 'HOSTEL MANAGEMENT', label: 'Hostels', href: '/hostels', icon: 'Building2', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Warden Management', href: '/owner/wardens', icon: 'ShieldCheck', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN'] },
   { section: 'HOSTEL MANAGEMENT', label: 'Students', href: '/students', icon: 'Users', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER', 'WARDEN', 'RECEPTIONIST'] },
   { section: 'HOSTEL MANAGEMENT', label: 'Rooms & Beds', href: '/rooms', icon: 'BedDouble', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'BRANCH_MANAGER', 'WARDEN'] },
   { section: 'HOSTEL MANAGEMENT', label: 'Attendance', href: '/attendance', icon: 'CalendarCheck', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'BRANCH_MANAGER', 'WARDEN'] },
@@ -22,7 +23,7 @@ export const OWNER_NAV: NavItem[] = [
   { section: 'FINANCE', label: 'Finance', href: '/finance', icon: 'Wallet', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT'] },
   { section: 'FINANCE', label: 'Reports', href: '/reports', icon: 'BarChart3', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'ACCOUNTANT'] },
 
-  { section: 'OPERATIONS', label: 'Mess', href: '/mess', icon: 'Utensils', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'MESS_MANAGER'] },
+  { section: 'OPERATIONS', label: 'Mess', href: '/mess', icon: 'Utensils', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'MESS_MANAGER', 'WARDEN'] },
   { section: 'OPERATIONS', label: 'Inventory', href: '/inventory', icon: 'Boxes', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'INVENTORY_MANAGER'] },
   { section: 'OPERATIONS', label: 'Complaints', href: '/complaints', icon: 'MessageSquareWarning', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'BRANCH_MANAGER', 'WARDEN', 'MAINTENANCE_STAFF'], badge: 'complaints' },
   { section: 'OPERATIONS', label: 'Announcements', href: '/announcements', icon: 'Megaphone', roles: ['ORGANIZATION_OWNER', 'PLATFORM_SUPER_ADMIN', 'REGIONAL_MANAGER', 'BRANCH_MANAGER', 'WARDEN'] },
@@ -31,6 +32,22 @@ export const OWNER_NAV: NavItem[] = [
   { section: 'SYSTEM', label: 'Help & Support', href: '/support', icon: 'LifeBuoy', roles: 'ALL' },
   { section: 'SYSTEM', label: 'Terms & Conditions', href: '/terms', icon: 'FileText', roles: 'ALL' },
   { section: 'SYSTEM', label: 'Settings', href: '/settings', icon: 'Settings', roles: 'ALL' },
+];
+
+export const WARDEN_NAV: NavItem[] = [
+  { section: 'MAIN', label: 'Dashboard', href: '/warden/dashboard', icon: 'LayoutDashboard', roles: ['WARDEN'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Students', href: '/students', icon: 'Users', roles: ['WARDEN'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Rooms & Beds', href: '/rooms', icon: 'BedDouble', roles: ['WARDEN'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Attendance', href: '/attendance', icon: 'CalendarCheck', roles: ['WARDEN'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Overdues', href: '/warden/overdues', icon: 'AlertTriangle', roles: ['WARDEN'] },
+  { section: 'HOSTEL MANAGEMENT', label: 'Visitors', href: '/visitors', icon: 'UserCheck', roles: ['WARDEN'] },
+  { section: 'OPERATIONS', label: 'Complaints', href: '/complaints', icon: 'MessageSquareWarning', roles: ['WARDEN'], badge: 'complaints' },
+  { section: 'OPERATIONS', label: 'Announcements', href: '/announcements', icon: 'Megaphone', roles: ['WARDEN'] },
+  { section: 'OPERATIONS', label: 'Mess', href: '/mess', icon: 'Utensils', roles: ['WARDEN'] },
+  { section: 'SYSTEM', label: 'Notifications', href: '/notifications', icon: 'Bell', roles: 'ALL', badge: 'notifications' },
+  { section: 'SYSTEM', label: 'Settings', href: '/warden/settings', icon: 'Settings', roles: ['WARDEN'] },
+  { section: 'SYSTEM', label: 'Help & Support', href: '/support', icon: 'LifeBuoy', roles: 'ALL' },
+  { section: 'SYSTEM', label: 'Terms & Conditions', href: '/terms', icon: 'FileText', roles: 'ALL' },
 ];
 
 export const STUDENT_NAV: NavItem[] = [
@@ -60,5 +77,6 @@ export const PARENT_NAV: NavItem[] = [
 export function getNavForRole(role: Role): NavItem[] {
   if (role === 'STUDENT') return STUDENT_NAV;
   if (role === 'PARENT') return PARENT_NAV;
+  if (role === 'WARDEN') return WARDEN_NAV;
   return OWNER_NAV.filter((n) => n.roles === 'ALL' || (n.roles as Role[]).includes(role));
 }

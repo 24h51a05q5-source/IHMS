@@ -9,6 +9,7 @@ export interface AuthenticatedUser {
   userId?: string;
   organizationId: string;
   branchId?: string;
+  hostelId?: string;
   studentId?: string;
   role: string;
   rawRole?: string;
@@ -68,25 +69,32 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     const decoded = jwt.verify(token, secret) as AuthenticatedUser;
     req.user = decoded;
 
-    // Enforce Terms & Conditions Acceptance on non-exempt routes
-    const requestPath = req.originalUrl || req.baseUrl + req.path || req.url || req.path || '';
-    if (!isTermsExemptPath(requestPath) && decoded.id) {
+    // Enforce Account Status check on all authenticated routes, and Terms Acceptance on non-exempt routes
+    if (decoded.id) {
       const userRecord = await queryOne<any>(
-        'SELECT terms_accepted, accepted_terms_version FROM users WHERE id = $1',
+        'SELECT terms_accepted, accepted_terms_version, is_active, status FROM users WHERE id = $1',
         [decoded.id]
       );
-      if (
-        !userRecord ||
-        !userRecord.terms_accepted ||
-        userRecord.accepted_terms_version !== CURRENT_TERMS_VERSION
-      ) {
-        const err = new AppError(
-          'You must review and accept the latest Terms & Conditions before accessing this platform.',
-          403,
-          { code: 'TERMS_ACCEPTANCE_REQUIRED', currentVersion: CURRENT_TERMS_VERSION }
-        );
-        (err as any).code = 'TERMS_ACCEPTANCE_REQUIRED';
-        return next(err);
+
+      if (userRecord && (userRecord.is_active === false || userRecord.status === 'INACTIVE' || userRecord.status === 'LEFT' || userRecord.status === 'SUSPENDED')) {
+        return next(new AppError('Your account has been deactivated, suspended, or offboarded.', 401));
+      }
+
+      const requestPath = req.originalUrl || req.baseUrl + req.path || req.url || req.path || '';
+      if (!isTermsExemptPath(requestPath)) {
+        if (
+          !userRecord ||
+          !userRecord.terms_accepted ||
+          userRecord.accepted_terms_version !== CURRENT_TERMS_VERSION
+        ) {
+          const err = new AppError(
+            'You must review and accept the latest Terms & Conditions before accessing this platform.',
+            403,
+            { code: 'TERMS_ACCEPTANCE_REQUIRED', currentVersion: CURRENT_TERMS_VERSION }
+          );
+          (err as any).code = 'TERMS_ACCEPTANCE_REQUIRED';
+          return next(err);
+        }
       }
     }
 

@@ -14,24 +14,38 @@ const REFRESH_KEY = 'ihms_refresh_token';
 
 export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(TOKEN_KEY);
+  const local = window.localStorage.getItem(TOKEN_KEY);
+  if (local) return local;
+  const match = document.cookie.match(new RegExp(`(^|;\\s*)${TOKEN_KEY}=([^;]+)`));
+  return match ? decodeURIComponent(match[2]) : null;
 }
 
 export function getRefreshToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(REFRESH_KEY);
+  const local = window.localStorage.getItem(REFRESH_KEY);
+  if (local) return local;
+  const match = document.cookie.match(new RegExp(`(^|;\\s*)${REFRESH_KEY}=([^;]+)`));
+  return match ? decodeURIComponent(match[2]) : null;
 }
 
 export function setTokens(access: string, refresh?: string) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(TOKEN_KEY, access);
-  if (refresh) window.localStorage.setItem(REFRESH_KEY, refresh);
+  const secureFlag = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(access)}; path=/; SameSite=Lax${secureFlag}`;
+
+  if (refresh) {
+    window.localStorage.setItem(REFRESH_KEY, refresh);
+    document.cookie = `${REFRESH_KEY}=${encodeURIComponent(refresh)}; path=/; SameSite=Lax${secureFlag}`;
+  }
 }
 
 export function clearTokens() {
   if (typeof window === 'undefined') return;
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_KEY);
+  document.cookie = `${TOKEN_KEY}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+  document.cookie = `${REFRESH_KEY}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
 }
 
 let onUnauthorized: (() => void) | null = null;
@@ -165,8 +179,22 @@ export function getCachedData<T>(path: string, query?: Record<string, any>): T |
   return null;
 }
 
+const REALTIME_PATHS = [
+  '/beds',
+  '/rooms',
+  '/fees',
+  '/payments',
+  '/student/fees',
+  '/student/room',
+  '/orders/status',
+  '/reports',
+  '/owner/wardens',
+];
+
 export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, headers = {}, signal, _retry, skipCache } = opts;
+  const isRealtime = REALTIME_PATHS.some((p) => path.toLowerCase().includes(p.toLowerCase()));
+  const effectiveSkipCache = Boolean(skipCache || isRealtime);
 
   const url = new URL(buildUrl(path), typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5000');
   if (query) {
@@ -185,8 +213,8 @@ export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Pr
 
   const cacheKey = `${method}:${url.toString()}:${token || ''}`;
 
-  // Serve from cache for fast instantaneous navigation on GET requests
-  if (method === 'GET' && !skipCache) {
+  // Serve from cache for fast instantaneous navigation on GET requests (except realtime/critical endpoints)
+  if (method === 'GET' && !effectiveSkipCache) {
     const cached = apiCache.get(cacheKey);
     const now = Date.now();
 
@@ -221,9 +249,9 @@ export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Pr
     finalHeaders['Content-Type'] = 'application/json';
   }
 
-  const fetchPromise = executeFetch<T>(url, method, finalHeaders, body, signal, path, opts, _retry, cacheKey, !skipCache);
+  const fetchPromise = executeFetch<T>(url, method, finalHeaders, body, signal, path, opts, _retry, cacheKey, !effectiveSkipCache);
 
-  if (method === 'GET' && !skipCache) {
+  if (method === 'GET' && !effectiveSkipCache) {
     const trackedPromise = fetchPromise.finally(() => {
       inflightRequests.delete(cacheKey);
     });

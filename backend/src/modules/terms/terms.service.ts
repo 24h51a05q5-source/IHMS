@@ -8,6 +8,7 @@ import {
   TERMS_SECTIONS,
   OWNER_TERMS_SECTIONS,
   STUDENT_TERMS_SECTIONS,
+  WARDEN_TERMS_SECTIONS,
   TermsSection,
 } from './terms.constants';
 
@@ -24,6 +25,11 @@ export class TermsService {
       roleTitle = 'Student Terms & Conditions';
       roleDescription =
         'These Terms & Conditions govern your enrolment, residency rules, student portal access, room care, and payment obligations as a resident student in an IHMS-managed hostel.';
+    } else if (normalizedRole === 'WARDEN') {
+      sections = [...WARDEN_TERMS_SECTIONS];
+      roleTitle = 'Warden Terms & Conditions';
+      roleDescription =
+        'These Terms & Conditions govern your operational duties, access scope, student data confidentiality, and administrative responsibilities as a Warden in an IHMS-managed hostel.';
     } else if (
       normalizedRole === 'OWNER' ||
       normalizedRole === 'ORGANIZATION_OWNER' ||

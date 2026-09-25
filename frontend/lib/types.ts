@@ -7,6 +7,8 @@
 export type Role =
   | 'PLATFORM_SUPER_ADMIN'
   | 'ORGANIZATION_OWNER'
+  | 'SUPER_ADMIN'
+  | 'OWNER'
   | 'REGIONAL_MANAGER'
   | 'BRANCH_MANAGER'
   | 'WARDEN'
@@ -24,11 +26,16 @@ export interface AuthUser {
   name: string;
   email: string;
   role: Role;
+  phone?: string;
+  preferredLanguage?: string;
   organizationId?: string;
   hostelName?: string;
   organizationName?: string;
   hostelBranchId?: string;
+  branchId?: string;
+  hostelId?: string;
   studentId?: string;
+
   customerCode?: string;
   customId?: string;
   ihmsId?: string;
@@ -194,6 +201,7 @@ export interface FeeSummaryData {
   studentId: string;
   customerCode: string;
   customId?: string;
+  feeStatus?: string;
   student?: {
     id: string;
     studentId?: string;
@@ -216,6 +224,7 @@ export interface FeeSummaryData {
   currentDueInstallment?: FeeInstallment | null;
   installments: FeeInstallment[];
   payments: Payment[];
+  demands?: Array<{ id: string; termName: string; totalAmount: number; paidAmount: number; balanceAmount: number }>;
   adjustments?: Array<{ id: string; amount: number; reason: string; approvedBy: string; date: string }>;
 }
 
@@ -245,7 +254,8 @@ export interface Payment {
   installmentMonth?: string;
   amount: number;
   currency?: string;
-  method?: 'CASH' | 'CARD' | 'UPI' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'NET_BANKING' | 'BANK_TRANSFER' | 'CHEQUE' | 'ONLINE';
+  method?: 'CASH' | 'CARD' | 'UPI' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'NET_BANKING' | 'BANK_TRANSFER' | 'CHEQUE' | 'ONLINE' | string;
+  paymentMethod?: string;
   status: 'CREATED' | 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'REFUNDED' | 'REVERSED' | 'SUBMITTED' | 'UNDER_VERIFICATION' | 'VERIFIED' | 'REJECTED' | string;
   transactionRef?: string;
   gatewayOrderId?: string;
@@ -256,6 +266,7 @@ export interface Payment {
   notes?: string;
   date: string;
   paidAt?: string;
+  timestamp?: string;
   feeId?: string;
 }
 
@@ -329,7 +340,12 @@ export interface AttendanceRecord {
   studentName?: string;
   customerCode?: string;
   date: string;
-  status: 'PRESENT' | 'ABSENT' | 'LATE' | 'LEAVE' | 'HOLIDAY';
+  status: 'PRESENT' | 'ABSENT' | 'LATE' | 'LEAVE' | 'HOLIDAY' | 'UNMARKED' | string;
+  markedBy?: string;
+  markedByRole?: string;
+  hostelId?: string;
+  createdAt?: string;
+  updatedAt?: string;
   checkInTime?: string;
   checkOutTime?: string;
 }

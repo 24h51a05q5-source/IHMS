@@ -16,6 +16,10 @@ import * as Icons from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { getNavForRole, type NavItem } from '@/lib/auth/nav-config';
 import { notificationsApi } from '@/lib/api/notifications.api';
+import { reportsApi } from '@/lib/api/reports.api';
+import { studentsApi } from '@/lib/api/students.api';
+import { getCachedData } from '@/lib/api/client';
+import type { StudentDashboardData, StudentDetail } from '@/lib/types';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ContactUsModal } from '@/components/support/contact-us-modal';
@@ -36,6 +40,7 @@ const SHG_ICON_COLORS: Record<string, string> = {
   Utensils: 'text-[#C94F18]',
   Boxes: 'text-[#2563EB]',
   MessageSquareWarning: 'text-[#C62828]',
+  AlertTriangle: 'text-[#C62828]',
   Bell: 'text-[#C94F18]',
   Settings: 'text-[#475569]',
   LifeBuoy: 'text-[#2563EB]',
@@ -46,9 +51,9 @@ const SHG_ICON_COLORS: Record<string, string> = {
 };
 
 // Helper to guarantee a real hostel name is never 'main'
-function resolveRealHostelName(name?: string): string {
+function resolveRealHostelName(name?: string, fallback = 'Hostel'): string {
   if (!name || ['main', 'default', 'branch'].includes(name.trim().toLowerCase())) {
-    return 'Sri Chaitanya Boys Hostel';
+    return fallback;
   }
   return name.trim();
 }
@@ -107,8 +112,106 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     .join('')
     .toUpperCase() || 'HO';
 
+  // Student-specific dynamic hostel resolution
+  const [studentHostelName, setStudentHostelName] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const cachedDash = getCachedData<StudentDashboardData>('/dashboard/student');
+      if (cachedDash?.profile?.hostelName) return cachedDash.profile.hostelName;
+      const cachedProfile = getCachedData<StudentDetail>('/student/profile');
+      if (cachedProfile?.hostelName) return cachedProfile.hostelName;
+      const cachedRoom = getCachedData<any>('/student/room');
+      if (cachedRoom?.hostelName) return cachedRoom.hostelName;
+      const stored = window.localStorage.getItem('ihms_student_hostel_name');
+      if (stored) return stored;
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    if (user?.role !== 'STUDENT') return;
+
+    let active = true;
+    const fetchStudentHostel = async () => {
+      try {
+        const res = await reportsApi.studentDashboard();
+        if (active && res?.profile?.hostelName) {
+          const hName = res.profile.hostelName.trim();
+          setStudentHostelName(hName);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem('ihms_student_hostel_name', hName);
+          }
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+
+      try {
+        const room = await studentsApi.getMyRoom();
+        if (active && room?.hostelName) {
+          const hName = room.hostelName.trim();
+          setStudentHostelName(hName);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem('ihms_student_hostel_name', hName);
+          }
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+
+      try {
+        const prof = await studentsApi.getMyProfile();
+        if (active && prof?.hostelName) {
+          const hName = prof.hostelName.trim();
+          setStudentHostelName(hName);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem('ihms_student_hostel_name', hName);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    fetchStudentHostel();
+
+    const handleHostelUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail && typeof customEvent.detail === 'string') {
+        const hName = customEvent.detail.trim();
+        setStudentHostelName(hName);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('ihms_student_hostel_name', hName);
+        }
+      }
+    };
+
+    window.addEventListener('ihms:student-hostel-updated', handleHostelUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener('ihms:student-hostel-updated', handleHostelUpdate);
+    };
+  }, [user?.role, user?.id]);
+
   // Resolved actual hostel name for sidebar & header
-  const actualHostelName = resolveRealHostelName(currentBranch?.name || branches[0]?.name);
+  const isStudent = user.role === 'STUDENT';
+  const resolvedStudentHostel = isStudent
+    ? (user?.hostelName ||
+       studentHostelName ||
+       getCachedData<StudentDashboardData>('/dashboard/student')?.profile?.hostelName ||
+       getCachedData<StudentDetail>('/student/profile')?.hostelName ||
+       getCachedData<any>('/student/room')?.hostelName ||
+       (typeof window !== 'undefined' ? window.localStorage.getItem('ihms_student_hostel_name') : null) ||
+       user?.organizationName ||
+       '')
+    : '';
+
+  const actualHostelName = isStudent
+    ? (resolvedStudentHostel && !['main', 'default', 'branch'].includes(resolvedStudentHostel.trim().toLowerCase())
+        ? resolvedStudentHostel.trim()
+        : 'Hostel')
+    : resolveRealHostelName(currentBranch?.name || branches[0]?.name || user?.hostelName || user?.organizationName);
 
   return (
     /* LAYER 1: 2D FLAT PAGE BACKGROUND (#F3F1EC) */
@@ -229,10 +332,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">
               {user.role.replace(/_/g, ' ')}
             </span>
-            <span className="text-[#CBD5E1] font-bold">•</span>
-            <span className="text-xs font-bold text-[#111827]">
-              {actualHostelName}
-            </span>
+            {user.role !== 'STUDENT' && (
+              <>
+                <span className="text-[#CBD5E1] font-bold">•</span>
+                <span className="text-xs font-bold text-[#111827]">
+                  {actualHostelName}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -310,6 +417,7 @@ function getTranslatedNavLabel(label: string, t: (k: string, d?: string) => stri
     case 'Students': return t('nav.students', label);
     case 'Rooms & Beds': return t('nav.rooms', label);
     case 'Attendance': return t('nav.attendance', label);
+    case 'Overdues': return t('nav.overdues', label);
     case 'Visitors': return t('nav.visitors', label);
     case 'Fees': return t('nav.fees', label);
     case 'Finance': return t('nav.finance', label);

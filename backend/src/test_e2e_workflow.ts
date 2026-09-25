@@ -79,7 +79,7 @@ export async function runCompleteE2ETests() {
       `Owner registered with ID: ${regResult.ownerId}, Org: ${regResult.organizationId}`
     );
 
-    ownerOrgId = regResult.organizationId;
+    ownerOrgId = regResult.rawOrganizationId || regResult.organizationId;
     ownerBranchId = regResult.hostelBranchId;
 
     // -------------------------------------------------------------
@@ -102,11 +102,12 @@ export async function runCompleteE2ETests() {
     // -------------------------------------------------------------
     console.log('[E2E] Step 3: Verifying hostel branch details...');
     const branches = await hostelService.list(ownerOrgId);
+    const hostelNameVal = branches[0]?.name || branches[0]?.hostelName || branches[0]?.hostel_name;
     assert(
-      branches.length > 0 && branches[0].hostelName === testHostelName,
+      branches.length > 0 && hostelNameVal === testHostelName,
       3,
       'Verify Hostel Details',
-      `Hostel "${branches[0].hostelName}" (Branch Code: ${branches[0].branchCode}) verified`
+      `Hostel "${hostelNameVal}" (Branch Code: ${branches[0].branchCode}) verified`
     );
 
     // -------------------------------------------------------------

@@ -70,11 +70,13 @@ export function ContactUsModal({ open, onOpenChange, onTicketSubmitted }: Contac
       ? 'Super Admin'
       : user?.role ? user.role.replace(/_/g, ' ') : 'User';
 
+  const studentStoredHostel = typeof window !== 'undefined' ? window.localStorage.getItem('ihms_student_hostel_name') : null;
   const hostelName =
-    currentBranch?.name ||
     user?.hostelName ||
+    (user?.role === 'STUDENT' && studentStoredHostel ? studentStoredHostel : null) ||
+    currentBranch?.name ||
     (branches && branches[0]?.name) ||
-    'Sri Chaitanya Boys Hostel';
+    'Hostel';
 
   const email = user?.email || '';
 

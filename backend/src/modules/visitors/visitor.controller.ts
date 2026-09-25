@@ -1,8 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { visitorService } from './visitor.service';
 import { query, queryOne, queryRows } from '../../config/database';
-import { authenticate } from '../../common/guards/auth.guard';
-import { VisitorStatus } from '../../config/constants';
+import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { UserRole, VisitorStatus } from '../../config/constants';
 import { generateVisitorPassNumber } from '../../common/utils/code-generator';
 
 const router = Router();
@@ -16,7 +16,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     let sql = 'SELECT * FROM visitors WHERE organization_id = $1';
     const params: any[] = [orgId];
 
-    if (studentId) {
+    if (req.user!.role === UserRole.STUDENT) {
+      const sId = req.user!.studentId || req.user!.id;
+      const cCode = req.user!.customerCode || '';
+      params.push(sId, cCode, req.user!.id);
+      sql += ` AND (student_id = $${params.length - 2} OR customer_code = $${params.length - 1} OR student_id = $${params.length})`;
+    } else if (studentId) {
       params.push(studentId);
       sql += ` AND (student_id = $${params.length} OR customer_code = $${params.length})`;
     }
@@ -71,9 +76,10 @@ const handleCheckIn = async (req: Request, res: Response, next: NextFunction) =>
     let sName = studentName || 'General Resident';
     let cCode = customerCode || 'GEN-001';
     let bId = branchId || req.user!.branchId;
+    const targetStudentId = req.user!.role === UserRole.STUDENT ? (req.user!.studentId || req.user!.id) : (studentId || req.user!.id);
 
-    if (studentId) {
-      const student = await queryOne<any>('SELECT * FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2', [studentId, orgId]);
+    if (targetStudentId) {
+      const student = await queryOne<any>('SELECT * FROM students WHERE (id = $1 OR user_id = $1 OR customer_code = $1) AND organization_id = $2', [targetStudentId, orgId]);
       if (student) {
         sName = student.full_name;
         cCode = student.customer_code;
@@ -102,7 +108,7 @@ const handleCheckIn = async (req: Request, res: Response, next: NextFunction) =>
         visitorPassNumber,
         orgId,
         bId,
-        studentId || req.user!.id,
+        targetStudentId,
         cCode,
         sName,
         visitorName || 'Guest',
@@ -150,7 +156,9 @@ const handleCheckOut = async (req: Request, res: Response, next: NextFunction) =
   } catch (err) { next(err); }
 };
 
-router.patch('/:id/check-out', handleCheckOut);
-router.patch('/:id/checkout', handleCheckOut);
+const staffCheckoutGuard = authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN, UserRole.SECURITY_GUARD, UserRole.BRANCH_MANAGER, UserRole.RECEPTIONIST);
+
+router.patch('/:id/check-out', staffCheckoutGuard, handleCheckOut);
+router.patch('/:id/checkout', staffCheckoutGuard, handleCheckOut);
 
 export const visitorRouter = router;

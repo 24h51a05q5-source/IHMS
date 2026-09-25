@@ -42,10 +42,11 @@ export class AuthService {
 
     const isStudent = mappedRole === 'STUDENT' || rawRole === 'STUDENT';
     let studentDisplayId: string | undefined = undefined;
+    let studentAssignedHostelName = '';
     if (isStudent) {
       const studentRec = await queryOne<any>(
         `SELECT s.id, s.custom_id, s.customer_code, s.student_id, s.ihms_id, s.hostel_id,
-                h.branch_code
+                h.branch_code, h.hostel_name, h.name as branch_hostel_name
          FROM students s
          LEFT JOIN hostels h ON h.id = s.hostel_id
          WHERE s.user_id = $1 OR s.id = $2
@@ -53,6 +54,8 @@ export class AuthService {
          LIMIT 1`,
         [user.id, user.student_id || user.studentId || user.id]
       );
+      if (studentRec?.hostel_name) studentAssignedHostelName = cleanHostelName(studentRec.hostel_name);
+      else if (studentRec?.branch_hostel_name) studentAssignedHostelName = cleanHostelName(studentRec.branch_hostel_name);
 
       let studentHostelCode = studentRec?.branch_code || '';
       if (!studentHostelCode && studentRec?.hostel_id && /^IHMS[A-Z]{2}\d{4}$/i.test(studentRec.hostel_id)) {
@@ -85,7 +88,7 @@ export class AuthService {
     const rawMaster = user.ihms_id || user.ihmsId || user.owner_id || user.ownerId;
     const masterDisplayId = isStudent
       ? undefined
-      : (/^IHMS[A-Z]{2}\d{4}$/i.test(String(rawMaster || '')) ? String(rawMaster).toUpperCase() : 'IHMSAA0001');
+      : (rawMaster ? String(rawMaster).trim() : 'IHMSAA0001');
 
     const payload = {
       id: user.id,
@@ -118,8 +121,8 @@ export class AuthService {
         email: user.email,
         role: mappedRole,
         organizationId: user.organization_id || user.organizationId,
-        hostelName,
-        organizationName: hostelName,
+        hostelName: (isStudent && studentAssignedHostelName) ? studentAssignedHostelName : hostelName,
+        organizationName: (isStudent && studentAssignedHostelName) ? studentAssignedHostelName : hostelName,
         hostelBranchId: user.branch_id || user.branchId,
         studentId: isStudent ? studentDisplayId : (user.student_id || user.studentId),
         ownerId: isStudent ? undefined : masterDisplayId,
@@ -128,6 +131,7 @@ export class AuthService {
         ihms_id: (isStudent ? studentDisplayId : masterDisplayId) || user.ihms_id || user.ihmsId,
         masterId: isStudent ? undefined : masterDisplayId,
         mustChangePassword: user.must_change_password || user.mustChangePassword || false,
+        preferredLanguage: user.preferred_language || user.preferredLanguage || 'en',
         termsAccepted: Boolean(user.terms_accepted ?? user.termsAccepted),
         acceptedTermsVersion: user.accepted_terms_version || user.acceptedTermsVersion || null,
         termsAcceptedAt: user.terms_accepted_at || user.termsAcceptedAt || null,
@@ -530,7 +534,7 @@ export class AuthService {
     });
   }
 
-  async login(identifier: string, password: string, loginType?: 'STUDENT' | 'ADMIN') {
+  async login(identifier: string, password: string, loginType?: 'STUDENT' | 'ADMIN' | 'WARDEN' | string) {
     const rawQuery = (identifier || '').trim();
     if (!rawQuery || !password) {
       throw new AppError('Email or ID and password are required.', 400);
@@ -540,7 +544,7 @@ export class AuthService {
     const normalizedCode = rawQuery.toUpperCase();
 
     // 1. ADMIN / STAFF LOGIN
-    if (loginType === 'ADMIN') {
+    if (loginType === 'ADMIN' || loginType === 'WARDEN') {
       let user = await queryOne<any>(
         `SELECT u.* FROM users u
          LEFT JOIN organizations o ON o.id = u.organization_id
@@ -572,8 +576,21 @@ export class AuthService {
         throw new AppError('Invalid Admin / Staff credentials.', 401);
       }
 
+      if (user.status === 'SUSPENDED' || user.is_active === false) {
+        throw new AppError('Your account has been suspended. Please contact your hostel owner.', 403);
+      }
+
       if (user.status === 'DISABLED' || user.status === 'INACTIVE') {
         throw new AppError('Your account is disabled. Please contact your organization owner.', 403);
+      }
+
+      if (user.role === 'WARDEN') {
+        if (!user.access_given && user.status !== 'ACTIVE') {
+          throw new AppError('Access denied. Warden account activation has not been authorized by the hostel owner.', 403);
+        }
+        if ((user.status === 'INVITED' || !user.password_hash || user.password_hash.length < 10) && user.status !== 'ACTIVE') {
+          throw new AppError('Your Warden account has not been activated yet. Please complete account activation first.', 400);
+        }
       }
 
       const isMatch = await bcrypt.compare(password, user.password_hash);
@@ -673,9 +690,23 @@ export class AuthService {
     );
 
     if (user) {
+      if (user.status === 'SUSPENDED' || user.is_active === false) {
+        throw new AppError('Your account has been suspended. Please contact your hostel owner.', 403);
+      }
+
       if (user.status === 'DISABLED' || user.status === 'INACTIVE') {
         throw new AppError('Your account is disabled.', 403);
       }
+
+      if (user.role === 'WARDEN') {
+        if (!user.access_given) {
+          throw new AppError('Access denied. Warden account activation has not been authorized by the hostel owner.', 403);
+        }
+        if (user.status === 'INVITED' || !user.password_hash || user.password_hash.length < 10) {
+          throw new AppError('Your Warden account has not been activated yet. Please complete account activation first.', 400);
+        }
+      }
+
       const isMatch = await bcrypt.compare(password, user.password_hash);
       if (!isMatch) {
         throw new AppError('Invalid login credentials.', 401);
@@ -814,10 +845,11 @@ export class AuthService {
 
     const isStudent = mappedRole === 'STUDENT' || rawRole === 'STUDENT';
     let studentDisplayId: string | undefined = undefined;
+    let studentAssignedHostelName = '';
     if (isStudent) {
       const studentRec = await queryOne<any>(
         `SELECT s.id, s.custom_id, s.customer_code, s.student_id, s.ihms_id, s.hostel_id,
-                h.branch_code
+                h.branch_code, h.hostel_name, h.name as branch_hostel_name
          FROM students s
          LEFT JOIN hostels h ON h.id = s.hostel_id
          WHERE s.user_id = $1 OR s.id = $2
@@ -825,6 +857,8 @@ export class AuthService {
          LIMIT 1`,
         [user.id, user.student_id || user.id]
       );
+      if (studentRec?.hostel_name) studentAssignedHostelName = cleanHostelName(studentRec.hostel_name);
+      else if (studentRec?.branch_hostel_name) studentAssignedHostelName = cleanHostelName(studentRec.branch_hostel_name);
 
       let studentHostelCode = studentRec?.branch_code || '';
       if (!studentHostelCode && studentRec?.hostel_id && /^IHMS[A-Z]{2}\d{4}$/i.test(studentRec.hostel_id)) {
@@ -855,8 +889,8 @@ export class AuthService {
       role: mappedRole as any,
       rawRole,
       organizationId: user.organization_id,
-      hostelName,
-      organizationName: hostelName,
+      hostelName: (isStudent && studentAssignedHostelName) ? studentAssignedHostelName : hostelName,
+      organizationName: (isStudent && studentAssignedHostelName) ? studentAssignedHostelName : hostelName,
       hostelBranchId: user.branch_id,
       studentId: isStudent ? (studentDisplayId || user.student_id) : user.student_id,
       ownerId: user.user_id || user.staff_code,
@@ -865,6 +899,7 @@ export class AuthService {
       ihmsId: isStudent ? (studentDisplayId || user.ihms_id) : user.ihms_id,
       ihms_id: isStudent ? (studentDisplayId || user.ihms_id) : user.ihms_id,
       mustChangePassword: user.must_change_password || false,
+      preferredLanguage: user.preferred_language || 'en',
       termsAccepted: Boolean(user.terms_accepted),
       acceptedTermsVersion: user.accepted_terms_version || null,
       termsAcceptedAt: user.terms_accepted_at || null,
@@ -1807,15 +1842,401 @@ export class AuthService {
     };
   }
 
-  // Legacy/Fallback handler for backward compatibility
-  async forgotPassword(identifier: string, newPassword?: string) {
-    if (newPassword) {
-      const user = await this.findUserForPasswordReset(identifier);
-      if (!user) throw new AppError('No account found matching this Student ID or Email.', 404);
-      const passwordHash = await bcrypt.hash(newPassword, 10);
-      await query('UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2', [passwordHash, user.id]);
-      return { success: true, message: 'Password has been reset successfully. Please log in.' };
+  async refreshSession(refreshToken: string) {
+    if (!refreshToken || typeof refreshToken !== 'string') {
+      throw new AppError('Refresh token is required.', 400);
     }
+    try {
+      const secret = process.env.JWT_SECRET || 'ihms-super-secret-jwt-key-production-2026';
+      let decoded: any;
+      try {
+        decoded = jwt.verify(refreshToken.trim(), secret) as any;
+      } catch {
+        throw new AppError('Invalid or expired refresh token.', 401);
+      }
+
+      if (!decoded || !decoded.id) {
+        throw new AppError('Invalid or expired refresh token.', 401);
+      }
+
+      const user = await queryOne<any>('SELECT * FROM users WHERE id = $1', [decoded.id]);
+
+      if (!user || user.is_active === false || ['INACTIVE', 'DISABLED', 'LEFT'].includes(user.status)) {
+        throw new AppError('User session expired or user account is inactive.', 401);
+      }
+
+      const tokens = await this.generateTokens(user);
+      return tokens;
+    } catch (err: any) {
+      if (err instanceof AppError) throw err;
+      throw new AppError('Invalid or expired refresh token.', 401);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 6-DIGIT OTP WARDEN ACCOUNT ACTIVATION & FIRST-TIME LOGIN
+  // ----------------------------------------------------
+
+  async findWardenForActivation(identifier: string) {
+    if (!identifier || typeof identifier !== 'string') return null;
+    const cleanId = identifier.trim();
+    if (!cleanId) return null;
+
+    const lowerId = cleanId.toLowerCase();
+    const upperId = cleanId.toUpperCase();
+
+    const user = await queryOne<any>(
+      `SELECT * FROM users
+       WHERE (LOWER(email) = $1 OR email = $1 OR UPPER(ihms_id) = $2 OR UPPER(user_id) = $2 OR UPPER(staff_code) = $2)
+         AND role = 'WARDEN'
+       ORDER BY created_at DESC LIMIT 1`,
+      [lowerId, upperId]
+    );
+
+    return user || null;
+  }
+
+  async getWardenLoginStatus(identifier: string) {
+    const warden = await this.findWardenForActivation(identifier);
+    if (!warden) {
+      throw new AppError('Warden account not found for this email address.', 404);
+    }
+
+    if (warden.status === 'SUSPENDED' || warden.is_active === false) {
+      throw new AppError('This Warden account has been suspended by the hostel owner.', 403);
+    }
+
+    if (!warden.access_given) {
+      throw new AppError('Access denied. Hostel owner has not granted activation access for this Warden account.', 403);
+    }
+
+    const hasPassword = Boolean(warden.password_hash && warden.password_hash.length > 10);
+    const isActivated = Boolean(hasPassword && warden.status === 'ACTIVE');
+
+    if (isActivated) {
+      return {
+        success: true,
+        exists: true,
+        hasPassword: true,
+        alreadyActivated: true,
+        requiresActivation: false,
+        requiresPassword: true,
+        requiresOtp: false,
+        nextStep: 'PASSWORD_LOGIN',
+        status: 'ACTIVATED',
+        email: warden.email,
+        name: warden.name,
+        message: 'Your Warden portal is already activated. Please sign in using your password.',
+      };
+    }
+
+    return {
+      success: true,
+      exists: true,
+      hasPassword: false,
+      alreadyActivated: false,
+      requiresActivation: true,
+      requiresPassword: false,
+      requiresOtp: true,
+      nextStep: 'OTP_ACTIVATION',
+      status: 'ACTIVATION_PENDING',
+      email: warden.email,
+      name: warden.name,
+      message: 'Warden account is authorized for activation. Please request and verify your OTP.',
+    };
+  }
+
+  async sendWardenActivationOtp(identifier: string) {
+    const cleanId = (identifier || '').trim();
+    if (!cleanId) {
+      throw new AppError('Please enter your registered Warden email address.', 400);
+    }
+
+    const warden = await this.findWardenForActivation(cleanId);
+    if (!warden) {
+      throw new AppError('Warden account not found for this email address.', 404);
+    }
+
+    if (warden.status === 'SUSPENDED' || warden.is_active === false) {
+      throw new AppError('This Warden account has been suspended by the hostel owner.', 403);
+    }
+
+    const hasPassword = Boolean(warden.password_hash && warden.password_hash.length > 10);
+    const isActivated = Boolean(hasPassword || warden.status === 'ACTIVE');
+
+    if (isActivated) {
+      return {
+        success: true,
+        alreadyActivated: true,
+        requiresPassword: true,
+        requiresOtp: false,
+        nextStep: 'PASSWORD_LOGIN',
+        email: warden.email,
+        name: warden.name,
+        message: 'Your Warden account is already activated. Please sign in using your email and password.',
+      };
+    }
+
+    if (!warden.access_given) {
+      throw new AppError('Access denied. Hostel owner has not granted activation access for this Warden account.', 403);
+    }
+
+    const wEmail = warden.email.toLowerCase();
+    const [local, domain] = wEmail.split('@');
+    const visible = local.slice(0, Math.min(2, local.length));
+    const maskedEmail = `${visible}${'*'.repeat(Math.max(4, local.length - 2))}@${domain}`;
+
+    // Rate limit check: 60s
+    const recentOtp = await queryOne<any>(
+      `SELECT * FROM otps
+       WHERE user_id = $1 AND otp_purpose = 'WARDEN_ACCOUNT_ACTIVATION'
+         AND created_at > (NOW() - INTERVAL '60 seconds')
+         AND used_at IS NULL AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [warden.id]
+    );
+
+    if (recentOtp) {
+      const startTime = recentOtp.created_at ? new Date(recentOtp.created_at).toISOString() : new Date().toISOString();
+      const elapsed = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
+      const remainingCooldown = Math.max(0, 60 - elapsed);
+      return {
+        success: true,
+        requiresOtp: true,
+        nextStep: 'OTP_ACTIVATION',
+        maskedEmail,
+        email: wEmail,
+        name: warden.name,
+        startTime,
+        cooldownSeconds: remainingCooldown,
+        expiresIn: 600,
+        message: `Verification code sent to ${maskedEmail}`,
+        _debugOtp: process.env.NODE_ENV !== 'production' ? recentOtp.otp_code : undefined,
+      };
+    }
+
+    // Invalidate previous activation OTPs
+    await query(
+      "UPDATE otps SET used_at = NOW() WHERE user_id = $1 AND otp_purpose = 'WARDEN_ACCOUNT_ACTIVATION' AND used_at IS NULL",
+      [warden.id]
+    );
+
+    const crypto = require('crypto');
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const otpHash = await bcrypt.hash(otpCode, 10);
+    const now = new Date();
+
+    await query(
+      `INSERT INTO otps (
+        id, user_id, identifier, organization_id, otp_purpose, otp_hash, expires_at, attempt_count, max_attempts
+      ) VALUES ($1, $2, $3, $4, 'WARDEN_ACCOUNT_ACTIVATION', $5, NOW() + INTERVAL '10 minutes', 0, 5)`,
+      [crypto.randomUUID(), warden.id, wEmail, warden.organization_id, otpHash]
+    );
+
+    await emailService.sendOtpEmail({
+      to: wEmail,
+      otpCode,
+      studentName: warden.name,
+      purpose: 'ACTIVATION',
+    });
+
+    return {
+      success: true,
+      requiresOtp: true,
+      nextStep: 'OTP_ACTIVATION',
+      maskedEmail,
+      email: wEmail,
+      name: warden.name,
+      startTime: now.toISOString(),
+      cooldownSeconds: 60,
+      expiresIn: 600,
+      message: `Verification code sent to ${maskedEmail}`,
+      _debugOtp: process.env.NODE_ENV !== 'production' ? otpCode : undefined,
+    };
+  }
+
+  async verifyWardenActivationOtp(identifier: string, otp: string) {
+    if (!otp || typeof otp !== 'string' || otp.trim().length !== 6) {
+      throw new AppError('Invalid 6-digit activation code.', 400);
+    }
+
+    const warden = await this.findWardenForActivation(identifier);
+    if (!warden) {
+      throw new AppError('Warden account not found for this email address.', 404);
+    }
+
+    if (warden.status === 'SUSPENDED' || warden.is_active === false) {
+      throw new AppError('This Warden account has been suspended by the hostel owner.', 403);
+    }
+
+    if (!warden.access_given) {
+      throw new AppError('Access denied. Hostel owner has not granted activation access for this Warden account.', 403);
+    }
+
+    const cleanOtp = otp.trim();
+    const activeOtp = await queryOne<any>(
+      `SELECT * FROM otps
+       WHERE user_id = $1 AND otp_purpose = 'WARDEN_ACCOUNT_ACTIVATION'
+         AND used_at IS NULL AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [warden.id]
+    );
+
+    if (!activeOtp) {
+      throw new AppError('Verification code has expired or is invalid. Please click Resend OTP to get a new code.', 400);
+    }
+
+    if (activeOtp.attempt_count >= activeOtp.max_attempts) {
+      await query('UPDATE otps SET used_at = NOW() WHERE id = $1', [activeOtp.id]);
+      throw new AppError('Maximum verification attempts exceeded. Please click Resend OTP for a new code.', 400);
+    }
+
+    const isMatch = await bcrypt.compare(cleanOtp, activeOtp.otp_hash);
+    if (!isMatch) {
+      const nextCount = Number(activeOtp.attempt_count || 0) + 1;
+      if (nextCount >= activeOtp.max_attempts) {
+        await query('UPDATE otps SET attempt_count = $1, used_at = NOW() WHERE id = $2', [nextCount, activeOtp.id]);
+        throw new AppError('Maximum verification attempts exceeded. Please click Resend OTP for a new code.', 400);
+      } else {
+        await query('UPDATE otps SET attempt_count = $1 WHERE id = $2', [nextCount, activeOtp.id]);
+        throw new AppError(`Invalid 6-digit activation code. (${activeOtp.max_attempts - nextCount} attempts remaining)`, 400);
+      }
+    }
+
+    // Mark OTP as used
+    await query('UPDATE otps SET used_at = NOW() WHERE id = $1', [activeOtp.id]);
+
+    const crypto = require('crypto');
+    const activationToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(activationToken).digest('hex');
+
+    await query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')`,
+      [crypto.randomUUID(), warden.id, tokenHash]
+    );
+
+    return {
+      success: true,
+      activationToken,
+      email: warden.email,
+      name: warden.name,
+      message: 'Verification successful! Please create your password.',
+    };
+  }
+
+  async resendWardenActivationOtp(identifier: string) {
+    return this.sendWardenActivationOtp(identifier);
+  }
+
+  async activateWardenAccount(activationToken: string, newPassword: string, confirmPassword?: string, agreeToTerms?: boolean) {
+    if (agreeToTerms === false) {
+      throw new AppError('You must accept the Terms & Conditions to activate your Warden account.', 400);
+    }
+    if (!activationToken || typeof activationToken !== 'string') {
+      throw new AppError('Activation token is required.', 400);
+    }
+    if (!newPassword || newPassword.length < 8) {
+      throw new AppError('Password must be at least 8 characters long.', 400);
+    }
+    if (confirmPassword && newPassword !== confirmPassword) {
+      throw new AppError('Password and confirm password do not match.', 400);
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      throw new AppError('Password must contain at least one uppercase letter.', 400);
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      throw new AppError('Password must contain at least one lowercase letter.', 400);
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      throw new AppError('Password must contain at least one number.', 400);
+    }
+
+    const crypto = require('crypto');
+    const tokenHash = crypto.createHash('sha256').update(activationToken.trim()).digest('hex');
+
+    const tokenRecord = await queryOne<any>(
+      `SELECT * FROM password_reset_tokens
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (!tokenRecord) {
+      throw new AppError('Activation session has expired or is invalid. Please verify your OTP code again.', 400);
+    }
+
+    const wardenId = tokenRecord.user_id;
+    const warden = await queryOne<any>("SELECT * FROM users WHERE id = $1 AND role = 'WARDEN'", [wardenId]);
+    if (!warden) {
+      throw new AppError('Warden account not found.', 404);
+    }
+
+    if (warden.status === 'SUSPENDED' || warden.is_active === false) {
+      throw new AppError('This Warden account has been suspended by the hostel owner.', 403);
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const wardenTermsAccepted = Boolean(agreeToTerms ?? true);
+
+    const updatedUserRes = await queryOne<any>(
+      `UPDATE users
+       SET password_hash = $1,
+           status = 'ACTIVE',
+           is_active = true,
+           terms_accepted = $2,
+           accepted_terms_version = $3,
+           terms_accepted_at = $4,
+           tc_accepted_at = $5,
+           must_change_password = false,
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+      [
+        passwordHash,
+        wardenTermsAccepted,
+        wardenTermsAccepted ? CURRENT_TERMS_VERSION : null,
+        wardenTermsAccepted ? new Date() : null,
+        wardenTermsAccepted ? new Date() : null,
+        warden.id,
+      ]
+    );
+
+    if (wardenTermsAccepted) {
+      await query(
+        `INSERT INTO terms_acceptances (
+          id, user_id, role, terms_version, ip_address, user_agent, status, accepted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'ACCEPTED', CURRENT_TIMESTAMP)`,
+        [
+          crypto.randomUUID(),
+          warden.id,
+          'WARDEN',
+          CURRENT_TERMS_VERSION,
+          '127.0.0.1',
+          'Warden Activation Flow',
+        ]
+      ).catch(() => {});
+    }
+
+    await query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [tokenRecord.id]);
+    await query(
+      "UPDATE otps SET used_at = NOW() WHERE user_id = $1 AND otp_purpose = 'WARDEN_ACCOUNT_ACTIVATION' AND used_at IS NULL",
+      [warden.id]
+    );
+
+    const authResult = await this.generateTokens(updatedUserRes);
+
+    return {
+      success: true,
+      message: 'Warden account activated successfully! Welcome to IHMS Warden Dashboard.',
+      token: authResult.token,
+      accessToken: authResult.token,
+      refreshToken: authResult.refreshToken,
+      user: authResult.user,
+    };
+  }
+
+  // Safe handler: strictly issues OTP and never mutates passwords directly (NEW-001)
+  async forgotPassword(identifier: string, _newPassword?: string) {
     return this.requestPasswordResetOtp(identifier);
   }
 }

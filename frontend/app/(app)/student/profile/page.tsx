@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { studentsApi } from '@/lib/api/students.api';
 import { getCachedData } from '@/lib/api/client';
-import { formatStudentId } from '@/lib/utils';
+import { formatStudentId, formatBedLabel } from '@/lib/utils';
 import type { StudentDetail, ApiError } from '@/lib/types';
 
 export default function StudentProfilePage() {
@@ -43,6 +43,10 @@ export default function StudentProfilePage() {
       setEditPhone(s.phone || '');
       setEditEmail(s.email || '');
       setEditAddress(s.address || s.guardianPhone || '');
+      if (s?.hostelName && typeof window !== 'undefined') {
+        window.localStorage.setItem('ihms_student_hostel_name', s.hostelName.trim());
+        window.dispatchEvent(new CustomEvent('ihms:student-hostel-updated', { detail: s.hostelName.trim() }));
+      }
       setError(null);
     } catch (err) {
       if (!profile) {
@@ -142,11 +146,11 @@ export default function StudentProfilePage() {
               </div>
               <div className="flex justify-between py-1 border-b border-[#CBD5E1]">
                 <span className="text-[#64748B] font-semibold">Room</span>
-                <span className="font-bold text-[#E87545]">Room {profile.roomNumber}</span>
+                <span className="font-bold text-[#E87545]">{profile.roomNumber ? `Room ${String(profile.roomNumber).replace(/^Room\s+/i, '')}` : '—'}</span>
               </div>
               <div className="flex justify-between py-1">
                 <span className="text-[#64748B] font-semibold">Bed</span>
-                <span className="font-bold text-[#E87545]">Bed {profile.bedNumber}</span>
+                <span className="font-bold text-[#E87545]">{formatBedLabel(profile.bedNumber)}</span>
               </div>
             </div>
           </div>

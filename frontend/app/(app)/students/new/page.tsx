@@ -18,14 +18,18 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageErrorBoundary } from '@/components/dashboard/error-boundary';
 import { studentsApi, type CreateStudentInput } from '@/lib/api/students.api';
-import { hostelsApi } from '@/lib/api/hostels.api';
 import { roomsApi } from '@/lib/api/rooms.api';
+import { hostelsApi } from '@/lib/api/hostels.api';
+import { feesApi } from '@/lib/api/fees.api';
 import { useAuth } from '@/lib/auth/auth-context';
+import { formatBedLabel, formatRoomAndBed } from '@/lib/utils';
 import type { ApiError, Room, Bed } from '@/lib/types';
 
 function NewStudentPageContent() {
   const router = useRouter();
-  const { currentBranchId } = useAuth();
+  const { currentBranchId, user } = useAuth();
+  const isWarden = user?.role === 'WARDEN';
+  const wardenHostel = user?.branchId || user?.hostelId || currentBranchId;
   const [loading, setLoading] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
 
@@ -34,7 +38,7 @@ function NewStudentPageContent() {
   const [allRooms, setAllRooms] = useState<Room[]>([]);
 
   // Dependent dropdown selections
-  const [selectedHostelId, setSelectedHostelId] = useState<string>(currentBranchId || '');
+  const [selectedHostelId, setSelectedHostelId] = useState<string>(wardenHostel || '');
   const [selectedBuilding, setSelectedBuilding] = useState<string>('');
   const [selectedFloor, setSelectedFloor] = useState<string>('');
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
@@ -48,6 +52,10 @@ function NewStudentPageContent() {
   const [paymentPlan, setPaymentPlan] = useState<'MONTHLY' | 'ONE_TIME'>('MONTHLY');
   const [monthlyDueDay, setMonthlyDueDay] = useState<number>(5);
   const [allowAdvancePayment, setAllowAdvancePayment] = useState<boolean>(false);
+  const [annualMaintPolicy, setAnnualMaintPolicy] = useState<{ enabled: boolean; amount: number }>({
+    enabled: false,
+    amount: 0,
+  });
   const totalHostelFee = monthlyRent * stayDurationMonths;
 
   // Form details - Simplified to essential fields only
@@ -62,7 +70,7 @@ function NewStudentPageContent() {
     guardianRelation: 'Parent',
     guardianPhone: '',
     guardianAddress: '',
-    hostelId: currentBranchId || '',
+    hostelId: wardenHostel || '',
   });
 
   const set = <K extends keyof CreateStudentInput>(k: K, v: CreateStudentInput[K]) =>
@@ -74,7 +82,10 @@ function NewStudentPageContent() {
       try {
         const hList = await hostelsApi.list();
         setBranches(hList || []);
-        if (hList && hList.length > 0 && !selectedHostelId) {
+        if (isWarden && wardenHostel) {
+          setSelectedHostelId(wardenHostel);
+          set('hostelId', wardenHostel);
+        } else if (hList && hList.length > 0 && !selectedHostelId) {
           setSelectedHostelId(hList[0].id);
           set('hostelId', hList[0].id);
         }
@@ -83,7 +94,8 @@ function NewStudentPageContent() {
       }
     }
     loadHostels();
-  }, [selectedHostelId]);
+  }, [selectedHostelId, isWarden, wardenHostel]);
+
 
   // Load Rooms whenever selectedHostelId changes
   const loadHostelRooms = useCallback(async (hostelId: string) => {
@@ -117,6 +129,17 @@ function NewStudentPageContent() {
     if (selectedHostelId) {
       set('hostelId', selectedHostelId);
       loadHostelRooms(selectedHostelId);
+      feesApi
+        .getPolicies({ branchId: selectedHostelId })
+        .then((res: any) => {
+          setAnnualMaintPolicy({
+            enabled: !!res?.annualMaintenanceEnabled,
+            amount: Number(res?.annualMaintenanceAmount || 0),
+          });
+        })
+        .catch(() => {
+          setAnnualMaintPolicy({ enabled: false, amount: 0 });
+        });
     }
   }, [selectedHostelId, loadHostelRooms]);
 
@@ -451,10 +474,11 @@ function NewStudentPageContent() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {/* Step 1: Select Hostel */}
             <Field label="1. Hostel Branch" required>
-              <Select value={selectedHostelId} onValueChange={setSelectedHostelId}>
+              <Select value={selectedHostelId} onValueChange={setSelectedHostelId} disabled={isWarden}>
                 <SelectTrigger className="font-medium">
                   <SelectValue placeholder="Select Hostel Branch" />
                 </SelectTrigger>
+
                 <SelectContent>
                   {branches.map((b) => (
                     <SelectItem key={b.id} value={b.id}>
@@ -566,7 +590,7 @@ function NewStudentPageContent() {
                       const rent = bed.monthlyRate || bed.monthlyFee || selectedRoom?.monthlyRentPerBed || selectedRoom?.monthlyRate || 8000;
                       return (
                         <SelectItem key={bed.id} value={bed.id} className="font-mono">
-                          <span className="font-bold text-foreground">{bed.bedCode || `Bed ${bed.bedNumber || bed.number}`}</span>
+                          <span className="font-bold text-foreground">{formatBedLabel(bed.bedNumber || bed.number || bed.bedCode)}</span>
                           <span className="text-emerald-600 dark:text-emerald-400 font-semibold ml-2">
                             — ₹{rent.toLocaleString('en-IN')}/month
                           </span>
@@ -681,38 +705,63 @@ function NewStudentPageContent() {
               </div>
             </div>
 
-            {paymentPlan === 'MONTHLY' && (
-              <div className="grid gap-4 sm:grid-cols-2 pt-2 border-t border-border/60">
-                <Field label="Monthly Due Date">
-                  <Select value={String(monthlyDueDay)} onValueChange={(v) => setMonthlyDueDay(Number(v))}>
-                    <SelectTrigger className="h-9 font-medium text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1st of Every Month</SelectItem>
-                      <SelectItem value="5">5th of Every Month</SelectItem>
-                      <SelectItem value="10">10th of Every Month</SelectItem>
-                      <SelectItem value="15">15th of Every Month</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 pt-2 border-t border-border/60">
+              {paymentPlan === 'MONTHLY' && (
+                <>
+                  <Field label="Monthly Due Date">
+                    <Select value={String(monthlyDueDay)} onValueChange={(v) => setMonthlyDueDay(Number(v))}>
+                      <SelectTrigger className="h-9 font-medium text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">1st of Every Month</SelectItem>
+                        <SelectItem value="5">5th of Every Month</SelectItem>
+                        <SelectItem value="10">10th of Every Month</SelectItem>
+                        <SelectItem value="15">15th of Every Month</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
 
-                <Field label="Allow Advance Payments">
-                  <Select
-                    value={allowAdvancePayment ? 'YES' : 'NO'}
-                    onValueChange={(v) => setAllowAdvancePayment(v === 'YES')}
-                  >
-                    <SelectTrigger className="h-9 font-medium text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NO">Disabled (Current installment only)</SelectItem>
-                      <SelectItem value="YES">Enabled (Can pay future installments)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-            )}
+                  <Field label="Allow Advance Payments">
+                    <Select
+                      value={allowAdvancePayment ? 'YES' : 'NO'}
+                      onValueChange={(v) => setAllowAdvancePayment(v === 'YES')}
+                    >
+                      <SelectTrigger className="h-9 font-medium text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NO">Disabled (Current installment only)</SelectItem>
+                        <SelectItem value="YES">Enabled (Can pay future installments)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
+
+              <Field label="Annual Maintenance Fee Policy">
+                <div className="h-9 px-3 rounded-md border border-input bg-secondary/40 flex items-center justify-between text-xs font-medium">
+                  {annualMaintPolicy.enabled ? (
+                    <>
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        ₹{annualMaintPolicy.amount.toLocaleString('en-IN')}/yr
+                      </span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded font-semibold">
+                        Hostel Policy Enabled
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground font-medium">Disabled</span>
+                      <span className="text-[10px] bg-secondary text-muted-foreground px-1.5 py-0.5 rounded font-medium">
+                        Hostel Policy
+                      </span>
+                    </>
+                  )}
+                </div>
+              </Field>
+            </div>
           </div>
 
           {/* Clear Fee Summary Card */}
@@ -727,14 +776,14 @@ function NewStudentPageContent() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1">
                 <div className="space-y-0.5">
                   <span className="text-[11px] text-muted-foreground">Selected Bed</span>
                   <p className="font-mono font-bold text-sm text-foreground">
-                    {selectedBed.bedCode || `Bed ${selectedBed.bedNumber || selectedBed.number}`}
+                    {formatRoomAndBed(selectedRoom?.roomNumber, selectedBed.bedNumber || selectedBed.number || selectedBed.bedCode)}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
-                    Room {selectedRoom?.roomNumber} • Floor {selectedFloor}
+                    Floor {selectedFloor || selectedRoom?.floor || 1}
                   </p>
                 </div>
 
@@ -752,6 +801,16 @@ function NewStudentPageContent() {
                     {stayDurationMonths} Month{stayDurationMonths > 1 ? 's' : ''}
                   </p>
                   <p className="text-[11px] text-muted-foreground">{selectedBranchObj?.name || 'Main Hostel'}</p>
+                </div>
+
+                <div className="space-y-0.5">
+                  <span className="text-[11px] text-muted-foreground">Annual Maintenance</span>
+                  <p className="font-mono font-bold text-sm text-foreground">
+                    {annualMaintPolicy.enabled ? `₹${annualMaintPolicy.amount.toLocaleString('en-IN')}` : '₹0'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground font-semibold">
+                    {annualMaintPolicy.enabled ? 'Hostel Policy Applied' : 'Disabled'}
+                  </p>
                 </div>
 
                 <div className="space-y-0.5">

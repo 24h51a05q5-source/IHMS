@@ -2,10 +2,12 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { roomService } from './room.service';
 import { query, queryOne, queryRows } from '../../config/database';
 import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { enforceTenantIsolation } from '../../common/guards/tenant.guard';
 import { UserRole } from '../../config/constants';
 
 const router = Router();
 router.use(authenticate);
+router.use(enforceTenantIsolation);
 router.use(authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT, UserRole.WARDEN, UserRole.MAINTENANCE_STAFF));
 
 // ==========================================

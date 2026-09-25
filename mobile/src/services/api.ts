@@ -1,18 +1,25 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+const ENV_API_URL = (typeof process !== 'undefined' && process.env) 
+  ? (process.env.EXPO_PUBLIC_API_URL || process.env.REACT_NATIVE_API_URL) 
+  : undefined;
+const ENV_SOCKET_URL = (typeof process !== 'undefined' && process.env)
+  ? (process.env.EXPO_PUBLIC_SOCKET_URL || process.env.REACT_NATIVE_SOCKET_URL || (ENV_API_URL ? ENV_API_URL.replace(/\/api\/?$/, '') : undefined))
+  : undefined;
+
 // In development, Android emulator uses 10.0.2.2, iOS simulator uses localhost, physical devices use machine IP or custom host.
-export const API_BASE_URL = Platform.select({
+export const API_BASE_URL = ENV_API_URL || Platform.select({
   android: 'http://10.0.2.2:5000/api',
   ios: 'http://localhost:5000/api',
   default: 'http://localhost:5000/api',
-});
+}) || 'http://localhost:5000/api';
 
-export const SOCKET_URL = Platform.select({
+export const SOCKET_URL = ENV_SOCKET_URL || Platform.select({
   android: 'http://10.0.2.2:5000',
   ios: 'http://localhost:5000',
   default: 'http://localhost:5000',
-});
+}) || 'http://localhost:5000';
 
 const TOKEN_KEY = '@ihms_access_token';
 const REFRESH_TOKEN_KEY = '@ihms_refresh_token';

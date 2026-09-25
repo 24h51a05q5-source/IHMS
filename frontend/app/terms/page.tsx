@@ -33,6 +33,9 @@ export default function TermsAndConditionsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [declining, setDeclining] = useState(false);
 
+  const queryRole = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('role') : null;
+  const targetRole = (queryRole || user?.role || '').toUpperCase();
+
   // Fetch role-specific terms content
   useEffect(() => {
     let isMounted = true;
@@ -40,8 +43,7 @@ export default function TermsAndConditionsPage() {
       try {
         setLoadingTerms(true);
         setError(null);
-        // Automatically fetch role-based terms: Student gets Student terms, Owner gets Owner terms
-        const data = await authApi.getTerms(user?.role);
+        const data = await authApi.getTerms(targetRole || undefined);
         if (isMounted && data) {
           setTermsData(data);
         }
@@ -57,13 +59,16 @@ export default function TermsAndConditionsPage() {
     return () => {
       isMounted = false;
     };
-  }, [user?.role]);
+  }, [targetRole]);
 
-  const isStudent = user?.role === 'STUDENT';
-  const isOwner = user?.role ? user.role !== 'STUDENT' : false;
+  const isWarden = targetRole === 'WARDEN' || user?.role === 'WARDEN';
+  const isStudent = targetRole === 'STUDENT' || user?.role === 'STUDENT';
+  const isOwner = targetRole === 'OWNER' || (user?.role && user.role !== 'STUDENT' && user.role !== 'WARDEN');
 
-  // Subtitle based on authenticated role
-  const agreementSubtitle = isStudent
+  // Subtitle based on role
+  const agreementSubtitle = isWarden
+    ? 'Warden Operational & Administrative Agreement'
+    : isStudent
     ? 'Student Residency Agreement'
     : isOwner
     ? 'Hostel Owner & Management Agreement'
@@ -95,6 +100,8 @@ export default function TermsAndConditionsPage() {
 
       if (user?.role === 'STUDENT') {
         router.replace('/student/dashboard');
+      } else if (user?.role === 'WARDEN') {
+        router.replace('/warden/dashboard');
       } else {
         router.replace('/dashboard');
       }
@@ -121,6 +128,8 @@ export default function TermsAndConditionsPage() {
   const handleReturnToDashboard = () => {
     if (user?.role === 'STUDENT') {
       router.replace('/student/dashboard');
+    } else if (user?.role === 'WARDEN') {
+      router.replace('/warden/dashboard');
     } else {
       router.replace('/dashboard');
     }
@@ -150,7 +159,11 @@ export default function TermsAndConditionsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {isStudent ? (
+            {isWarden ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                <ShieldCheck className="h-3.5 w-3.5" /> Warden
+              </span>
+            ) : isStudent ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                 <GraduationCap className="h-3.5 w-3.5" /> Student
               </span>

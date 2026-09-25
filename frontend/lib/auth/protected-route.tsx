@@ -67,16 +67,36 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
       }
     }
 
+    // Warden role boundary: Prevent Wardens from accessing owner-only financial & system settings pages
+    if (user.role === 'WARDEN') {
+      const ownerOnlyPrefixes = [
+        '/finance',
+        '/reports',
+        '/fees',
+        '/owner',
+        '/hostels',
+        '/accountant',
+        '/inventory',
+      ];
+      if (ownerOnlyPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))) {
+        if (hasAlertedRef.current !== pathname) {
+          toast.error('You do not have permission to access this page.');
+          hasAlertedRef.current = pathname;
+        }
+        router.replace('/warden/dashboard');
+        return;
+      }
+    }
+
     // Owner / Staff role boundary: Prevent non-students from accessing student-only portal pages
     if (user.role !== 'STUDENT') {
-      const studentPrefixes = ['/student'];
       const isStudentOnlyRoute = pathname === '/student' || (pathname.startsWith('/student/') && pathname !== '/student/change-password');
       if (isStudentOnlyRoute) {
         if (hasAlertedRef.current !== pathname) {
           toast.error('You do not have permission to access this page.');
           hasAlertedRef.current = pathname;
         }
-        router.replace('/dashboard');
+        router.replace(user.role === 'WARDEN' ? '/warden/dashboard' : '/dashboard');
         return;
       }
     }

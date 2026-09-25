@@ -182,3 +182,62 @@ export function formatStudentId(studentOrCode?: any, fallbackHostelCode?: string
 export function formatOrgId(orgOrCode?: any): string {
   return formatMasterId(orgOrCode);
 }
+
+/**
+ * Normalizes any bed code, raw string, or number into a clean numeric string (e.g. 'IHM-AA-MN-B-0001' -> '1', 'B01' -> '1').
+ */
+export function formatBedNumber(bedOrCode?: any): string {
+  if (bedOrCode === null || bedOrCode === undefined || bedOrCode === '') return '';
+  if (typeof bedOrCode === 'number') return String(bedOrCode);
+  const str = String(bedOrCode).trim();
+  if (!str) return '';
+  if (/^\d+$/.test(str)) return String(parseInt(str, 10));
+
+  // Match IHM-*-B-0001 or similar ending with -(\d+) or B01 or Bed 1
+  const match =
+    str.match(/[-_]B[-_]?0*(\d+)/i) ||
+    str.match(/[-_]0*(\d+)$/) ||
+    str.match(/^B0*(\d+)$/i) ||
+    str.match(/(?:bed\s*)0*(\d+)/i) ||
+    str.match(/(\d+)/);
+
+  if (match) {
+    const parsed = parseInt(match[1], 10);
+    if (!isNaN(parsed) && parsed > 0) return String(parsed);
+  }
+  return str;
+}
+
+export function cleanBedNumber(bedOrCode?: any): string {
+  return formatBedNumber(bedOrCode);
+}
+
+/**
+ * Returns a clean, owner-friendly bed label (e.g. 'Bed 1' instead of 'IHM-AA-MN-B-0001').
+ */
+export function formatBedLabel(bedOrCode?: any): string {
+  if (bedOrCode === null || bedOrCode === undefined || bedOrCode === '') return '—';
+  const num = formatBedNumber(bedOrCode);
+  if (!num) return '—';
+  return `Bed ${num}`;
+}
+
+/**
+ * Combines room and bed into a clean, owner-friendly accommodation string (e.g. "Room 101 - Bed 1").
+ */
+export function formatRoomAndBed(room?: any, bed?: any, separator: string = ' - '): string {
+  const cleanRoom = room ? String(room).replace(/^Room\s+/i, '').trim() : '';
+  const bedNum = formatBedNumber(bed);
+
+  if (cleanRoom && bedNum) {
+    return `Room ${cleanRoom}${separator}Bed ${bedNum}`;
+  }
+  if (cleanRoom) {
+    return `Room ${cleanRoom}`;
+  }
+  if (bedNum) {
+    return `Bed ${bedNum}`;
+  }
+  return 'Unassigned';
+}
+

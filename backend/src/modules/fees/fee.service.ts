@@ -15,7 +15,17 @@ import { emitRealTimeEvent } from '../../events/events.gateway';
 import { dashboardService } from '../dashboard/dashboard.service';
 import { PaymentProviderFactory } from './provider-factory';
 import { notificationService } from '../notifications/notification.service';
-import { sanitizeStudentDisplayId } from '../students/student.service';
+import { sanitizeStudentDisplayId, cleanBedNumber } from '../students/student.service';
+
+/**
+ * Precise currency rounding to 2 decimal places using integer paisa/cents arithmetic (ISSUE-019).
+ * Completely eliminates IEEE-754 floating-point drift (e.g. 0.1 + 0.2 = 0.30000000000000004).
+ */
+export function roundCurrency(amount: number | string | null | undefined): number {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) return 0;
+  const num = Number(amount);
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+}
 
 export interface IFeeAccount {
   id: string;
@@ -566,39 +576,52 @@ export class FeeService {
 
     const sDbId = student.id;
 
+    // Normal monthly fee paid (EXCLUDES Advance payments so advance does NOT incorrectly inflate monthly fee paid)
     const paidAgg = await runQueryOne(
-      "SELECT COALESCE(SUM(amount - COALESCE(refunded_amount, 0)), 0)::numeric as total FROM payments WHERE organization_id = $1 AND student_id = $2 AND status IN ('SUCCESS', 'VERIFIED')",
+      "SELECT COALESCE(SUM(amount - COALESCE(refunded_amount, 0)), 0)::numeric as total FROM payments WHERE organization_id = $1 AND student_id = $2 AND status IN ('SUCCESS', 'VERIFIED') AND (fee_type IS NULL OR UPPER(fee_type) NOT IN ('ADVANCE', 'ADVANCE FEE'))",
       [orgId, sDbId]
     );
-    const totalPaid = Math.max(0, Number(paidAgg?.total || 0));
+    const totalPaid = Math.max(0, roundCurrency(paidAgg?.total || 0));
+
+    // Advance credit aggregated exclusively from ADVANCE payment transactions
+    const advancePaidAgg = await runQueryOne(
+      "SELECT COALESCE(SUM(amount - COALESCE(refunded_amount, 0)), 0)::numeric as total FROM payments WHERE organization_id = $1 AND student_id = $2 AND status IN ('SUCCESS', 'VERIFIED') AND UPPER(fee_type) IN ('ADVANCE', 'ADVANCE FEE')",
+      [orgId, sDbId]
+    );
+    const advanceCredit = Math.max(0, roundCurrency(advancePaidAgg?.total || 0));
+
+    // Fetch existing fee account to preserve advance_applied
+    const feeAcc = await runQueryOne(
+      'SELECT total_fee, advance_applied FROM fee_accounts WHERE organization_id = $1 AND student_id = $2',
+      [orgId, sDbId]
+    );
+
+    const advanceApplied = Math.max(0, roundCurrency(feeAcc?.advance_applied || 0));
+    const advanceBalance = Math.max(0, roundCurrency(advanceCredit - advanceApplied));
 
     const demandedAgg = await runQueryOne(
       'SELECT COALESCE(SUM(total_amount), 0)::numeric as total FROM fee_demands WHERE organization_id = $1 AND student_id = $2',
       [orgId, sDbId]
     );
-    let totalDemanded = Number(demandedAgg?.total || 0);
+    let totalDemanded = roundCurrency(demandedAgg?.total || 0);
 
     if (totalDemanded === 0) {
-      const feeAcc = await runQueryOne(
-        'SELECT total_fee FROM fee_accounts WHERE organization_id = $1 AND student_id = $2',
-        [orgId, sDbId]
-      );
       if (feeAcc && Number(feeAcc.total_fee) > 0) {
-        totalDemanded = Number(feeAcc.total_fee);
+        totalDemanded = roundCurrency(feeAcc.total_fee);
       } else {
         const instAgg = await runQueryOne(
           'SELECT COALESCE(SUM(amount), 0)::numeric as total FROM fee_installments WHERE organization_id = $1 AND student_id = $2',
           [orgId, sDbId]
         );
         if (instAgg && Number(instAgg.total) > 0) {
-          totalDemanded = Number(instAgg.total);
+          totalDemanded = roundCurrency(instAgg.total);
         } else {
-          totalDemanded = Number(student.financial_total_demanded || 0);
+          totalDemanded = roundCurrency(student.financial_total_demanded || 0);
         }
       }
     }
 
-    const outstandingBalance = Math.max(0, totalDemanded - totalPaid);
+    const outstandingBalance = Math.max(0, roundCurrency(totalDemanded - totalPaid - advanceApplied));
 
     await runQuery(
       'UPDATE students SET financial_total_demanded = $1, financial_total_paid = $2, financial_outstanding_balance = $3 WHERE id = $4',
@@ -606,11 +629,11 @@ export class FeeService {
     );
 
     await runQuery(
-      'UPDATE fee_accounts SET total_fee = $1, total_paid = $2, balance_amount = $3 WHERE organization_id = $4 AND student_id = $5',
-      [totalDemanded, totalPaid, outstandingBalance, orgId, sDbId]
+      'UPDATE fee_accounts SET total_fee = $1, total_paid = $2, balance_amount = $3, advance_credit = $4, advance_balance = $5, advance_applied = $6 WHERE organization_id = $7 AND student_id = $8',
+      [totalDemanded, totalPaid, outstandingBalance, advanceCredit, advanceBalance, advanceApplied, orgId, sDbId]
     );
 
-    return { totalDemanded, totalPaid, outstandingBalance };
+    return { totalDemanded, totalPaid, outstandingBalance, advanceCredit, advanceBalance, advanceApplied };
   }
 
   async recordPayment(
@@ -638,7 +661,7 @@ export class FeeService {
     }
 
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name
+      `SELECT s.*, r.room_number, b.bed_code, b.bed_number, h.name as hostel_name
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
@@ -680,7 +703,14 @@ export class FeeService {
         student.financial_outstanding_balance ?? Math.max(0, totalDemanded - totalPaid)
       );
 
+      const feeAccountRes = await client.query(
+        'SELECT allow_advance_payment FROM fee_accounts WHERE organization_id = $1 AND student_id = $2',
+        [orgId, sDbId]
+      );
+      const allowAdvance = Boolean(feeAccountRes.rows[0]?.allow_advance_payment);
+
       if (
+        !allowAdvance &&
         totalDemanded > 0 &&
         outstanding <= 0 &&
         demandsCheck.rows.length > 0 &&
@@ -727,17 +757,40 @@ export class FeeService {
         payment = updateRes.rows[0];
       }
 
+      const rawFeeType = String(data.feeType || 'HOSTEL_RENT').trim();
+      const normalizedFeeType = rawFeeType.toUpperCase();
+      const isAdvancePayment = normalizedFeeType === 'ADVANCE' || normalizedFeeType === 'ADVANCE FEE';
+      const isAnnualMaintenance = normalizedFeeType === 'ANNUAL_MAINTENANCE' || normalizedFeeType === 'ANNUAL MAINTENANCE';
+      const billingPeriod = String((data as any).academicPeriod || (data as any).billingPeriod || '2026-2027').trim();
+
+      // Duplicate Annual Maintenance prevention check for explicit billing period
+      if (isAnnualMaintenance) {
+        const existingMaint = await client.query(
+          `SELECT * FROM fee_demands
+           WHERE organization_id = $1 AND student_id = $2
+             AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')
+             AND academic_period = $3`,
+          [orgId, sDbId, billingPeriod]
+        );
+        if (existingMaint.rows.length > 0) {
+          const m = existingMaint.rows[0];
+          if (m.status === 'PAID' || Number(m.balance_amount) <= 0) {
+            throw new AppError(`Annual Maintenance for billing period '${billingPeriod}' has already been paid for this student.`, 400);
+          }
+        }
+      }
+
       if (!payment) {
         const paymentRes = await client.query(
           `INSERT INTO payments (
             id, payment_number, organization_id, hostel_id, student_id, customer_code,
-            amount, payment_method, transaction_ref, status, receipt_number, received_by, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'SUCCESS', $10, $11, $12)
-          ON CONFLICT (id) DO UPDATE SET status = 'SUCCESS', receipt_number = $10, updated_at = CURRENT_TIMESTAMP
+            amount, payment_method, transaction_ref, status, receipt_number, received_by, notes, fee_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'SUCCESS', $10, $11, $12, $13)
+          ON CONFLICT (id) DO UPDATE SET status = 'SUCCESS', receipt_number = $10, fee_type = $13, updated_at = CURRENT_TIMESTAMP
           RETURNING id, id as "_id", payment_number as "paymentNumber", organization_id as "organizationId",
                     hostel_id as "branchId", student_id as "studentId", customer_code as "customerCode",
                     amount, payment_method as "paymentMethod", transaction_ref as "transactionRef",
-                    status, receipt_number as "receiptNumber", received_by as "receivedBy", notes,
+                    status, receipt_number as "receiptNumber", received_by as "receivedBy", notes, fee_type as "feeType",
                     created_at as "timestamp", created_at as "createdAt"`,
           [
             paymentId,
@@ -751,59 +804,125 @@ export class FeeService {
             transactionRef,
             receiptNumber,
             data.receivedBy || 'Authorized Staff',
-            data.notes || 'Fee collection'
+            data.notes || (isAdvancePayment ? 'Advance Fee collection' : isAnnualMaintenance ? `Annual Maintenance (${billingPeriod})` : 'Fee collection'),
+            isAdvancePayment ? 'ADVANCE' : isAnnualMaintenance ? 'ANNUAL_MAINTENANCE' : 'HOSTEL_RENT'
           ]
         );
         payment = paymentRes.rows[0];
       }
 
-      // 3. Allocate across fee installments
-      let remainingToDistribute = amount;
-      const pendingInstallmentsRes = await client.query(
-        "SELECT * FROM fee_installments WHERE organization_id = $1 AND student_id = $2 AND status != 'PAID' ORDER BY installment_number ASC",
-        [orgId, sDbId]
-      );
+      if (isAnnualMaintenance) {
+        let existingMaintRes = await client.query(
+          `SELECT * FROM fee_demands
+           WHERE organization_id = $1 AND student_id = $2
+             AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')
+             AND academic_period = $3`,
+          [orgId, sDbId, billingPeriod]
+        );
 
-      for (const inst of pendingInstallmentsRes.rows) {
-        if (remainingToDistribute <= 0) break;
-        const needed = Number(inst.balance_amount);
-        if (remainingToDistribute >= needed) {
+        let existingMaint = existingMaintRes.rows[0];
+        if (existingMaint) {
+          if (existingMaint.status === 'PAID' || Number(existingMaint.balance_amount) <= 0) {
+            throw new AppError(`Annual Maintenance for billing period '${billingPeriod}' has already been fully paid for this student.`, 400);
+          }
+
+          const demandTotal = Number(existingMaint.total_amount || amount);
+          const newPaid = roundCurrency(Number(existingMaint.paid_amount || 0) + amount);
+          const newBal = roundCurrency(Math.max(0, demandTotal - newPaid));
+          const newStatus = newBal <= 0 ? 'PAID' : 'PARTIAL';
+
           await client.query(
-            "UPDATE fee_installments SET paid_amount = amount, balance_amount = 0, status = 'PAID', payment_id = $1, receipt_number = $2, paid_at = CURRENT_TIMESTAMP WHERE id = $3",
-            [paymentId, receiptNumber, inst.id]
+            `UPDATE fee_demands
+             SET paid_amount = $1, balance_amount = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [newPaid, newBal, newStatus, existingMaint.id]
           );
-          remainingToDistribute -= needed;
         } else {
-          await client.query(
-            "UPDATE fee_installments SET paid_amount = paid_amount + $1, balance_amount = balance_amount - $1, status = 'PARTIAL', payment_id = $2, receipt_number = $3 WHERE id = $4",
-            [remainingToDistribute, paymentId, receiptNumber, inst.id]
+          const hostelObj = await client.query(
+            `SELECT annual_maintenance_amount FROM hostels WHERE id = $1`,
+            [branchId]
           );
-          remainingToDistribute = 0;
+          const configuredAmount = Number(hostelObj.rows[0]?.annual_maintenance_amount || amount);
+          const demandTotal = configuredAmount > 0 ? configuredAmount : amount;
+          const newBal = roundCurrency(Math.max(0, demandTotal - amount));
+          const newStatus = newBal <= 0 ? 'PAID' : 'PARTIAL';
+
+          await client.query(
+            `INSERT INTO fee_demands (
+              id, demand_number, organization_id, hostel_id, student_id, customer_code,
+              fee_structure_id, academic_period, term_name, hostel_rent, admission_fee, security_deposit, other_charges,
+              total_amount, paid_amount, balance_amount, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'ANNUAL_MAINTENANCE', $7, $8, 0, 0, 0, $9, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET paid_amount = EXCLUDED.paid_amount, balance_amount = EXCLUDED.balance_amount, status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP`,
+            [
+              require('crypto').randomUUID(),
+              'DEM-MAINT-' + Date.now(),
+              orgId,
+              branchId,
+              sDbId,
+              student.customer_code,
+              billingPeriod,
+              `Annual Maintenance (${billingPeriod})`,
+              demandTotal,
+              amount,
+              newBal,
+              newStatus
+            ]
+          );
         }
-      }
+      } else if (!isAdvancePayment) {
+        // 3. Allocate standard HOSTEL_RENT across fee installments (with currency rounding to eliminate float drift - ISSUE-019)
+        let remainingToDistribute = roundCurrency(amount);
+        const pendingInstallmentsRes = await client.query(
+          "SELECT * FROM fee_installments WHERE organization_id = $1 AND student_id = $2 AND status != 'PAID' ORDER BY installment_number ASC",
+          [orgId, sDbId]
+        );
 
-      // 4. Allocate across fee demands
-      let demandDist = amount;
-      const unpaidDemandsRes = await client.query(
-        "SELECT * FROM fee_demands WHERE organization_id = $1 AND student_id = $2 AND status != 'PAID' ORDER BY created_at ASC",
-        [orgId, sDbId]
-      );
+        for (const inst of pendingInstallmentsRes.rows) {
+          if (remainingToDistribute <= 0) break;
+          const needed = roundCurrency(inst.balance_amount);
+          if (remainingToDistribute >= needed) {
+            await client.query(
+              "UPDATE fee_installments SET paid_amount = amount, balance_amount = 0, status = 'PAID', payment_id = $1, receipt_number = $2, paid_at = CURRENT_TIMESTAMP WHERE id = $3",
+              [paymentId, receiptNumber, inst.id]
+            );
+            remainingToDistribute = roundCurrency(remainingToDistribute - needed);
+          } else {
+            const newPaid = roundCurrency(Number(inst.paid_amount || 0) + remainingToDistribute);
+            const newBal = roundCurrency(Math.max(0, Number(inst.amount) - newPaid));
+            await client.query(
+              "UPDATE fee_installments SET paid_amount = $1, balance_amount = $2, status = 'PARTIAL', payment_id = $3, receipt_number = $4 WHERE id = $5",
+              [newPaid, newBal, paymentId, receiptNumber, inst.id]
+            );
+            remainingToDistribute = 0;
+          }
+        }
 
-      for (const d of unpaidDemandsRes.rows) {
-        if (demandDist <= 0) break;
-        const bal = Number(d.balance_amount);
-        if (demandDist >= bal) {
-          await client.query(
-            "UPDATE fee_demands SET paid_amount = total_amount, balance_amount = 0, status = 'PAID' WHERE id = $1",
-            [d.id]
-          );
-          demandDist -= bal;
-        } else {
-          await client.query(
-            "UPDATE fee_demands SET paid_amount = paid_amount + $1, balance_amount = balance_amount - $1, status = 'PARTIAL' WHERE id = $1",
-            [demandDist, d.id]
-          );
-          demandDist = 0;
+        // 4. Allocate across fee demands
+        let demandDist = roundCurrency(amount);
+        const unpaidDemandsRes = await client.query(
+          "SELECT * FROM fee_demands WHERE organization_id = $1 AND student_id = $2 AND status != 'PAID' ORDER BY created_at ASC",
+          [orgId, sDbId]
+        );
+
+        for (const d of unpaidDemandsRes.rows) {
+          if (demandDist <= 0) break;
+          const bal = roundCurrency(d.balance_amount);
+          if (demandDist >= bal) {
+            await client.query(
+              "UPDATE fee_demands SET paid_amount = total_amount, balance_amount = 0, status = 'PAID' WHERE id = $1",
+              [d.id]
+            );
+            demandDist = roundCurrency(demandDist - bal);
+          } else {
+            const newPaid = roundCurrency(Number(d.paid_amount || 0) + demandDist);
+            const newBal = roundCurrency(Math.max(0, Number(d.total_amount) - newPaid));
+            await client.query(
+              "UPDATE fee_demands SET paid_amount = $1, balance_amount = $2, status = 'PARTIAL' WHERE id = $3",
+              [newPaid, newBal, d.id]
+            );
+            demandDist = 0;
+          }
         }
       }
 
@@ -851,7 +970,7 @@ export class FeeService {
           customerCode: student.customer_code,
           studentName: student.full_name,
           roomNumber: student.room_number || '',
-          bedNumber: student.bed_code || '',
+          bedNumber: student.bed_number ? String(student.bed_number) : (student.bed_code ? cleanBedNumber(student.bed_code) : ''),
           feeType: data.feeType || 'Hostel Rent',
           installmentMonth: this.getCurrentMonthString(),
           amount,
@@ -881,7 +1000,7 @@ export class FeeService {
             student.customer_code,
             student.full_name,
             student.room_number || '',
-            student.bed_code || '',
+            student.bed_number ? String(student.bed_number) : (student.bed_code ? cleanBedNumber(student.bed_code) : ''),
             receipt.feeType,
             receipt.installmentMonth,
             amount,
@@ -986,6 +1105,105 @@ export class FeeService {
     }).catch(() => {});
 
     return { payment: result.payment, receipt: result.receipt };
+  }
+
+  /**
+   * Transactional, concurrent-safe, and idempotent final-term advance application logic.
+   * Based strictly on valid end-date / installment count.
+   * Enforces zero consumption when no reliable end date or installment schedule exists.
+   */
+  async applyFinalMonthAdvance(orgId: string, studentId: string, targetInstallmentNumber?: number): Promise<any> {
+    return await transaction(async (client) => {
+      // 1. Pessimistic FOR UPDATE lock on fee_accounts to guarantee atomicity & concurrency safety (Requirement 1 & 17)
+      const feeAccRes = await client.query(
+        `SELECT * FROM fee_accounts WHERE organization_id = $1 AND student_id = $2 FOR UPDATE`,
+        [orgId, studentId]
+      );
+      const feeAcc = feeAccRes.rows[0];
+      if (!feeAcc) return { applied: 0, advanceBalance: 0, netPayable: 0 };
+
+      const totalInstallments = Number(feeAcc.number_of_installments || 0);
+      const advanceBalance = Math.max(0, roundCurrency(feeAcc.advance_balance || 0));
+
+      // REQUIREMENT 3: If IHMS has NO reliable end date / installment count, DO NOT guess or automatically consume advance
+      if (!totalInstallments || totalInstallments <= 0 || advanceBalance <= 0) {
+        return { applied: 0, advanceBalance, netPayable: Number(feeAcc.monthly_amount || feeAcc.balance_amount || 0) };
+      }
+
+      const paidInstallments = Number(feeAcc.paid_installments || 0);
+      const currentInst = targetInstallmentNumber || paidInstallments + 1;
+      const remainingValidInstallmentsCount = Math.max(0, totalInstallments - currentInst + 1);
+
+      if (remainingValidInstallmentsCount > 0 && currentInst >= totalInstallments - remainingValidInstallmentsCount + 1) {
+        const pendingInsts = await client.query(
+          `SELECT * FROM fee_installments 
+           WHERE organization_id = $1 AND student_id = $2 AND installment_number >= $3 AND status != 'PAID'
+           ORDER BY installment_number ASC`,
+          [orgId, studentId, currentInst]
+        );
+
+        let remainingAdvanceToApply = advanceBalance;
+        let totalAppliedThisRun = 0;
+
+        if (pendingInsts.rows.length > 0) {
+          for (const inst of pendingInsts.rows) {
+            if (remainingAdvanceToApply <= 0) break;
+            const instBal = roundCurrency(Number(inst.balance_amount || inst.amount || 0));
+            if (instBal <= 0) continue;
+
+            const applyForInst = Math.min(instBal, remainingAdvanceToApply);
+            const newInstPaid = roundCurrency(Number(inst.paid_amount || 0) + applyForInst);
+            const newInstBal = roundCurrency(Math.max(0, Number(inst.amount) - newInstPaid));
+            const status = newInstBal <= 0 ? 'PAID' : 'PARTIAL';
+
+            await client.query(
+              `UPDATE fee_installments 
+               SET paid_amount = $1, balance_amount = $2, status = $3, updated_at = CURRENT_TIMESTAMP 
+               WHERE id = $4`,
+              [newInstPaid, newInstBal, status, inst.id]
+            );
+
+            remainingAdvanceToApply = roundCurrency(remainingAdvanceToApply - applyForInst);
+            totalAppliedThisRun = roundCurrency(totalAppliedThisRun + applyForInst);
+          }
+        } else {
+          const monthlyFee = Number(feeAcc.monthly_amount || feeAcc.balance_amount || feeAcc.total_fee || 0);
+          if (monthlyFee > 0) {
+            const totalRemainingPayable = monthlyFee * remainingValidInstallmentsCount;
+            totalAppliedThisRun = Math.min(totalRemainingPayable, remainingAdvanceToApply);
+          }
+        }
+
+        if (totalAppliedThisRun > 0) {
+          const updateRes = await client.query(
+            `UPDATE fee_accounts 
+             SET advance_applied = advance_applied + $1, 
+                 advance_balance = GREATEST(0, advance_credit - (advance_applied + $1)), 
+                 updated_at = CURRENT_TIMESTAMP 
+             WHERE organization_id = $2 AND student_id = $3 AND advance_balance >= $1
+             RETURNING advance_balance, advance_applied`,
+            [totalAppliedThisRun, orgId, studentId]
+          );
+
+          if (!updateRes.rows || updateRes.rows.length === 0) {
+            // Concurrent request already consumed the advance balance
+            return { applied: 0, advanceBalance: 0, netPayable: Number(feeAcc.monthly_amount || 0) };
+          }
+
+          const newAdvanceApplied = roundCurrency(updateRes.rows[0].advance_applied);
+          const newAdvanceBalance = roundCurrency(updateRes.rows[0].advance_balance);
+
+          await this.recalculateStudentLedger(orgId, studentId, client);
+          return {
+            applied: totalAppliedThisRun,
+            advanceBalance: newAdvanceBalance,
+            netPayable: Math.max(0, Number(feeAcc.monthly_amount || 0) - totalAppliedThisRun),
+          };
+        }
+      }
+
+      return { applied: 0, advanceBalance };
+    });
   }
 
   private inFlightInitiates = new Map<string, Promise<any>>();
@@ -1572,8 +1790,8 @@ export class FeeService {
     // 1. Cryptographic Signature Verification
     const isValid = cashfreeService.verifyWebhookSignature(rawBody, signature, timestamp);
     if (!isValid) {
-      if (process.env.BYPASS_WEBHOOK_SIGNATURE === 'true') {
-        console.warn('[Cashfree Webhook] Webhook signature verification bypassed via BYPASS_WEBHOOK_SIGNATURE=true.');
+      if (process.env.NODE_ENV === 'test' && process.env.BYPASS_WEBHOOK_SIGNATURE === 'true') {
+        console.warn('[Cashfree Webhook] Webhook signature verification bypassed via BYPASS_WEBHOOK_SIGNATURE=true in test mode.');
       } else {
         throw new AppError('Cryptographic signature verification failed.', 401);
       }
@@ -1814,8 +2032,8 @@ export class FeeService {
         const studentRes = await client.query(`SELECT * FROM students WHERE id = $1`, [lockedPayment.student_id]);
         const student = studentRes.rows[0];
 
-        const newTotalPaid = Number(student?.financial_total_paid || 0) + receivedAmount;
-        const newOutstanding = Math.max(0, Number(student?.financial_outstanding_balance || 0) - receivedAmount);
+        const newTotalPaid = roundCurrency(Number(student?.financial_total_paid || 0) + receivedAmount);
+        const newOutstanding = roundCurrency(Math.max(0, Number(student?.financial_outstanding_balance || 0) - receivedAmount));
 
         await client.query(
           `UPDATE students
@@ -1854,9 +2072,9 @@ export class FeeService {
           let remainingToApply = receivedAmount;
           for (const inst of instRes.rows) {
             if (remainingToApply <= 0) break;
-            const instBal = Number(inst.balance_amount);
-            const applyAmt = Math.min(remainingToApply, instBal);
-            const newInstBal = instBal - applyAmt;
+            const instBal = roundCurrency(Number(inst.balance_amount));
+            const applyAmt = roundCurrency(Math.min(remainingToApply, instBal));
+            const newInstBal = roundCurrency(instBal - applyAmt);
 
             await client.query(
               `UPDATE fee_installments
@@ -1866,7 +2084,7 @@ export class FeeService {
                WHERE id = $4`,
               [applyAmt, newInstBal, receiptNumber, inst.id]
             );
-            remainingToApply -= applyAmt;
+            remainingToApply = roundCurrency(remainingToApply - applyAmt);
           }
         }
 
@@ -2704,7 +2922,7 @@ export class FeeService {
 
     // Generate the single canonical receipt if missing
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, b.bed_code, h.name as hostel_name, h.branch_code as hostel_branch_code
+      `SELECT s.*, r.room_number, b.bed_code, b.bed_number, h.name as hostel_name, h.branch_code as hostel_branch_code
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
        LEFT JOIN beds b ON b.id = s.bed_id
@@ -2737,7 +2955,7 @@ export class FeeService {
         studentDisplayCode,
         student?.full_name || 'Student',
         student?.room_number || '',
-        student?.bed_code || '',
+        student?.bed_number ? String(student.bed_number) : (student?.bed_code ? cleanBedNumber(student.bed_code) : ''),
         'Hostel Rent',
         this.getCurrentMonthString(),
         Number(payment.amount),
@@ -2767,7 +2985,7 @@ export class FeeService {
       customId: studentDisplayCode,
       studentName: student?.full_name || 'Student',
       roomNumber: student?.room_number || '',
-      bedNumber: student?.bed_code || '',
+      bedNumber: student?.bed_number ? String(student.bed_number) : (student?.bed_code ? cleanBedNumber(student.bed_code) : ''),
       feeType: 'Hostel Rent',
       installmentMonth: this.getCurrentMonthString(),
       amount: Number(payment.amount),

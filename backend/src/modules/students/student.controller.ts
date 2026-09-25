@@ -2,10 +2,12 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { studentService, sanitizeStudentDisplayId } from './student.service';
 import { query, queryOne, queryRows } from '../../config/database';
 import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { enforceTenantIsolation } from '../../common/guards/tenant.guard';
 import { UserRole } from '../../config/constants';
 
 const router = Router();
 router.use(authenticate);
+router.use(enforceTenantIsolation);
 router.use(authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.ACCOUNTANT, UserRole.WARDEN, UserRole.SECURITY_GUARD, UserRole.MESS_MANAGER, UserRole.MAINTENANCE_STAFF));
 
 // GET /students with Lovable Paginated filter
@@ -27,7 +29,17 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     const targetBranch = (branchId || hostelId) as string;
-    if (targetBranch && targetBranch !== 'ALL') {
+    if (req.user!.role === UserRole.WARDEN) {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      if (targetBranch && targetBranch !== 'ALL' && wardenHostelId && targetBranch !== wardenHostelId) {
+        return res.status(403).json({ success: false, message: 'Access denied: Warden cannot view students of another hostel.' });
+      }
+      const effectiveHostel = wardenHostelId || targetBranch;
+      if (effectiveHostel && effectiveHostel !== 'ALL') {
+        params.push(effectiveHostel);
+        whereClause += ` AND s.hostel_id = $${params.length}`;
+      }
+    } else if (targetBranch && targetBranch !== 'ALL') {
       params.push(targetBranch);
       whereClause += ` AND s.hostel_id = $${params.length}`;
     }
@@ -128,6 +140,22 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 // GET /students/:id
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const targetStudent = await queryOne<any>(
+        `SELECT hostel_id FROM students WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR UPPER(COALESCE(custom_id, '')) = UPPER($1) OR user_id = $1) AND (organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
+        [req.params.id ? req.params.id.trim() : req.params.id, req.user!.organizationId]
+      );
+      if (!targetStudent) {
+        return res.status(404).json({ success: false, message: 'Student not found.' });
+      }
+      if (wardenHostelId && targetStudent.hostel_id !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot view details of students belonging to another hostel.',
+        });
+      }
+    }
     const s = await studentService.getById(req.user!.organizationId, req.params.id);
     res.json({ success: true, data: s });
   } catch (err) { next(err); }
@@ -174,9 +202,23 @@ router.post('/:id/allocate', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, Use
 // POST /students
 router.post('/', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const targetBranch = req.body.branchId || req.body.hostelId;
+    let targetBranch = req.body.branchId || req.body.hostelId;
+
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      if (targetBranch && wardenHostelId && targetBranch !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden can only create students for their assigned hostel branch.',
+        });
+      }
+      targetBranch = wardenHostelId || targetBranch;
+    }
+
     const payload = {
       ...req.body,
+      hostelId: targetBranch,
+      branchId: targetBranch,
       fullName: req.body.fullName || req.body.name,
       guardian: {
         name: req.body.guardianName || req.body.guardian?.name || 'Guardian',
@@ -197,12 +239,31 @@ router.post('/', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN
   } catch (err) { next(err); }
 });
 
+
 // PATCH & POST /students/:id/portal-access
 const handlePortalAccess = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { action, status, initialPassword, temporaryPassword, password } = req.body;
     const shouldEnable = status ? status === 'ENABLED' : (action === 'GRANT' || action === 'ENABLE');
     const tempPw = password || temporaryPassword || initialPassword;
+
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const targetStudent = await queryOne<any>(
+        `SELECT hostel_id FROM students WHERE organization_id = $1 AND (id = $2 OR student_id = $2 OR UPPER(customer_code) = UPPER($2) OR user_id = $2)`,
+        [req.user!.organizationId, req.params.id]
+      );
+      if (!targetStudent) {
+        return res.status(404).json({ success: false, message: 'Student not found.' });
+      }
+      if (wardenHostelId && targetStudent.hostel_id !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot manage portal access for students in another hostel.',
+        });
+      }
+    }
+
     const result = await studentService.setPortalAccess(
       req.user!.organizationId,
       req.params.id,
@@ -227,8 +288,9 @@ const handlePortalAccess = async (req: Request, res: Response, next: NextFunctio
   } catch (err) { next(err); }
 };
 
-router.patch('/:id/portal-access', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handlePortalAccess);
-router.post('/:id/portal-access', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), handlePortalAccess);
+router.patch('/:id/portal-access', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN), handlePortalAccess);
+router.post('/:id/portal-access', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN), handlePortalAccess);
+
 
 // POST /students/:id/reset-password (Admin resets student password)
 router.post('/:id/reset-password', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {

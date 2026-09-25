@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { dashboardService } from './dashboard.service';
 import { queryOne, queryRows } from '../../config/database';
-import { authenticate } from '../../common/guards/auth.guard';
+import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { UserRole } from '../../config/constants';
 
 const router = Router();
 router.use(authenticate);
@@ -10,7 +11,7 @@ router.use(authenticate);
 // GET /dashboard/owner
 // All data from real PostgreSQL queries — zero fake/hardcoded values
 // ============================================================
-router.get('/owner', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/owner', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { branchId } = req.query;
     const orgId = req.user!.organizationId;

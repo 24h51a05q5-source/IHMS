@@ -23,7 +23,7 @@ import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { ConfirmDialog } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
-import { formatStudentId } from '@/lib/utils';
+import { formatStudentId, formatBedLabel, formatRoomAndBed } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -55,7 +55,8 @@ interface SuccessModalData {
 }
 
 function StudentsPageContent() {
-  const { currentBranchId } = useAuth();
+  const { currentBranchId, user } = useAuth();
+  const isWarden = user?.role === 'WARDEN';
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
 
@@ -289,34 +290,66 @@ function StudentsPageContent() {
         </span>
       ),
     },
-    { key: 'room', header: 'Room', cell: (s) => <span className="font-bold text-black">{s?.roomNumber || '—'}</span>, hideOnMobile: true },
-    { key: 'bed', header: 'Bed', cell: (s) => <span className="font-bold text-black">{s?.bedNumber || '—'}</span>, hideOnMobile: true },
+    { key: 'room', header: 'Room', cell: (s) => <span className="font-bold text-black">{s?.roomNumber ? `Room ${String(s.roomNumber).replace(/^Room\s+/i, '')}` : '—'}</span>, hideOnMobile: true },
+    { key: 'bed', header: 'Bed', cell: (s) => <span className="font-bold text-black">{formatBedLabel(s?.bedNumber)}</span>, hideOnMobile: true },
     {
       key: 'fee',
-      header: 'Fee Status',
-      cell: (s) => (
-        <div className="flex flex-col items-start gap-1">
-          {feeBadge(s)}
-          {s?.feeOutstanding && Number(s.feeOutstanding) > 0 ? (
-            <span className="text-xs font-bold text-[#C62828]">₹{Number(s.feeOutstanding).toLocaleString('en-IN')} due</span>
-          ) : null}
-        </div>
-      ),
+      header: 'Outstanding Dues',
+      cell: (s) => {
+        const outstanding = Number(s?.feeOutstanding || 0);
+        return (
+          <div className="flex flex-col items-start gap-1">
+            {feeBadge(s)}
+            <span className={`text-xs font-mono font-bold ${outstanding > 0 ? 'text-[#C62828]' : 'text-slate-600'}`}>
+              ₹{outstanding.toLocaleString('en-IN')}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: 'portal',
       header: 'Portal Access',
-      cell: (s) => (
-        <Badge variant={s?.portalAccess === 'ENABLED' ? 'success' : 'outline'}>
-          {s?.portalAccess === 'ENABLED' ? 'Active' : 'Disabled'}
-        </Badge>
-      ),
+      cell: (s) => {
+        const isEnabled = s?.portalAccess === 'ENABLED';
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <Badge variant={isEnabled ? 'success' : 'outline'}>
+              {isEnabled ? 'Active' : 'Inactive'}
+            </Badge>
+            {!isEnabled ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px] font-bold text-[#087A45] hover:bg-[#E8F5ED] border-[#B4E2C7]"
+                onClick={() => {
+                  setEnableModalTarget(s);
+                  setEnableTempPw('');
+                  setEnableConfirmPw('');
+                }}
+              >
+                <ShieldCheck className="mr-1 h-3 w-3" /> Give Access
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px] font-bold text-[#C62828] hover:bg-[#FEE2E2] border-[#FECACA]"
+                onClick={() => setDisableTarget(s)}
+              >
+                <PowerOff className="mr-1 h-3 w-3" /> Revoke Access
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
   const rowActions = (s?: Student | null) => {
     if (!s) return null;
     const studentId = s.id || s.studentId || s.customerCode;
+    const isEnabled = s.portalAccess === 'ENABLED';
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -331,24 +364,26 @@ function StudentsPageContent() {
             </a>
           </DropdownMenuItem>
           <DropdownMenuSeparator className="bg-[#CBD5E1]" />
-          {s.portalAccess === 'ENABLED' ? (
+          {isEnabled ? (
             <>
               <DropdownMenuItem
                 className="text-[#C94F18] font-bold focus:text-[#C94F18] hover:bg-[#FFF3EB] cursor-pointer"
                 onClick={() => setDisableTarget(s)}
               >
-                <PowerOff className="mr-2 h-4 w-4" /> Disable Portal Access
+                <PowerOff className="mr-2 h-4 w-4" /> Revoke Portal Access
               </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-[#E87545] font-bold focus:text-[#E87545] hover:bg-[#FFF3EB] cursor-pointer"
-                onClick={() => {
-                  setResetModalTarget(s);
-                  setResetTempPw('');
-                  setResetConfirmPw('');
-                }}
-              >
-                <KeyRound className="mr-2 h-4 w-4" /> Reset Portal Password
-              </DropdownMenuItem>
+              {!isWarden && (
+                <DropdownMenuItem
+                  className="text-[#E87545] font-bold focus:text-[#E87545] hover:bg-[#FFF3EB] cursor-pointer"
+                  onClick={() => {
+                    setResetModalTarget(s);
+                    setResetTempPw('');
+                    setResetConfirmPw('');
+                  }}
+                >
+                  <KeyRound className="mr-2 h-4 w-4" /> Reset Portal Password
+                </DropdownMenuItem>
+              )}
             </>
           ) : (
             <DropdownMenuItem
@@ -359,17 +394,22 @@ function StudentsPageContent() {
                 setEnableConfirmPw('');
               }}
             >
-              <ShieldCheck className="mr-2 h-4 w-4" /> Enable Portal Access
+              <ShieldCheck className="mr-2 h-4 w-4" /> Give Portal Access
             </DropdownMenuItem>
           )}
-          <DropdownMenuSeparator className="bg-[#CBD5E1]" />
-          <DropdownMenuItem className="text-[#C62828] font-bold focus:text-[#C62828] hover:bg-[#FEE2E2] cursor-pointer" onClick={() => setDeleteTarget(s)}>
-            <Trash2 className="mr-2 h-4 w-4" /> Remove Student
-          </DropdownMenuItem>
+          {!isWarden && (
+            <>
+              <DropdownMenuSeparator className="bg-[#CBD5E1]" />
+              <DropdownMenuItem className="text-[#C62828] font-bold focus:text-[#C62828] hover:bg-[#FEE2E2] cursor-pointer" onClick={() => setDeleteTarget(s)}>
+                <Trash2 className="mr-2 h-4 w-4" /> Remove Student
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     );
   };
+
 
   const studentList = Array.isArray(data?.items)
     ? data.items
@@ -418,7 +458,7 @@ function StudentsPageContent() {
           <div>
             <span className="text-[10px] font-extrabold uppercase tracking-wide text-[#64748B]">Room & Bed</span>
             <p className="font-bold text-[#111827]">
-              {s.roomNumber ? `Room ${s.roomNumber}` : 'Unassigned'} • {s.bedNumber ? `Bed ${s.bedNumber}` : '—'}
+              {formatRoomAndBed(s.roomNumber, s.bedNumber)}
             </p>
           </div>
           <div>
@@ -455,11 +495,11 @@ function StudentsPageContent() {
     <div className="space-y-4">
       <PageHeader
         title="Student Management"
-        description="Admit students, manage portal access, and track fee status"
+        description="View student profiles, portal status, and outstanding fee dues"
         actions={
           <Button asChild className="gap-1.5 font-bold bg-[#E87545] hover:bg-[#D66434] text-white">
             <a href="/students/new">
-              <UserPlus className="h-4 w-4" /> Admit Student
+              <UserPlus className="h-4 w-4" /> Add Student
             </a>
           </Button>
         }
@@ -485,9 +525,10 @@ function StudentsPageContent() {
         rowKey={(s) => s?.id || s?.studentId || s?.customerCode || Math.random().toString()}
         rowActions={rowActions}
         emptyTitle="No students found"
-        emptyDescription="Admit your first student to get started."
-        emptyAction={{ label: 'Admit Student', onClick: () => (window.location.href = '/students/new') }}
+        emptyDescription="Add your first student to get started."
+        emptyAction={{ label: 'Add Student', onClick: () => (window.location.href = '/students/new') }}
       />
+
 
       {/* ENABLE PORTAL ACCESS CONFIRMATION MODAL */}
       <Dialog

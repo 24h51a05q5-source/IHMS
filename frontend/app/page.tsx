@@ -22,6 +22,8 @@ export default function Home() {
         router.replace('/student');
       } else if (user.role === 'PARENT') {
         router.replace('/parent');
+      } else if (user.role === 'WARDEN') {
+        router.replace('/warden/dashboard');
       } else {
         router.replace('/dashboard');
       }

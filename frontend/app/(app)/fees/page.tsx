@@ -30,7 +30,7 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
-import { formatStudentId } from '@/lib/utils';
+import { formatStudentId, formatBedNumber } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { SearchInput } from '@/components/ui/search-input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -146,7 +146,7 @@ function FeesPageContent() {
         paymentMode: payForm.method,
         feeType: payForm.feeType,
         roomNumber: selectedStudentObj?.roomNumber || selectedStudentObj?.roomCode || '',
-        bedNumber: selectedStudentObj?.bedNumber || selectedStudentObj?.bedCode || '',
+        bedNumber: formatBedNumber(selectedStudentObj?.bedNumber || selectedStudentObj?.bedCode) || '',
         paymentDate: payForm.paymentDate,
         notes: payForm.notes,
         remarks: payForm.notes,
@@ -204,29 +204,37 @@ function FeesPageContent() {
   };
 
   const filteredFees = fees.filter((f) => {
+    const q = search.toLowerCase().trim();
     const matchSearch =
-      !search ||
-      (f.studentName || '').toLowerCase().includes(search.toLowerCase()) ||
-      (f.customerCode || f.studentId || '').toLowerCase().includes(search.toLowerCase());
+      !q ||
+      (f.studentName || '').toLowerCase().includes(q) ||
+      (f.customerCode || f.studentId || '').toLowerCase().includes(q) ||
+      (f.paymentPlan || '').toLowerCase().includes(q) ||
+      (f.status || '').toLowerCase().includes(q);
     const matchStatus = statusFilter === 'ALL' || f.status === statusFilter;
     return matchSearch && matchStatus;
   });
 
   const filteredPayments = payments.filter((p) => {
-    if (!search) return true;
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
     return (
-      (p.studentName || '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.customerCode || p.studentId || '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.receiptNo || p.receiptNumber || p.paymentNumber || '').toLowerCase().includes(search.toLowerCase())
+      (p.studentName || '').toLowerCase().includes(q) ||
+      (p.customerCode || p.studentId || '').toLowerCase().includes(q) ||
+      (p.receiptNo || p.receiptNumber || p.paymentNumber || '').toLowerCase().includes(q) ||
+      (p.method || (p as any).paymentMethod || '').toLowerCase().includes(q)
     );
   });
 
   const filteredVerifications = pendingVerifications.filter((v) => {
-    if (!search) return true;
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
     return (
-      (v.studentName || '').toLowerCase().includes(search.toLowerCase()) ||
-      (v.customerCode || v.studentId || '').toLowerCase().includes(search.toLowerCase()) ||
-      (v.transactionRef || v.paymentNumber || '').toLowerCase().includes(search.toLowerCase())
+      (v.studentName || '').toLowerCase().includes(q) ||
+      (v.customerCode || v.studentId || '').toLowerCase().includes(q) ||
+      (v.transactionRef || v.paymentNumber || '').toLowerCase().includes(q) ||
+      (v.hostelName || '').toLowerCase().includes(q) ||
+      (v.paymentMethod || '').toLowerCase().includes(q)
     );
   });
 
@@ -488,21 +496,21 @@ function FeesPageContent() {
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3.5 sm:space-y-4 w-full min-w-0">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 bg-[#F8FAFC] p-2.5 sm:p-3 rounded-xl border border-[#CBD5E1] w-full min-w-0">
-          <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:flex bg-white border border-[#CBD5E1] p-1 rounded-lg">
-            <TabsTrigger value="ledger" className="gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center">
+          <TabsList className="w-full sm:w-auto flex items-center justify-start overflow-x-auto overflow-y-hidden max-w-full min-w-0 no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden bg-white border border-[#CBD5E1] p-1 pr-2.5 sm:pr-1 rounded-lg">
+            <TabsTrigger value="ledger" className="shrink-0 gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center">
               <DollarSign className="h-4 w-4 shrink-0" />
               <span>Fee Ledgers</span>
             </TabsTrigger>
-            <TabsTrigger value="verifications" className="gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center relative">
+            <TabsTrigger value="verifications" className="shrink-0 gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center relative">
               <ShieldCheck className="h-4 w-4 shrink-0 text-[#E87545]" />
               <span>Pending Verification</span>
               {pendingVerifications.length > 0 && (
-                <span className="ml-1 rounded-full bg-[#E87545] px-1.5 py-0.2 text-[10px] font-black text-white">
+                <span className="ml-1 rounded-full bg-[#E87545] px-1.5 py-0.2 text-[10px] font-black text-white shrink-0">
                   {pendingVerifications.length}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="history" className="gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center">
+            <TabsTrigger value="history" className="shrink-0 gap-1.5 px-3 text-xs sm:text-sm font-bold justify-center">
               <Receipt className="h-4 w-4 shrink-0" />
               <span>Receipts ({payments.length})</span>
             </TabsTrigger>

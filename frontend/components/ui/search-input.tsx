@@ -75,7 +75,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
     return (
       <div className={cn('relative w-full sm:max-w-xs', containerClassName)}>
         <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]"
+          className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]"
           aria-hidden="true"
         />
         <input
@@ -91,10 +91,11 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
           placeholder={placeholder}
           disabled={disabled}
           className={cn(
-            'flex h-9 sm:h-10 w-full rounded-xl border border-[#CBD5E1] bg-white pl-9 pr-8 text-xs sm:text-sm font-semibold text-[#111827] placeholder:text-[#64748B] transition-colors duration-150',
+            'flex h-9 sm:h-10 w-full rounded-xl border border-[#CBD5E1] bg-white text-xs sm:text-sm font-semibold text-[#111827] placeholder:text-[#64748B] transition-colors duration-150',
             'focus:border-[#E87545] focus:outline-none focus:ring-1 focus:ring-[#E87545]',
             'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400',
-            className
+            className,
+            '!pl-10 !pr-9'
           )}
           aria-label={placeholder}
           {...props}

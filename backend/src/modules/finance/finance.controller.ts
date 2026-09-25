@@ -19,7 +19,7 @@ router.post('/expenses', authorizeRoles(UserRole.OWNER, UserRole.ACCOUNTANT, Use
   } catch (err) { next(err); }
 });
 
-router.get('/expenses', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/expenses', authorizeRoles(UserRole.OWNER, UserRole.ACCOUNTANT, UserRole.BRANCH_MANAGER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { branchId, category } = req.query;
     const expenses = await financeService.listExpenses(req.user!.organizationId, branchId as string, category as string);
@@ -27,14 +27,14 @@ router.get('/expenses', async (req: Request, res: Response, next: NextFunction) 
   } catch (err) { next(err); }
 });
 
-router.get('/vouchers', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/vouchers', authorizeRoles(UserRole.OWNER, UserRole.ACCOUNTANT, UserRole.BRANCH_MANAGER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const vouchers = await financeService.listVouchers(req.user!.organizationId, req.query.branchId as string);
     res.json({ success: true, data: vouchers });
   } catch (err) { next(err); }
 });
 
-router.get('/profit-and-loss', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/profit-and-loss', authorizeRoles(UserRole.OWNER, UserRole.ACCOUNTANT, UserRole.BRANCH_MANAGER, UserRole.SUPER_ADMIN), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { branchId, startDate, endDate } = req.query;
     const report = await financeService.generateProfitAndLoss(

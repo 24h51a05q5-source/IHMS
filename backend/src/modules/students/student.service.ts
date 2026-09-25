@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { query, queryOne, queryRows, transaction } from '../../config/database';
 import { AppError } from '../../common/filters/http-exception.filter';
@@ -62,6 +63,30 @@ export function sanitizeStudentDisplayId(
   return str;
 }
 
+/**
+ * Normalizes any bed code or raw bed identifier into a clean numeric string (e.g. 'IHM-AA-MN-B-0001' -> '1', 'B01' -> '1').
+ */
+export function cleanBedNumber(bedOrCode?: any): string {
+  if (bedOrCode === null || bedOrCode === undefined || bedOrCode === '') return '';
+  if (typeof bedOrCode === 'number') return String(bedOrCode);
+  const str = String(bedOrCode).trim();
+  if (!str) return '';
+  if (/^\d+$/.test(str)) return String(parseInt(str, 10));
+
+  const match =
+    str.match(/[-_]B[-_]?0*(\d+)/i) ||
+    str.match(/[-_]0*(\d+)$/) ||
+    str.match(/^B0*(\d+)$/i) ||
+    str.match(/(?:bed\s*)0*(\d+)/i) ||
+    str.match(/(\d+)/);
+
+  if (match) {
+    const parsed = parseInt(match[1], 10);
+    if (!isNaN(parsed) && parsed > 0) return String(parsed);
+  }
+  return str;
+}
+
 export class StudentService {
   async admitStudent(orgId: string, branchId: string, data: any): Promise<any> {
     const fullName = String(data.fullName || data.name || '').trim();
@@ -108,16 +133,19 @@ export class StudentService {
     }
 
     const bed = await queryOne<any>(
-      'SELECT * FROM beds WHERE id = $1 AND organization_id = $2',
-      [data.bedId, orgId]
+      'SELECT * FROM beds WHERE id = $1 AND hostel_id = $2 AND organization_id = $3',
+      [data.bedId, actualBranchId, orgId]
     );
-    if (!bed) throw new AppError('Specified Bed does not exist.', 404);
+    if (!bed) throw new AppError('Specified Bed does not exist in this hostel branch.', 404);
     if (bed.status !== BedStatus.AVAILABLE) {
       throw new AppError(`Bed '${bed.bed_code}' is already ${bed.status}. Please select an available bed.`, 400);
     }
 
-    const room = await queryOne<any>('SELECT * FROM rooms WHERE id = $1', [bed.room_id]);
-    if (!room) throw new AppError('Room not found.', 404);
+    const room = await queryOne<any>(
+      'SELECT * FROM rooms WHERE id = $1 AND hostel_id = $2 AND organization_id = $3',
+      [bed.room_id, actualBranchId, orgId]
+    );
+    if (!room) throw new AppError('Room not found in this hostel branch.', 404);
     if (room.occupied_beds >= room.capacity) {
       throw new AppError(`Room '${room.room_number}' is already fully occupied.`, 400);
     }
@@ -160,7 +188,20 @@ export class StudentService {
     const totalAdmissionAmount = totalHostelRent + admissionFee + securityDeposit;
 
     const student = await transaction(async (client) => {
-      // 1. Atomically occupy bed if AVAILABLE
+      // 0. Pessimistic row-lock on room to eliminate room capacity race condition (ISSUE-006)
+      const lockedRoomRes = await client.query(
+        'SELECT id, room_number, capacity, occupied_beds FROM rooms WHERE id = $1 FOR UPDATE',
+        [bed.room_id]
+      );
+      const lockedRoom = lockedRoomRes.rows[0];
+      if (!lockedRoom) {
+        throw new AppError('Room not found.', 404);
+      }
+      if (Number(lockedRoom.occupied_beds) >= Number(lockedRoom.capacity)) {
+        throw new AppError(`Room '${lockedRoom.room_number}' is already fully occupied.`, 400);
+      }
+
+      // 1. Atomically occupy bed if AVAILABLE (ISSUE-005)
       const bedUpdateRes = await client.query(
         `UPDATE beds
          SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2,
@@ -294,7 +335,7 @@ export class StudentService {
     notificationService.notifyOwner(orgId, {
       branchId,
       title: `New Admission: ${fullName}`,
-      message: `${fullName} (${customerCode}) admitted to Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      message: `${fullName} (${customerCode}) admitted to Room ${room.room_number || 'N/A'}, Bed ${cleanBedNumber(bed.bed_number || bed.bed_code)}.`,
       type: 'SUCCESS',
       link: '/students',
       entityType: 'STUDENT',
@@ -306,7 +347,7 @@ export class StudentService {
       organizationId: orgId,
       branchId,
       title: 'Welcome to IHMS!',
-      message: `Your admission is confirmed. You are assigned to Room ${room.room_number || 'N/A'}, Bed ${bed.bed_code}.`,
+      message: `Your admission is confirmed. You are assigned to Room ${room.room_number || 'N/A'}, Bed ${cleanBedNumber(bed.bed_number || bed.bed_code)}.`,
       type: 'SUCCESS',
       link: '/student/dashboard',
       entityType: 'STUDENT',
@@ -658,7 +699,7 @@ export class StudentService {
 
   async getStudentSelfProfile(orgId: string, studentIdOrUserId: string) {
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.monthly_rate as bed_monthly_rate,
+      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.bed_number, b.monthly_rate as bed_monthly_rate,
               h.name as hostel_name, h.branch_code
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
@@ -705,101 +746,165 @@ export class StudentService {
   }
 
   async transferStudent(orgId: string, studentId: string, data: { targetBranchId: string; targetBedId: string; reason: string; approvedBy: string }) {
-    const student = await queryOne<any>(
-      `SELECT * FROM students
-       WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1)
-         AND (organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')`,
-      [studentId ? studentId.trim() : studentId, orgId]
-    );
-    if (!student) throw new AppError('Student not found in this organization', 404);
-
-    const oldBedId = student.bed_id;
-    const oldBed = oldBedId ? await queryOne<any>('SELECT * FROM beds WHERE id = $1', [oldBedId]) : null;
-    const oldBedCode = oldBed?.bed_code || 'N/A';
-    const fromBranchId = student.hostel_id;
-
-    const targetBed = await queryOne<any>(
-      'SELECT * FROM beds WHERE id = $1 AND organization_id = $2 AND hostel_id = $3',
-      [data.targetBedId, orgId, data.targetBranchId]
-    );
-    if (!targetBed) throw new AppError('Destination bed not found', 404);
-    if (targetBed.status !== BedStatus.AVAILABLE) {
-      throw new AppError(`Target bed '${targetBed.bed_code}' is ${targetBed.status}. Must be AVAILABLE.`, 400);
+    if (!data.targetBedId) {
+      throw new AppError('Target bed ID is required for transfer.', 400);
+    }
+    if (!data.targetBranchId) {
+      throw new AppError('Target branch ID is required for transfer.', 400);
     }
 
-    const targetRoom = await queryOne<any>('SELECT * FROM rooms WHERE id = $1', [targetBed.room_id]);
-    if (!targetRoom) throw new AppError('Target room not found', 404);
+    const cleanStudentId = studentId ? studentId.trim() : studentId;
 
-    // Release old bed
-    if (oldBedId) {
-      await query(
-        `UPDATE beds
-         SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL,
-             current_student_name = NULL, allocated_at = NULL
-         WHERE id = $1`,
-        [oldBedId]
+    let transferredStudentId = '';
+    let fromBranchId = '';
+    let oldBedCode = 'N/A';
+    let oldBedId: string | null = null;
+    let targetBedCode = '';
+
+    await transaction(async (client) => {
+      // 0. Advisory Lock on destination bed to prevent concurrent double-transfer / double-allocation (NEW-008)
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['bed_allocation_' + data.targetBedId]).catch(() => {});
+
+      // 1. Lock student row
+      const studentRes = await client.query(
+        `SELECT * FROM students
+         WHERE (id = $1 OR student_id = $1 OR UPPER(customer_code) = UPPER($1) OR user_id = $1)
+           AND (organization_id = $2 OR $2 IS NULL OR $2 = '' OR $2 = 'ALL')
+         FOR UPDATE`,
+        [cleanStudentId, orgId]
       );
+      const student = studentRes.rows[0];
+      if (!student) throw new AppError('Student not found in this organization', 404);
+      transferredStudentId = student.id;
+      fromBranchId = student.hostel_id;
+      oldBedId = student.bed_id;
+
+      // 2. Query old bed
+      if (oldBedId) {
+        const oldBedRes = await client.query('SELECT * FROM beds WHERE id = $1', [oldBedId]);
+        const oldBed = oldBedRes.rows[0];
+        oldBedCode = oldBed?.bed_code || 'N/A';
+      }
+
+      // 3. Lock target bed
+      const targetBedRes = await client.query(
+        'SELECT * FROM beds WHERE id = $1 AND organization_id = $2 AND hostel_id = $3 FOR UPDATE',
+        [data.targetBedId, orgId, data.targetBranchId]
+      );
+      const targetBed = targetBedRes.rows[0];
+      if (!targetBed) throw new AppError('Destination bed not found in the target branch', 404);
+      targetBedCode = targetBed.bed_code;
+
+      if (targetBed.status !== BedStatus.AVAILABLE && targetBed.current_student_id !== student.id) {
+        throw new AppError(`Target bed '${targetBed.bed_code}' is ${targetBed.status}. Must be AVAILABLE.`, 409);
+      }
+
+      // 4. Lock and validate target room capacity
+      const targetRoomRes = await client.query(
+        'SELECT id, room_number, capacity, occupied_beds, hostel_id, monthly_rate FROM rooms WHERE id = $1 FOR UPDATE',
+        [targetBed.room_id]
+      );
+      const targetRoom = targetRoomRes.rows[0];
+      if (!targetRoom) throw new AppError('Target room not found', 404);
+
+      if (student.room_id !== targetRoom.id && Number(targetRoom.occupied_beds) >= Number(targetRoom.capacity)) {
+        throw new AppError(`Target room '${targetRoom.room_number}' is already fully occupied.`, 400);
+      }
+
+      // 5. Release old bed and decrement old room occupied_beds if changing room
+      if (oldBedId && oldBedId !== targetBed.id) {
+        await client.query(
+          `UPDATE beds
+           SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL,
+               current_student_name = NULL, allocated_at = NULL
+           WHERE id = $1`,
+          [oldBedId]
+        );
+
+        if (student.room_id && student.room_id !== targetRoom.id) {
+          await client.query(
+            `UPDATE rooms SET occupied_beds = GREATEST(0, occupied_beds - 1), updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [student.room_id]
+          );
+        }
+      }
+
+      // 6. Occupy new bed atomically
+      const bedUpdateRes = await client.query(
+        `UPDATE beds
+         SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2,
+             current_student_name = $3, allocated_at = CURRENT_TIMESTAMP
+         WHERE id = $4 AND (status = 'AVAILABLE' OR current_student_id = $1)
+         RETURNING id`,
+        [student.id, student.customer_code, student.full_name, targetBed.id]
+      );
+
+      if (!bedUpdateRes.rows || bedUpdateRes.rows.length === 0) {
+        throw new AppError(`Target bed '${targetBed.bed_code}' is no longer available.`, 409);
+      }
+
+      // 7. Increment target room occupied_beds if changing room
+      if (student.room_id !== targetRoom.id) {
+        await client.query(
+          `UPDATE rooms SET occupied_beds = occupied_beds + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [targetRoom.id]
+        );
+      }
+
+      // 8. Record transfer in student_transfers
+      await client.query(
+        `INSERT INTO student_transfers (
+          id, organization_id, student_id, customer_code, student_name, from_branch_id,
+          from_bed_code, to_branch_id, to_bed_code, to_bed_id, balance_carried_forward,
+          reason, approved_by, transfer_date, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, 'COMPLETED')`,
+        [
+          crypto.randomUUID(),
+          orgId,
+          student.id,
+          student.customer_code,
+          student.full_name,
+          fromBranchId,
+          oldBedCode,
+          data.targetBranchId,
+          targetBed.bed_code,
+          targetBed.id,
+          Number(student.financial_outstanding_balance || 0),
+          data.reason || 'Branch transfer',
+          data.approvedBy || 'Admin'
+        ]
+      );
+
+      // 9. Update room allocation history
+      await client.query(
+        "UPDATE room_allocations SET status = 'TRANSFERRED', vacated_date = CURRENT_TIMESTAMP WHERE student_id = $1 AND status = 'ACTIVE'",
+        [student.id]
+      );
+      await client.query(
+        `INSERT INTO room_allocations (id, student_id, room_id, bed_id, hostel_id, organization_id, monthly_rent, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE')`,
+        [crypto.randomUUID(), student.id, targetRoom.id, targetBed.id, data.targetBranchId, orgId, Number(targetBed.monthly_rate || targetRoom.monthly_rate || 0)]
+      );
+
+      // 10. Update student record
+      await client.query(
+        'UPDATE students SET hostel_id = $1, room_id = $2, bed_id = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+        [data.targetBranchId, targetRoom.id, targetBed.id, student.id]
+      );
+
+      if (student.user_id) {
+        await client.query('UPDATE users SET branch_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [data.targetBranchId, student.user_id]);
+      }
+    });
+
+    if (oldBedId) {
       emitRealTimeEvent('bed.status_changed', { bedId: oldBedId, bedCode: oldBedCode, status: BedStatus.AVAILABLE, branchId: fromBranchId }, { branchId: fromBranchId });
     }
-
-    // Allocate new bed
-    await query(
-      `UPDATE beds
-       SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2,
-           current_student_name = $3, allocated_at = CURRENT_TIMESTAMP
-       WHERE id = $4`,
-      [student.id, student.customer_code, student.full_name, targetBed.id]
-    );
-
-    // Record transfer
-    await query(
-      `INSERT INTO student_transfers (
-        id, organization_id, student_id, customer_code, student_name, from_branch_id,
-        from_bed_code, to_branch_id, to_bed_code, to_bed_id, balance_carried_forward,
-        reason, approved_by, transfer_date, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, 'COMPLETED')`,
-      [
-        require('crypto').randomUUID(),
-        orgId,
-        student.id,
-        student.customer_code,
-        student.full_name,
-        fromBranchId,
-        oldBedCode,
-        data.targetBranchId,
-        targetBed.bed_code,
-        targetBed.id,
-        Number(student.financial_outstanding_balance || 0),
-        data.reason || 'Branch transfer',
-        data.approvedBy || 'Admin'
-      ]
-    );
-
-    // Update room allocation history
-    await query(
-      "UPDATE room_allocations SET status = 'TRANSFERRED', vacated_date = CURRENT_TIMESTAMP WHERE student_id = $1 AND status = 'ACTIVE'",
-      [student.id]
-    );
-    await query(
-      `INSERT INTO room_allocations (id, student_id, room_id, bed_id, hostel_id, organization_id, monthly_rent, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE')`,
-      [require('crypto').randomUUID(), student.id, targetRoom.id, targetBed.id, data.targetBranchId, orgId, Number(targetBed.monthly_rate || targetRoom.monthly_rate || 0)]
-    );
-
-    // Update student record
-    await query(
-      'UPDATE students SET hostel_id = $1, room_id = $2, bed_id = $3 WHERE id = $4',
-      [data.targetBranchId, targetRoom.id, targetBed.id, student.id]
-    );
-
-    if (student.user_id) {
-      await query('UPDATE users SET branch_id = $1 WHERE id = $2', [data.targetBranchId, student.user_id]);
-    }
-
-    emitRealTimeEvent('student.transferred', { studentId: student.id, customerCode: student.customer_code, targetBranchId: data.targetBranchId }, { orgId });
+    emitRealTimeEvent('bed.status_changed', { bedId: data.targetBedId, bedCode: targetBedCode, status: BedStatus.OCCUPIED, branchId: data.targetBranchId }, { branchId: data.targetBranchId });
+    emitRealTimeEvent('student.transferred', { studentId: transferredStudentId, customerCode: '', targetBranchId: data.targetBranchId }, { orgId });
     emitRealTimeEvent('dashboard.kpi_updated', { orgId }, { orgId });
 
-    return this.getById(orgId, student.id);
+    return this.getById(orgId, transferredStudentId);
   }
 
   async registerStudent(orgId: string, branchId: string, data: any): Promise<any> {
@@ -922,42 +1027,74 @@ export class StudentService {
 
     const room = await queryOne<any>('SELECT * FROM rooms WHERE id = $1', [bed.room_id]);
     if (!room) throw new AppError('Room not found.', 404);
-    if (room.occupied_beds >= room.capacity && student.room_id !== room.id) {
-      throw new AppError(`Room '${room.room_number}' is already full.`, 400);
-    }
-
-    // If student already has a different active bed, release it
-    if (student.bed_id && student.bed_id !== bed.id) {
-      await query(
-        `UPDATE beds SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL, current_student_name = NULL, allocated_at = NULL WHERE id = $1`,
-        [student.bed_id]
-      );
-      await query(
-        `UPDATE room_allocations SET status = 'VACATED', vacated_date = CURRENT_TIMESTAMP WHERE student_id = $1 AND status = 'ACTIVE'`,
-        [student.id]
-      );
-    }
 
     const monthlyRent = Number(data.monthlyRent || bed.monthly_rate || room.monthly_rate || 8000);
 
-    // Atomically occupy target bed
-    await query(
-      `UPDATE beds SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2, current_student_name = $3, allocated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-      [student.id, student.customer_code, student.full_name, bed.id]
-    );
+    await transaction(async (client) => {
+      // 0. Lock room row to eliminate concurrency race condition on capacity (ISSUE-006)
+      const lockedRoomRes = await client.query(
+        'SELECT id, room_number, capacity, occupied_beds, hostel_id FROM rooms WHERE id = $1 FOR UPDATE',
+        [bed.room_id]
+      );
+      const lockedRoom = lockedRoomRes.rows[0];
+      if (!lockedRoom) throw new AppError('Room not found.', 404);
 
-    // Update room allocation record
-    await query(
-      `INSERT INTO room_allocations (id, student_id, room_id, bed_id, hostel_id, organization_id, monthly_rent, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE')`,
-      [require('crypto').randomUUID(), student.id, room.id, bed.id, room.hostel_id || student.hostel_id, orgId, monthlyRent]
-    );
+      if (Number(lockedRoom.occupied_beds) >= Number(lockedRoom.capacity) && student.room_id !== room.id) {
+        throw new AppError(`Room '${lockedRoom.room_number}' is already fully occupied.`, 400);
+      }
 
-    // Update student
-    await query(
-      `UPDATE students SET room_id = $1, bed_id = $2, hostel_id = $3 WHERE id = $4`,
-      [room.id, bed.id, room.hostel_id || student.hostel_id, student.id]
-    );
+      // 1. If student already has a different active bed, release it
+      if (student.bed_id && student.bed_id !== bed.id) {
+        await client.query(
+          `UPDATE beds SET status = 'AVAILABLE', current_student_id = NULL, current_customer_code = NULL, current_student_name = NULL, allocated_at = NULL WHERE id = $1`,
+          [student.bed_id]
+        );
+        await client.query(
+          `UPDATE room_allocations SET status = 'VACATED', vacated_date = CURRENT_TIMESTAMP WHERE student_id = $1 AND status = 'ACTIVE'`,
+          [student.id]
+        );
+        if (student.room_id && student.room_id !== room.id) {
+          await client.query(
+            `UPDATE rooms SET occupied_beds = GREATEST(0, occupied_beds - 1), updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [student.room_id]
+          );
+        }
+      }
+
+      // 2. Atomically occupy target bed if AVAILABLE (ISSUE-005)
+      const bedUpdateRes = await client.query(
+        `UPDATE beds
+         SET status = 'OCCUPIED', current_student_id = $1, current_customer_code = $2, current_student_name = $3, allocated_at = CURRENT_TIMESTAMP
+         WHERE id = $4 AND (status = 'AVAILABLE' OR current_student_id = $1)
+         RETURNING id`,
+        [student.id, student.customer_code, student.full_name, bed.id]
+      );
+
+      if (!bedUpdateRes.rows || bedUpdateRes.rows.length === 0) {
+        throw new AppError(`Bed '${bed.bed_code}' is no longer available. It was occupied by another concurrent request.`, 409);
+      }
+
+      // 3. Increment room occupancy if student is moving into a new room
+      if (student.room_id !== room.id) {
+        await client.query(
+          `UPDATE rooms SET occupied_beds = occupied_beds + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+          [lockedRoom.id]
+        );
+      }
+
+      // 4. Update room allocation record
+      await client.query(
+        `INSERT INTO room_allocations (id, student_id, room_id, bed_id, hostel_id, organization_id, monthly_rent, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE')`,
+        [require('crypto').randomUUID(), student.id, room.id, bed.id, room.hostel_id || student.hostel_id, orgId, monthlyRent]
+      );
+
+      // 5. Update student record
+      await client.query(
+        `UPDATE students SET room_id = $1, bed_id = $2, hostel_id = $3 WHERE id = $4`,
+        [room.id, bed.id, room.hostel_id || student.hostel_id, student.id]
+      );
+    });
 
     emitRealTimeEvent('bed.status_changed', { bedId: bed.id, bedCode: bed.bed_code, status: BedStatus.OCCUPIED }, { branchId: room.hostel_id });
     emitRealTimeEvent('dashboard.kpi_updated', { orgId }, { orgId });
@@ -989,7 +1126,7 @@ export class StudentService {
   }
 
   async list(orgId: string, branchId?: string, search?: string, status?: string): Promise<any[]> {
-    let sql = `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.monthly_rate as bed_monthly_rate,
+    let sql = `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.bed_number, b.monthly_rate as bed_monthly_rate,
                       h.name as hostel_name, h.branch_code
                FROM students s
                LEFT JOIN rooms r ON r.id = s.room_id
@@ -1019,7 +1156,7 @@ export class StudentService {
 
   async getById(orgId: string, id: string): Promise<any> {
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.monthly_rate as bed_monthly_rate,
+      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.bed_number, b.monthly_rate as bed_monthly_rate,
               h.name as hostel_name, h.branch_code
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
@@ -1035,7 +1172,7 @@ export class StudentService {
 
   async getByCustomerCode(orgId: string, code: string): Promise<any> {
     const student = await queryOne<any>(
-      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.monthly_rate as bed_monthly_rate,
+      `SELECT s.*, r.room_number, r.room_type, b.bed_code, b.bed_number, b.monthly_rate as bed_monthly_rate,
               h.name as hostel_name, h.branch_code
        FROM students s
        LEFT JOIN rooms r ON r.id = s.room_id
@@ -1303,7 +1440,7 @@ export class StudentService {
       roomId: s.room_id,
       roomNumber: s.room_number,
       bedId: s.bed_id,
-      bedNumber: s.bed_code,
+      bedNumber: s.bed_number ? String(s.bed_number) : (s.bed_code ? cleanBedNumber(s.bed_code) : ''),
       bedCode: s.bed_code,
       dateOfAdmission: s.admission_date || s.created_at,
       admissionDate: s.admission_date || s.created_at,

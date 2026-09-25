@@ -147,4 +147,36 @@ export const authApi = {
 
   activateStudentAccount: (activationToken: string, newPassword: string, confirmPassword?: string, agreeToTerms?: boolean) =>
     api.post<AuthResponse>('/auth/activate-student-account', { activationToken, newPassword, confirmPassword, agreeToTerms }),
+
+  getWardenStatus: (identifier: string) =>
+    api.post<{ success: boolean; requiresActivation: boolean; requiresPassword: boolean; status: string; name?: string; email?: string; message?: string }>('/auth/warden/warden-status', { identifier }),
+
+  sendWardenOtp: (identifier: string) =>
+    api.post<{
+      success: boolean;
+      status?: string;
+      alreadyActivated?: boolean;
+      requiresPassword?: boolean;
+      requiresOtp?: boolean;
+      maskedEmail?: string;
+      email?: string;
+      name?: string;
+      message: string;
+      startTime?: string | number;
+      cooldownSeconds?: number;
+      expiresIn?: number;
+      _debugOtp?: string;
+    }>('/auth/warden/send-otp', { identifier }),
+
+  verifyWardenActivationOtp: (identifier: string, otp: string) =>
+    api.post<{ success: boolean; activationToken: string; message: string }>('/auth/warden/verify-otp', { identifier, otp }),
+
+  resendWardenActivationOtp: (identifier: string) =>
+    api.post<{ success: boolean; maskedEmail?: string; message: string }>('/auth/warden/resend-otp', { identifier }),
+
+  activateWardenAccount: (activationToken: string, newPassword: string, confirmPassword?: string, agreeToTerms?: boolean) =>
+    api.post<AuthResponse>('/auth/warden/activate', { activationToken, newPassword, confirmPassword, agreeToTerms }),
+
+  updateProfile: (payload: { name?: string; phone?: string; preferredLanguage?: string; language?: string }) =>
+    api.put<{ success: boolean; data: any; message: string }>('/auth/profile', payload),
 };

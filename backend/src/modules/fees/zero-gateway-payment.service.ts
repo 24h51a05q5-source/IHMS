@@ -526,7 +526,7 @@ export class ZeroGatewayPaymentService {
              p.amount, p.payment_method as "paymentMethod", p.transaction_ref as "transactionRef",
              p.proof_url as "proofUrl", p.notes, p.status, p.created_at as "submittedAt",
              s.full_name as "studentName", s.email as "studentEmail", s.phone as "studentPhone",
-             r.room_number as "roomNumber", b.bed_code as "bedNumber", h.name as "hostelName"
+             r.room_number as "roomNumber", COALESCE(b.bed_number::text, b.bed_code, '') as "bedNumber", b.bed_code as "bedCode", h.name as "hostelName"
       FROM payments p
       LEFT JOIN students s ON s.id = p.student_id
       LEFT JOIN rooms r ON r.id = s.room_id

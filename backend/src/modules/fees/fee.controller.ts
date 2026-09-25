@@ -4,6 +4,7 @@ import { feeService } from './fee.service';
 import { feeReminderService } from './fee-reminder.service';
 import { query, queryOne, queryRows } from '../../config/database';
 import { authenticate, authorize } from '../../common/guards/auth.guard';
+import { enforceTenantIsolation } from '../../common/guards/tenant.guard';
 import { verifyHostelActive } from '../../common/guards/hostel-active.guard';
 import { UserRole, PaymentMethod } from '../../config/constants';
 import { AppError } from '../../common/filters/http-exception.filter';
@@ -183,15 +184,196 @@ router.get(['/orders/status', '/status'], async (req: Request, res: Response, ne
 });
 
 router.use(authenticate);
+router.use(enforceTenantIsolation);
+
+// GET /fees/policies (Fetch Additional Fee Policies for Hostel)
+router.get('/policies', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orgId = req.user!.organizationId;
+    const { branchId, hostelId } = req.query;
+    const targetBranch = (branchId || hostelId || req.user!.branchId) as string;
+
+    let hostel;
+    if (targetBranch && targetBranch !== 'ALL') {
+      hostel = await queryOne<any>(
+        `SELECT id, advance_enabled, advance_amount, annual_maintenance_enabled, annual_maintenance_amount
+         FROM hostels
+         WHERE organization_id = $1 AND (id = $2 OR branch_code = $2 OR hostel_id = $2)
+         LIMIT 1`,
+        [orgId, targetBranch]
+      );
+    }
+
+    if (!hostel) {
+      hostel = await queryOne<any>(
+        `SELECT id, advance_enabled, advance_amount, annual_maintenance_enabled, annual_maintenance_amount
+         FROM hostels
+         WHERE organization_id = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [orgId]
+      );
+    }
+
+    res.json({
+      success: true,
+      data: {
+        hostelId: hostel?.id || null,
+        advanceEnabled: !!hostel?.advance_enabled,
+        advanceAmount: Number(hostel?.advance_amount || 0),
+        annualMaintenanceEnabled: !!hostel?.annual_maintenance_enabled,
+        annualMaintenanceAmount: Number(hostel?.annual_maintenance_amount || 0),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /fees/policies (Update Additional Fee Policies for Hostel - Owner/SuperAdmin ONLY)
+router.post('/policies', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, 'ORGANIZATION_OWNER' as any, 'PLATFORM_SUPER_ADMIN' as any), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const orgId = req.user!.organizationId;
+    const { branchId, hostelId, advanceEnabled, advanceAmount, annualMaintenanceEnabled, annualMaintenanceAmount } = req.body;
+    const targetBranch = (branchId || hostelId) as string;
+
+    let whereSql = 'WHERE organization_id = $1';
+    const params: any[] = [orgId];
+
+    if (targetBranch && targetBranch !== 'ALL') {
+      params.push(targetBranch);
+      whereSql += ` AND (id = $${params.length} OR branch_code = $${params.length} OR hostel_id = $${params.length})`;
+    }
+
+    const updateSql = `
+      UPDATE hostels
+      SET advance_enabled = $${params.length + 1},
+          advance_amount = $${params.length + 2},
+          annual_maintenance_enabled = $${params.length + 3},
+          annual_maintenance_amount = $${params.length + 4},
+          updated_at = CURRENT_TIMESTAMP
+      ${whereSql}
+      RETURNING id, advance_enabled, advance_amount, annual_maintenance_enabled, annual_maintenance_amount
+    `;
+
+    const updatedRows = await queryRows<any>(updateSql, [
+      ...params,
+      !!advanceEnabled,
+      Number(advanceAmount || 0),
+      !!annualMaintenanceEnabled,
+      Number(annualMaintenanceAmount || 0),
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Additional fee policies updated successfully.',
+      data: {
+        updatedCount: updatedRows.length,
+        advanceEnabled: !!advanceEnabled,
+        advanceAmount: Number(advanceAmount || 0),
+        annualMaintenanceEnabled: !!annualMaintenanceEnabled,
+        annualMaintenanceAmount: Number(annualMaintenanceAmount || 0),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /fees/overdues/summary (Summary metrics for overdue fees)
+router.get('/overdues/summary', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { branchId, hostelId } = req.query;
+    const orgId = req.user!.organizationId;
+
+    let whereClause = 'WHERE s.organization_id = $1 AND COALESCE(s.financial_outstanding_balance, 0) > 0';
+    const params: any[] = [orgId];
+
+    const targetBranch = (branchId || hostelId) as string;
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      if (targetBranch && targetBranch !== 'ALL' && wardenHostelId && targetBranch !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot view fee records of another hostel.',
+        });
+      }
+      const effectiveHostel = wardenHostelId || targetBranch;
+      if (effectiveHostel && effectiveHostel !== 'ALL') {
+        params.push(effectiveHostel);
+        whereClause += ` AND s.hostel_id = $${params.length}`;
+      }
+    } else if (targetBranch && targetBranch !== 'ALL') {
+      params.push(targetBranch);
+      whereClause += ` AND s.hostel_id = $${params.length}`;
+    }
+
+    const summarySql = `
+      SELECT
+        COUNT(s.id)::int as "totalOverdueStudents",
+        COALESCE(SUM(s.financial_outstanding_balance), 0)::numeric as "totalOverdueAmount",
+        0::numeric as "dueTodayAmount",
+        0::int as "dueTodayCount",
+        COALESCE(SUM(s.financial_outstanding_balance), 0)::numeric as "overdue30PlusAmount"
+      FROM students s
+      ${whereClause}
+    `;
+
+    const summaryRow = await queryOne<any>(summarySql, params);
+
+    const totalOverdueStudents = Number(summaryRow?.totalOverdueStudents || 0);
+    const totalOverdueAmount = Number(summaryRow?.totalOverdueAmount || 0);
+    const dueTodayCount = Number(summaryRow?.dueTodayCount || 0);
+    const dueTodayAmount = Number(summaryRow?.dueTodayAmount || 0);
+    const overdue30PlusAmount = Number(summaryRow?.overdue30PlusAmount || 0);
+
+    res.json({
+      success: true,
+      data: {
+        totalOverdueStudents,
+        totalOverdueAmount,
+        dueTodayCount,
+        dueTodayAmount,
+        overdueAmount: totalOverdueAmount,
+        overdue30PlusAmount,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /fees (List all student fee summaries)
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { studentId, search, status, page = 1, pageSize = 50 } = req.query;
+    const { studentId, search, status, branchId, hostelId, overdueOnly, page = 1, pageSize = 50 } = req.query;
     const orgId = req.user!.organizationId;
 
     let whereClause = 'WHERE s.organization_id = $1';
     const params: any[] = [orgId];
+
+    const targetBranch = (branchId || hostelId) as string;
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      if (targetBranch && targetBranch !== 'ALL' && wardenHostelId && targetBranch !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot view fee records of another hostel.',
+        });
+      }
+      const effectiveHostel = wardenHostelId || targetBranch;
+      if (effectiveHostel && effectiveHostel !== 'ALL') {
+        params.push(effectiveHostel);
+        whereClause += ` AND s.hostel_id = $${params.length}`;
+      }
+    } else if (targetBranch && targetBranch !== 'ALL') {
+      params.push(targetBranch);
+      whereClause += ` AND s.hostel_id = $${params.length}`;
+    }
+
+    if (overdueOnly === 'true' || status === 'OVERDUE') {
+      whereClause += ` AND COALESCE(s.financial_outstanding_balance, 0) > 0`;
+    }
 
     if (studentId) {
       params.push(studentId);
@@ -215,9 +397,22 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       SELECT s.id, s.id as "_id", s.student_id as "studentId", s.customer_code as "customerCode",
              s.full_name as "studentName", s.financial_total_demanded as "total",
              s.financial_total_paid as "paid", s.financial_outstanding_balance as "outstanding",
-             fa.payment_plan as "paymentPlan"
+             r.room_number as "roomNumber", b.bed_code as "bedNumber",
+             fa.payment_plan as "paymentPlan",
+             COALESCE(fa.advance_credit, 0) as "advanceCredit",
+             COALESCE(fa.advance_balance, 0) as "advanceBalance",
+             COALESCE(fa.advance_applied, 0) as "advanceApplied",
+             fa.number_of_installments as "numberOfInstallments",
+             fa.paid_installments as "paidInstallments",
+             COALESCE(
+               (SELECT MIN(fi.due_date) FROM fee_installments fi WHERE fi.student_id = s.id AND fi.status != 'PAID'),
+               (SELECT MIN(fd.due_date) FROM fee_demands fd WHERE fd.student_id = s.id AND fd.status != 'PAID'),
+               (s.created_at + INTERVAL '30 days')
+             ) as "dueDateRaw"
       FROM students s
       LEFT JOIN fee_accounts fa ON fa.student_id = s.id
+      LEFT JOIN rooms r ON r.id = s.room_id
+      LEFT JOIN beds b ON b.id = s.bed_id
       ${whereClause}
       ORDER BY s.created_at DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -229,6 +424,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       const totalAmt = Number(s.total || 0);
       const paidAmt = Number(s.paid || 0);
       const outstandingAmt = Number(s.outstanding || 0);
+      const advanceCredit = Number(s.advanceCredit || 0);
+      const advanceBalance = Number(s.advanceBalance || 0);
+      const advanceApplied = Number(s.advanceApplied || 0);
+
+      const rawDueDate = s.dueDateRaw ? new Date(s.dueDateRaw) : null;
+      const formattedDueDate = rawDueDate && !isNaN(rawDueDate.getTime())
+        ? rawDueDate.toISOString().split('T')[0]
+        : '2026-10-01';
 
       return {
         id: s.id,
@@ -236,14 +439,21 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         studentId: s.studentId || s.customerCode,
         studentName: s.studentName,
         customerCode: s.customerCode,
+        roomNumber: s.roomNumber || '',
+        bedNumber: s.bedNumber || '',
         paymentPlan: s.paymentPlan || 'MONTHLY',
         total: totalAmt,
         paid: paidAmt,
         outstanding: outstandingAmt,
+        overdueAmount: outstandingAmt,
+        advanceCredit,
+        advanceBalance,
+        advanceApplied,
         status: outstandingAmt <= 0 ? 'PAID' : paidAmt > 0 ? 'PARTIAL' : 'OVERDUE',
-        dueDate: '2026-08-31',
+        dueDate: formattedDueDate,
       };
     });
+
 
     res.json({
       success: true,
@@ -309,6 +519,20 @@ router.get('/payments/zero-gateway/details', handleDeprecatedPaymentInitiation);
 // GET /fees/student/:studentId (Full Fee Account & Installments Details)
 router.get('/student/:studentId', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const targetStudent = await queryOne<any>(
+        `SELECT hostel_id FROM students
+         WHERE organization_id = $1 AND (id = $2 OR customer_code = $2 OR student_id = $2 OR custom_id = $2 OR ihms_id = $2)`,
+        [req.user!.organizationId, req.params.studentId]
+      );
+      if (targetStudent && wardenHostelId && targetStudent.hostel_id !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot view fee details for a student in another hostel.',
+        });
+      }
+    }
     const feeData = await feeService.getStudentFeeAccount(req.user!.organizationId, req.params.studentId);
     res.json({ success: true, data: feeData });
   } catch (err) {
@@ -410,7 +634,8 @@ router.get('/payments', async (req: Request, res: Response, next: NextFunction) 
              p.transaction_ref as "transactionRef", p.status, p.receipt_number as "receiptNumber",
              p.receipt_number as "receiptNo", p.received_by as "receivedBy", p.notes,
              p.created_at as "timestamp", p.created_at as "date", p.created_at as "createdAt",
-             s.full_name as "studentName", r.room_number as "roomNumber", b.bed_code as "bedNumber",
+             s.full_name as "studentName", r.room_number as "roomNumber",
+             COALESCE(b.bed_number::text, b.bed_code, '') as "bedNumber", b.bed_code as "bedCode",
              rc.fee_type as "feeType", rc.installment_month as "installmentMonth"
       FROM payments p
       LEFT JOIN students s ON s.id = p.student_id
@@ -470,6 +695,21 @@ router.get('/payments/student/:studentId', async (req: Request, res: Response, n
     const orgId = req.user!.organizationId;
     const studentId = req.params.studentId;
 
+    if (req.user!.role === UserRole.WARDEN || (req.user!.role as any) === 'WARDEN') {
+      const wardenHostelId = req.user!.branchId || req.user!.hostelId;
+      const targetStudent = await queryOne<any>(
+        `SELECT hostel_id FROM students
+         WHERE organization_id = $1 AND (id = $2 OR customer_code = $2 OR student_id = $2 OR custom_id = $2 OR ihms_id = $2)`,
+        [orgId, studentId]
+      );
+      if (targetStudent && wardenHostelId && targetStudent.hostel_id !== wardenHostelId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: Warden cannot view payment records for a student in another hostel.',
+        });
+      }
+    }
+
     const payments = await queryRows<any>(
       `SELECT p.id, p.id as "_id", p.payment_number as "paymentNumber", p.organization_id as "organizationId",
               p.hostel_id as "branchId", p.student_id as "studentId", p.customer_code as "customerCode",
@@ -477,7 +717,8 @@ router.get('/payments/student/:studentId', async (req: Request, res: Response, n
               p.transaction_ref as "transactionRef", p.status, p.receipt_number as "receiptNumber",
               p.receipt_number as "receiptNo", p.received_by as "receivedBy", p.notes,
               p.created_at as "timestamp", p.created_at as "date", p.created_at as "createdAt",
-              s.full_name as "studentName", r.room_number as "roomNumber", b.bed_code as "bedNumber",
+              s.full_name as "studentName", r.room_number as "roomNumber",
+              COALESCE(b.bed_number::text, b.bed_code, '') as "bedNumber", b.bed_code as "bedCode",
               rc.fee_type as "feeType", rc.installment_month as "installmentMonth"
        FROM payments p
        LEFT JOIN students s ON s.id = p.student_id
@@ -542,6 +783,37 @@ router.post(
           statusCode: 400,
           message: 'Payment amount must be greater than ₹0.',
         });
+      }
+
+      // Idempotency check: prevent duplicate payments from network retries or rapid double-clicks (ISSUE-018)
+      const idempotencyKey = String(
+        req.headers['idempotency-key'] ||
+        req.headers['x-idempotency-key'] ||
+        req.body.idempotencyKey ||
+        ''
+      ).trim();
+
+      if (idempotencyKey) {
+        const existing = await queryOne<any>(
+          `SELECT p.*, r.receipt_number as receipt_no_rel
+           FROM payments p
+           LEFT JOIN receipts r ON (r.payment_id = p.id OR r.payment_number = p.payment_number)
+           WHERE p.organization_id = $1 AND (p.transaction_ref = $2 OR p.payment_number = $2 OR p.id = $2)
+           LIMIT 1`,
+          [req.user!.organizationId, idempotencyKey]
+        );
+        if (existing) {
+          return res.status(200).json({
+            success: true,
+            data: {
+              paymentId: existing.id || existing._id,
+              payment: existing,
+              receipt: { receiptNumber: existing.receipt_no_rel || existing.receipt_number },
+              status: existing.status || 'SUCCESS',
+            },
+            message: `Payment already processed (Idempotent response). Receipt #${existing.receipt_no_rel || existing.receipt_number}`,
+          });
+        }
       }
 
       const result = await feeService.recordPayment(req.user!.organizationId, {
@@ -771,6 +1043,7 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
 
       // Fallback for students where targetStudentId was specified (e.g., token without linked user_id)
       if (!student && targetStudentId) {
+        const studentIdentifier = req.user?.studentId || req.user?.customerCode || authUserId;
         student = await queryOne<any>(
           `SELECT s.id, s.customer_code, s.custom_id, s.ihms_id, s.student_id, s.user_id,
                   s.full_name, s.email, s.phone, s.hostel_id, s.organization_id,
@@ -787,9 +1060,15 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
              UPPER(COALESCE(s.custom_id, '')) = UPPER($1) OR
              UPPER(COALESCE(s.ihms_id, '')) = UPPER($1)
            )
-           ${orgId ? 'AND s.organization_id = $2' : ''}
+           AND (
+             s.user_id = $2 OR
+             s.id = $2 OR
+             s.student_id = $2 OR
+             s.customer_code = $2
+           )
+           ${orgId ? 'AND s.organization_id = $3' : ''}
            LIMIT 1`,
-          orgId ? [targetStudentId, orgId] : [targetStudentId]
+          orgId ? [targetStudentId, studentIdentifier, orgId] : [targetStudentId, studentIdentifier]
         );
       }
     } else {
@@ -830,13 +1109,19 @@ const handleCreateCashfreeUpiQr = async (req: Request, res: Response, next: Next
       orgId = student.organization_id;
     }
 
-    // Security Rule 1.1: Ensure non-staff cannot initiate orders for another student's account
-    if (!isStaff && student.user_id && authUserId && student.user_id !== authUserId && student.id !== authUserId) {
-      return res.status(403).json({
-        success: false,
-        statusCode: 403,
-        message: 'Unauthorized: You can only initiate payments for your own student fee account.',
-      });
+    // Security Rule 1.1: Ensure non-staff cannot initiate orders for another student's account (ISSUE-001 fix)
+    if (!isStaff) {
+      const isSelf = (student.user_id && authUserId && student.user_id === authUserId) ||
+                     (student.id && authUserId && student.id === authUserId) ||
+                     (req.user?.studentId && (student.id === req.user.studentId || student.customer_code === req.user.studentId || student.student_id === req.user.studentId)) ||
+                     (req.user?.customerCode && (student.customer_code === req.user.customerCode || student.custom_id === req.user.customerCode));
+      if (!isSelf) {
+        return res.status(403).json({
+          success: false,
+          statusCode: 403,
+          message: 'Unauthorized: You can only initiate payments for your own student fee account.',
+        });
+      }
     }
 
     // Security Rule 2: Derive hostel_id strictly from database, NEVER from frontend

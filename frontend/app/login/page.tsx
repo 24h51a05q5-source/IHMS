@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 //  STEP 3: CREATE_PASSWORD  → Create & Confirm password → [Create Password & Continue]
 //  STEP 4: SIGN_IN          → Normal Password Login (for already active accounts)
 type StudentStep = 'IDENTIFIER' | 'OTP' | 'CREATE_PASSWORD' | 'SIGN_IN';
+type WardenStep = 'IDENTIFIER' | 'OTP' | 'TERMS' | 'CREATE_PASSWORD' | 'SIGN_IN';
 
 export interface OtpTimerSession {
   startTime: number;
@@ -57,15 +58,16 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, login, loading: authLoading } = useAuth();
-  const [loginType, setLoginType] = useState<'STUDENT' | 'ADMIN'>('STUDENT');
+  const [loginType, setLoginType] = useState<'STUDENT' | 'ADMIN' | 'WARDEN'>('STUDENT');
 
   // ── Shared inputs ──────────────────────────────────────────────────────────
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
 
-  // ── Student Multi-Step ─────────────────────────────────────────────────────
+  // ── Student & Warden Multi-Step ─────────────────────────────────────────────
   const [studentStep, setStudentStep] = useState<StudentStep>('IDENTIFIER');
+  const [wardenStep, setWardenStep] = useState<WardenStep>('IDENTIFIER');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -97,13 +99,14 @@ function LoginForm() {
 
   useEffect(() => {
     if (paramRole === 'admin') setLoginType('ADMIN');
+    else if (paramRole === 'warden') setLoginType('WARDEN');
     else if (paramRole === 'student') setLoginType('STUDENT');
     if (paramIdentifier) setIdentifier(paramIdentifier);
   }, [paramRole, paramIdentifier]);
 
   // Cooldown countdown timer derived safely from otpSession
   useEffect(() => {
-    if (studentStep !== 'OTP') return;
+    if (studentStep !== 'OTP' && wardenStep !== 'OTP') return;
 
     const updateCountdown = () => {
       const start = otpSession?.startTime ? new Date(otpSession.startTime).getTime() : Date.now();
@@ -116,7 +119,7 @@ function LoginForm() {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [studentStep, otpSession]);
+  }, [studentStep, wardenStep, otpSession]);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -126,7 +129,15 @@ function LoginForm() {
       } else if (user.mustChangePassword) {
         router.replace('/student/change-password');
       } else {
-        router.replace(user.role === 'STUDENT' ? '/student/dashboard' : user.role === 'PARENT' ? '/parent' : '/dashboard');
+        router.replace(
+          user.role === 'STUDENT'
+            ? '/student/dashboard'
+            : user.role === 'PARENT'
+              ? '/parent'
+              : user.role === 'WARDEN'
+                ? '/warden/dashboard'
+                : '/dashboard'
+        );
       }
     }
   }, [user, authLoading, router]);
@@ -139,6 +150,7 @@ function LoginForm() {
 
   const resetToIdentifier = () => {
     setStudentStep('IDENTIFIER');
+    setWardenStep('IDENTIFIER');
     setPassword('');
     setOtpDigits(['', '', '', '', '', '']);
     setNewPassword('');
@@ -154,7 +166,7 @@ function LoginForm() {
     clearMessages();
   };
 
-  const handleTabChange = (type: 'STUDENT' | 'ADMIN') => {
+  const handleTabChange = (type: 'STUDENT' | 'ADMIN' | 'WARDEN') => {
     if (loginType === type) return;
     setLoginType(type);
     setIdentifier('');
@@ -317,7 +329,8 @@ function LoginForm() {
       setNotice(res?.message || 'Verification successful! Please create your new password.');
       setStudentStep('CREATE_PASSWORD');
     } catch (err: any) {
-      const msg = err?.message || 'Invalid or expired verification code. Please try again or request a new code.';
+      const rawMsg = err?.message || 'Invalid or expired verification code. Please try again or request a new code.';
+      const msg = rawMsg.replace(/4-digit activation code/gi, '6-digit verification code');
       setError(msg);
     } finally {
       setLoading(false);
@@ -411,6 +424,191 @@ function LoginForm() {
     }
   };
 
+  // ── Warden Flow Step Handlers ───────────────────────────────────────────────
+
+  // STEP 1 (WARDEN): Check Status & Send OTP or Show Password
+  const onWardenCheckStatusOrSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanId = identifier.trim();
+    if (!cleanId) return;
+
+    clearMessages();
+    setLoading(true);
+
+    try {
+      const res = await authApi.sendWardenOtp(cleanId);
+      const isAlreadyActive = Boolean(res?.alreadyActivated || res?.requiresPassword || res?.status === 'ACTIVE');
+
+      if (isAlreadyActive) {
+        setNotice(res?.message || 'Your Warden account is already activated. Please enter your password to sign in.');
+        setWardenStep('SIGN_IN');
+        return;
+      }
+
+      const emailToMask = res?.maskedEmail || maskEmail(res?.email || cleanId);
+      setMaskedEmail(emailToMask);
+      setNotice(res?.message || `Verification code sent to ${emailToMask}.`);
+      setOtpDigits(['', '', '', '', '', '']);
+
+      const rawStart = res?.startTime;
+      const parsedStartTime = rawStart ? new Date(rawStart).getTime() : Date.now();
+      const cooldownSec = res?.cooldownSeconds ?? 60;
+      const expiresSec = res?.expiresIn ?? 600;
+
+      const newSession: OtpTimerSession = {
+        startTime: isNaN(parsedStartTime) ? Date.now() : parsedStartTime,
+        cooldownSeconds: cooldownSec,
+        expiresInSeconds: expiresSec,
+      };
+      setOtpSession(newSession);
+      setCooldown(cooldownSec);
+      setWardenStep('OTP');
+      setTimeout(() => {
+        otpInputRefs.current[0]?.focus();
+      }, 100);
+    } catch (err: any) {
+      setError(err?.message || 'Unable to check Warden account status. Please verify your email address or contact your hostel owner.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 2 (WARDEN): Resend OTP
+  const onResendWardenOtp = async () => {
+    if (cooldown > 0) return;
+    clearMessages();
+    setLoading(true);
+
+    try {
+      const res = await authApi.resendWardenActivationOtp(identifier.trim());
+      const emailToMask = res?.maskedEmail || maskEmail(identifier.trim());
+      setMaskedEmail(emailToMask);
+      setNotice(res?.message || 'A new 6-digit verification code has been sent to your registered email.');
+      setOtpDigits(['', '', '', '', '', '']);
+
+      const cooldownSec = 60;
+      const newSession: OtpTimerSession = {
+        startTime: Date.now(),
+        cooldownSeconds: cooldownSec,
+        expiresInSeconds: 600,
+      };
+      setOtpSession(newSession);
+      setCooldown(cooldownSec);
+      otpInputRefs.current[0]?.focus();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to resend verification code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 2 (WARDEN): Verify OTP
+  const onVerifyWardenOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+
+    if (currentOtpString.length !== 6) {
+      setError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await authApi.verifyWardenActivationOtp(identifier.trim(), currentOtpString);
+      setActivationToken(res?.activationToken || (res as any)?.token || '');
+      setNotice(res?.message || 'Verification successful! Please review and agree to the Warden Terms & Conditions.');
+      setWardenStep('TERMS');
+    } catch (err: any) {
+      setError(err?.message || 'Invalid or expired verification code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // STEP 3 (WARDEN): Review & Accept Warden Terms
+  const onAcceptWardenTermsStep = (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    if (!agreeToTerms) {
+      setError('You must read and agree to the Warden Terms & Conditions before setting your password.');
+      return;
+    }
+    setWardenStep('CREATE_PASSWORD');
+    setNotice('Terms agreed! Create your new account password.');
+  };
+
+  // STEP 4 (WARDEN): Create Password & Activate
+  const onActivateWardenAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+
+    if (!agreeToTerms) {
+      setError('You must accept the Warden Terms & Conditions to activate your account.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      setError('Password must contain at least one uppercase letter.');
+      return;
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      setError('Password must contain at least one lowercase letter.');
+      return;
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      setError('Password must contain at least one number.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Password and Confirm Password do not match.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await authApi.activateWardenAccount(activationToken, newPassword, confirmPassword, agreeToTerms);
+      const token = res?.accessToken || (res as any)?.token;
+      const refreshToken = res?.refreshToken;
+      if (token) {
+        setTokens(token, refreshToken);
+      }
+      setNotice('Warden account activated successfully! Redirecting to Warden dashboard...');
+      setTimeout(() => {
+        window.location.href = '/warden/dashboard';
+      }, 500);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to activate Warden account.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Warden Password Sign In (Already Active Account)
+  const onWardenSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+    setLoading(true);
+    try {
+      const authRes = await login(identifier.trim(), password, 'ADMIN');
+      if (authRes?.user?.role !== 'WARDEN') {
+        setError('Invalid Warden credentials. This account does not have Warden role assigned.');
+        return;
+      }
+      if (!authRes?.user?.termsAccepted) {
+        router.replace('/terms');
+      } else {
+        router.replace('/warden/dashboard');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Invalid Warden email or password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ── Password Strength Validation ───────────────────────────────────────────
   const pwMinLen = newPassword.length >= 8;
   const pwUpper = /[A-Z]/.test(newPassword);
@@ -439,9 +637,34 @@ function LoginForm() {
     },
   };
 
+  const wardenMeta: Record<WardenStep, { title: string; subtitle: string }> = {
+    IDENTIFIER: {
+      title: 'Warden Portal',
+      subtitle: 'Enter your registered email address to sign in or activate your account.',
+    },
+    OTP: {
+      title: 'Verify Activation OTP',
+      subtitle: 'We sent a 6-digit verification code to your registered email address.',
+    },
+    TERMS: {
+      title: 'Warden Terms & Conditions',
+      subtitle: 'Please review and accept the Warden Terms & Conditions to proceed.',
+    },
+    CREATE_PASSWORD: {
+      title: 'Set Warden Password',
+      subtitle: 'Create and confirm your password to complete account activation.',
+    },
+    SIGN_IN: {
+      title: 'Warden Sign In',
+      subtitle: 'Enter your password to sign in to your Warden portal.',
+    },
+  };
+
   const meta = loginType === 'ADMIN'
     ? { title: 'Admin / Staff Sign In', subtitle: 'Access your IHMS admin portal.' }
-    : (studentMeta[studentStep] || { title: 'Student Portal', subtitle: 'Enter your Student ID or registered email to continue.' });
+    : loginType === 'WARDEN'
+      ? (wardenMeta[wardenStep] || { title: 'Warden Portal', subtitle: 'Enter your registered email to continue.' })
+      : (studentMeta[studentStep] || { title: 'Student Portal', subtitle: 'Enter your Student ID or registered email to continue.' });
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row bg-[#F3F1EC] text-[#111827] selection:bg-[#E87545] selection:text-white">
@@ -516,40 +739,53 @@ function LoginForm() {
               <p className="text-xs font-medium text-[#64748B]">{meta.subtitle}</p>
             </div>
 
-            {/* Tab Switcher (Visible on Step 1 or Admin) */}
-            {(studentStep === 'IDENTIFIER' || loginType === 'ADMIN') && (
-              <div className="grid grid-cols-2 rounded-lg border border-[#CBD5E1] bg-[#F8FAFC] p-1 text-xs font-bold">
+            {/* Tab Switcher (Visible on Step 1 for Student/Warden, or Admin) */}
+            {((loginType === 'STUDENT' && studentStep === 'IDENTIFIER') || (loginType === 'WARDEN' && wardenStep === 'IDENTIFIER') || loginType === 'ADMIN') && (
+              <div className="grid grid-cols-3 rounded-lg border border-[#CBD5E1] bg-[#F8FAFC] p-1 text-xs font-bold gap-0.5">
                 <button
                   type="button"
                   onClick={() => handleTabChange('STUDENT')}
                   className={cn(
-                    'flex items-center justify-center gap-2 rounded-md py-2.5 transition-all cursor-pointer',
+                    'flex items-center justify-center gap-1 sm:gap-1.5 rounded-md py-2 px-1 transition-all cursor-pointer text-[11px] sm:text-xs min-w-0',
                     loginType === 'STUDENT'
-                      ? 'bg-white text-[#111827] border border-[#CBD5E1] font-black'
+                      ? 'bg-white text-[#111827] border border-[#CBD5E1] font-black shadow-xs'
                       : 'text-[#64748B] hover:text-[#111827]'
                   )}
                 >
-                  <GraduationCap className={cn('h-4 w-4', loginType === 'STUDENT' ? 'text-[#E87545]' : 'text-[#64748B]')} />
-                  Student Login
+                  <GraduationCap className={cn('h-3.5 w-3.5 shrink-0', loginType === 'STUDENT' ? 'text-[#E87545]' : 'text-[#64748B]')} />
+                  <span className="truncate">Student</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleTabChange('ADMIN')}
                   className={cn(
-                    'flex items-center justify-center gap-2 rounded-lg py-2.5 transition-all cursor-pointer',
+                    'flex items-center justify-center gap-1 sm:gap-1.5 rounded-md py-2 px-1 transition-all cursor-pointer text-[11px] sm:text-xs min-w-0',
                     loginType === 'ADMIN'
-                      ? 'bg-white text-[#111827] border border-[#CBD5E1] font-black'
+                      ? 'bg-white text-[#111827] border border-[#CBD5E1] font-black shadow-xs'
                       : 'text-[#64748B] hover:text-[#111827]'
                   )}
                 >
-                  <Building2 className={cn('h-4 w-4', loginType === 'ADMIN' ? 'text-[#E87545]' : 'text-[#64748B]')} />
-                  Admin / Staff
+                  <Building2 className={cn('h-3.5 w-3.5 shrink-0', loginType === 'ADMIN' ? 'text-[#E87545]' : 'text-[#64748B]')} />
+                  <span className="truncate">Admin/Staff</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('WARDEN')}
+                  className={cn(
+                    'flex items-center justify-center gap-1 sm:gap-1.5 rounded-md py-2 px-1 transition-all cursor-pointer text-[11px] sm:text-xs min-w-0',
+                    loginType === 'WARDEN'
+                      ? 'bg-white text-[#111827] border border-[#CBD5E1] font-black shadow-xs'
+                      : 'text-[#64748B] hover:text-[#111827]'
+                  )}
+                >
+                  <ShieldCheck className={cn('h-3.5 w-3.5 shrink-0', loginType === 'WARDEN' ? 'text-[#E87545]' : 'text-[#64748B]')} />
+                  <span className="truncate">Warden</span>
                 </button>
               </div>
             )}
 
             {/* Session Expired Notice */}
-            {isExpired && !error && studentStep === 'IDENTIFIER' && (
+            {isExpired && !error && (studentStep === 'IDENTIFIER' || wardenStep === 'IDENTIFIER') && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs font-medium text-amber-800 flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
                 Your session has expired. Please sign in again.
@@ -568,8 +804,361 @@ function LoginForm() {
             {error && (
               <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs font-semibold text-rose-800 flex items-center gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                <span className="leading-tight">{error}</span>
+                <span className="leading-tight">{error.replace(/4-digit activation code/gi, '6-digit verification code')}</span>
               </div>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {/* WARDEN STEP 1: Enter Registered Email                          */}
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {loginType === 'WARDEN' && wardenStep === 'IDENTIFIER' && (
+              <form onSubmit={onWardenCheckStatusOrSendOtp} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="wardenIdentifier" className="text-xs font-bold text-[#111827]">
+                    Registered Email Address
+                  </Label>
+                  <div className="student-id-input relative flex items-center">
+                    <User className="student-id-icon pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                    <Input
+                      id="wardenIdentifier"
+                      type="email"
+                      required
+                      autoCapitalize="none"
+                      placeholder="e.g. warden@hostel.com"
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
+                      style={{ paddingLeft: '50px' }}
+                      className="h-11 w-full box-border rounded-xl border-[#E5E7EB] bg-white !pl-[50px] sm:!pl-[50px] pr-3.5 text-sm font-semibold focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Enter the registered email address assigned to your Warden account.
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading || !identifier.trim()}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors mt-2 flex items-center justify-center gap-2"
+                >
+                  {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  <span>Continue</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </form>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {/* WARDEN STEP 2: Verify 6-Digit OTP                              */}
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {loginType === 'WARDEN' && wardenStep === 'OTP' && (
+              <form onSubmit={onVerifyWardenOtp} className="space-y-5">
+                <div className="rounded-xl border border-[#E4E0D7] bg-[#F8F7F4] px-3.5 py-2.5 text-xs font-semibold text-[#64748B] flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <User className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate text-[#111827] font-bold">{identifier}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWardenStep('IDENTIFIER');
+                      clearMessages();
+                    }}
+                    className="text-xs font-bold text-[#E87545] hover:underline shrink-0 cursor-pointer"
+                  >
+                    Change
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs space-y-1">
+                  <p className="font-bold text-emerald-900">
+                    Verification OTP sent to: <span className="font-mono text-emerald-950 font-extrabold">{maskedEmail}</span>
+                  </p>
+                  <p className="text-[11px] text-emerald-700">Code is valid for 10 minutes.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold text-[#111827] text-center block">
+                    Enter 6-Digit Verification Code
+                  </Label>
+                  <div className="flex items-center justify-center gap-2" onPaste={handleOtpPaste}>
+                    {otpDigits.map((digit, idx) => (
+                      <input
+                        key={idx}
+                        ref={(el) => { otpInputRefs.current[idx] = el; }}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={1}
+                        value={digit}
+                        onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                        className="h-12 w-11 text-center text-xl font-black font-mono rounded-xl border border-[#CBD5E1] bg-white focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20 focus:outline-none"
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setWardenStep('IDENTIFIER')}
+                    className="font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cooldown > 0 || loading}
+                    onClick={onResendWardenOtp}
+                    className="font-bold text-[#E87545] hover:underline disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend OTP'}
+                  </button>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading || currentOtpString.length !== 6}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors"
+                >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Verify OTP
+                </Button>
+              </form>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {/* WARDEN STEP 3: Review & Accept Warden Terms                  */}
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {loginType === 'WARDEN' && wardenStep === 'TERMS' && (
+              <form onSubmit={onAcceptWardenTermsStep} className="space-y-4">
+                <div className="rounded-xl border border-purple-200 bg-purple-50/80 p-3.5 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-purple-900">
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-purple-700" />
+                    Warden Operational Terms & Conditions
+                  </div>
+                  <p className="text-[11px] font-medium text-purple-700">
+                    Review your operational scope, data confidentiality, and administrative duties.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-[#CBD5E1] bg-[#F8F7F4] p-3.5 space-y-2">
+                  <div className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id="wardenAgreeToTerms"
+                      checked={agreeToTerms}
+                      onChange={(e) => {
+                        setAgreeToTerms(e.target.checked);
+                        clearMessages();
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-[#CBD5E1] text-[#E87545] focus:ring-[#E87545] cursor-pointer accent-[#E87545]"
+                    />
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="wardenAgreeToTerms"
+                        className="text-xs font-semibold text-[#111827] leading-relaxed cursor-pointer"
+                      >
+                        I have read and agree to the{' '}
+                        <Link
+                          href="/terms?role=warden"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-bold text-[#E87545] hover:underline underline-offset-2 inline cursor-pointer"
+                        >
+                          Warden Terms & Conditions
+                        </Link>
+                      </label>
+                      <p className="text-[11px] text-[#64748B]">
+                        By activating your Warden account, you agree to respect student privacy, scope limits, and operational duties.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setWardenStep('OTP')}
+                    className="font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back
+                  </button>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={!agreeToTerms}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors disabled:opacity-50"
+                >
+                  Continue to Set Password <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+              </form>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {/* WARDEN STEP 4: Create & Confirm Password                      */}
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {loginType === 'WARDEN' && wardenStep === 'CREATE_PASSWORD' && (
+              <form onSubmit={onActivateWardenAccount} className="space-y-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="wNewPassword" className="text-xs font-bold text-[#111827]">
+                      New Password
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => setWardenStep('OTP')}
+                      className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                    >
+                      <ArrowLeft className="h-3 w-3" /> Back
+                    </button>
+                  </div>
+                  <div className="password-input relative flex items-center">
+                    <Lock className="password-lock-icon pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                    <Input
+                      id="wNewPassword"
+                      type={showNewPw ? 'text' : 'password'}
+                      required
+                      placeholder="••••••••"
+                      value={newPassword}
+                      onChange={(e) => { setNewPassword(e.target.value); clearMessages(); }}
+                      style={{ paddingLeft: '48px', paddingRight: '48px' }}
+                      className="h-11 w-full box-border rounded-xl border-[#E5E7EB] bg-white !pl-12 !pr-12 sm:!pl-12 sm:!pr-12 text-sm font-semibold font-mono focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPw((s) => !s)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="wConfirmPassword" className="text-xs font-bold text-[#111827]">
+                    Confirm Password
+                  </Label>
+                  <div className="password-input relative flex items-center">
+                    <Lock className="password-lock-icon pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                    <Input
+                      id="wConfirmPassword"
+                      type={showConfirmPw ? 'text' : 'password'}
+                      required
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => { setConfirmPassword(e.target.value); clearMessages(); }}
+                      style={{ paddingLeft: '48px', paddingRight: '48px' }}
+                      className="h-11 w-full box-border rounded-xl border-[#E5E7EB] bg-white !pl-12 !pr-12 sm:!pl-12 sm:!pr-12 text-sm font-semibold font-mono focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPw((s) => !s)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showConfirmPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Password Requirements Checklist */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-1 text-[11px] font-semibold text-slate-600">
+                  <p className="font-bold text-slate-800">Password Requirements:</p>
+                  <p className={pwMinLen ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                    {pwMinLen ? '✓' : '•'} At least 8 characters
+                  </p>
+                  <p className={pwUpper ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                    {pwUpper ? '✓' : '•'} At least one uppercase letter (A-Z)
+                  </p>
+                  <p className={pwLower ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                    {pwLower ? '✓' : '•'} At least one lowercase letter (a-z)
+                  </p>
+                  <p className={pwNum ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                    {pwNum ? '✓' : '•'} At least one number (0-9)
+                  </p>
+                  <p className={pwMatch ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                    {pwMatch ? '✓' : '•'} Passwords match
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading || !pwValid}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors mt-2"
+                >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Set Password & Activate Warden Account
+                </Button>
+              </form>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {/* WARDEN STEP 4: Password Sign In (Account Already Active)       */}
+            {/* ══════════════════════════════════════════════════════════════ */}
+            {loginType === 'WARDEN' && wardenStep === 'SIGN_IN' && (
+              <form onSubmit={onWardenSignIn} className="space-y-4">
+                <div className="rounded-xl border border-[#E4E0D7] bg-[#F8F7F4] px-3.5 py-2.5 text-xs font-semibold text-[#64748B] flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <User className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate text-[#111827] font-bold">{identifier}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWardenStep('IDENTIFIER');
+                      setPassword('');
+                      clearMessages();
+                    }}
+                    className="text-xs font-bold text-[#E87545] hover:underline shrink-0 cursor-pointer"
+                  >
+                    Change
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="wardenPassword" className="text-xs font-bold text-[#111827]">
+                      Password
+                    </Label>
+                    <Link href="/forgot-password" className="text-xs font-semibold text-[#E87545] hover:underline">
+                      Forgot password?
+                    </Link>
+                  </div>
+                  <div className="password-input relative flex items-center">
+                    <Lock className="password-lock-icon pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+                    <Input
+                      id="wardenPassword"
+                      type={showPw ? 'text' : 'password'}
+                      required
+                      autoFocus
+                      autoComplete="current-password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      style={{ paddingLeft: '48px', paddingRight: '48px' }}
+                      className="h-11 w-full box-border rounded-xl border-[#E5E7EB] bg-white !pl-12 !pr-12 sm:!pl-12 sm:!pr-12 text-sm font-semibold font-mono focus:border-[#E87545] focus:ring-2 focus:ring-[#E87545]/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPw((s) => !s)}
+                      className="password-toggle-icon absolute right-4 top-1/2 -translate-y-1/2 z-10 text-slate-400 hover:text-[#111827] p-0.5 cursor-pointer flex items-center justify-center transition-colors"
+                      aria-label={showPw ? 'Hide password' : 'Show password'}
+                    >
+                      {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading || !password}
+                  className="h-12 w-full rounded-xl bg-[#E87545] hover:bg-[#D66434] text-sm font-bold text-white transition-colors mt-2"
+                >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Sign In as Warden
+                </Button>
+              </form>
             )}
 
             {/* ══════════════════════════════════════════════════════════════ */}
@@ -638,6 +1227,12 @@ function LoginForm() {
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Sign In to Admin Portal
                 </Button>
+
+                <div className="text-center pt-2 border-t border-slate-100">
+                  <Link href="/warden/activate" className="text-xs font-bold text-[#E87545] hover:underline">
+                    First-time Warden? Activate your Warden account →
+                  </Link>
+                </div>
               </form>
             )}
 

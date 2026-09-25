@@ -1,5 +1,5 @@
 import Redis, { RedisOptions } from 'ioredis';
-import { query, queryOne } from '../../config/database';
+import { query, queryOne, transaction } from '../../config/database';
 
 /**
  * Enterprise Redis Atomic Sequence Engine
@@ -238,14 +238,36 @@ export class RedisService {
       }
     }
 
-    // Atomic in-memory sequence fallback (thread-safe serialization)
-    let current = this.inMemoryCounters.get(cleanHostelId);
-    if (current === undefined) {
-      current = await this.getOrHydrateCounter(cleanHostelId);
+    // Distributed cluster-safe database sequence fallback (ISSUE-007)
+    // Guarantees atomic cross-process increments across multiple backend instances when Redis is disconnected.
+    try {
+      const dbSeq = await transaction(async (client) => {
+        const counterId = `seq:hostel:${cleanHostelId}`;
+        const rowRes = await client.query(
+          `INSERT INTO counters (id, organization_id, prefix, seq)
+           VALUES ($1, 'SYSTEM', $2, 1)
+           ON CONFLICT (id) DO UPDATE
+           SET seq = counters.seq + 1
+           RETURNING seq`,
+          [counterId, cleanHostelId]
+        );
+        return Number(rowRes.rows[0].seq);
+      });
+
+      // Keep in-memory mirror updated with authoritative database sequence
+      const maxVal = Math.max(dbSeq, (this.inMemoryCounters.get(cleanHostelId) || 0) + 1);
+      this.inMemoryCounters.set(cleanHostelId, maxVal);
+      return maxVal;
+    } catch {
+      // Fallback to local memory queue if database query fails
+      let current = this.inMemoryCounters.get(cleanHostelId);
+      if (current === undefined) {
+        current = await this.getOrHydrateCounter(cleanHostelId);
+      }
+      const nextVal = current + 1;
+      this.inMemoryCounters.set(cleanHostelId, nextVal);
+      return nextVal;
     }
-    const nextVal = current + 1;
-    this.inMemoryCounters.set(cleanHostelId, nextVal);
-    return nextVal;
   }
 
   /**
@@ -348,6 +370,7 @@ export class RedisService {
   resetInMemory(): void {
     this.inMemoryCounters.clear();
     this.sequenceLocks.clear();
+    query("DELETE FROM counters WHERE id LIKE 'seq:hostel:%'").catch(() => {});
   }
 
   /**

@@ -31,6 +31,7 @@ import { notificationRouter } from './modules/notifications/notification.control
 import { supportRouter } from './modules/support/support.controller';
 import { termsRouter } from './modules/terms/terms.controller';
 import { aiAssistantRouter } from './modules/ai-assistant/ai-assistant.controller';
+import { wardenRouter } from './modules/users/warden.controller';
 
 const app: Application = express();
 const server = http.createServer(app);
@@ -41,8 +42,38 @@ app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 }));
+const configuredOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
+  : [
+      'http://localhost:3000',
+      'http://localhost:5000',
+      'http://localhost',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5000',
+      'http://10.0.2.2:5000',
+    ];
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (such as mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (process.env.NODE_ENV !== 'production' || configuredOrigins.includes(origin) || configuredOrigins.includes('*')) {
+      return callback(null, true);
+    }
+    const isAllowed = configuredOrigins.some((allowed) => {
+      if (allowed === origin) return true;
+      try {
+        const allowedUrl = new URL(allowed);
+        const originUrl = new URL(origin);
+        return allowedUrl.host === originUrl.host;
+      } catch {
+        return false;
+      }
+    });
+    if (isAllowed) return callback(null, true);
+    return callback(new Error(`CORS Error: Origin ${origin} not permitted`));
+  },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -51,12 +82,15 @@ app.use(cors({
     'Origin',
     'X-Requested-With',
     'x-organization-id',
+    'x-branch-id',
     'x-request-id',
     'x-webhook-signature',
     'x-webhook-timestamp',
     'x-client-id',
     'x-client-secret',
     'x-api-version',
+    'idempotency-key',
+    'x-idempotency-key',
     'signature',
   ],
 }));
@@ -305,6 +339,11 @@ app.use('/api/unread-count', (req, res, next) => {
 
 app.use('/users', userRouter);
 app.use('/api/users', userRouter);
+
+app.use('/owner/wardens', wardenRouter);
+app.use('/api/owner/wardens', wardenRouter);
+app.use('/wardens', wardenRouter);
+app.use('/api/wardens', wardenRouter);
 
 app.use('/support', supportRouter);
 app.use('/api/support', supportRouter);

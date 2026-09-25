@@ -649,11 +649,9 @@ export class CashfreeService {
   ): boolean {
     if (!rawBody || !signature) return false;
 
-    // Sandbox test suite bypass for deterministic test runs
-    if (
-      (process.env.NODE_ENV === 'test' || process.env.CASHFREE_ENV === 'TEST' || process.env.BYPASS_WEBHOOK_SIGNATURE === 'true') &&
-      (signature === 'SANDBOX_VERIFIED_SIGNATURE' || signature === 'test_sig' || signature === 'bypass' || process.env.BYPASS_WEBHOOK_SIGNATURE === 'true')
-    ) {
+    // Sandbox test suite mock signature strictly for local automated unit testing (ISSUE-004)
+    // In production or staging, real cryptographic HMAC-SHA256 verification is strictly mandatory.
+    if (process.env.NODE_ENV === 'test' && signature === 'SANDBOX_VERIFIED_SIGNATURE') {
       return true;
     }
 
@@ -662,7 +660,7 @@ export class CashfreeService {
       process.env.CASHFREE_WEBHOOK_SECRET,
       this.webhookSecret,
       this.secretKey,
-      'cf_whsec_ihms_default_secret_2026',
+      process.env.NODE_ENV === 'test' ? 'cf_whsec_ihms_default_secret_2026' : undefined,
     ].filter(Boolean) as string[];
 
     for (const secret of secretsToTry) {

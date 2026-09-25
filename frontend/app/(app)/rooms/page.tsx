@@ -34,8 +34,8 @@ import { StatCard } from '@/components/dashboard/stat-card';
 import { DataTable, type Column } from '@/components/dashboard/data-table';
 import { Badge } from '@/components/dashboard/confirm-dialog';
 import { Button } from '@/components/ui/button';
-import { formatStudentId } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -54,6 +54,7 @@ import { hostelsApi } from '@/lib/api/hostels.api';
 import { getCachedData } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useRealtimeEvent } from '@/lib/realtime/use-realtime';
+import { formatBedNumber, formatBedLabel, formatRoomAndBed, formatStudentId } from '@/lib/utils';
 import type { ApiError, Room, Bed } from '@/lib/types';
 
 function RoomsPageContent() {
@@ -274,7 +275,7 @@ function RoomsPageContent() {
         monthlyRate: activeRoomForBeds.monthlyRentPerBed || activeRoomForBeds.monthlyRate || 8000,
         status: 'AVAILABLE',
       });
-      toast.success(`Bed ${res.bed.bedCode || res.bed.number} added successfully!`);
+      toast.success(`Bed ${formatBedNumber(res.bed.bedNumber || res.bed.number || res.bed.bedCode)} added successfully!`);
       await refreshActiveRoomBeds(activeRoomForBeds.id);
     } catch (err) {
       toast.error((err as ApiError)?.message || 'Failed to add bed.');
@@ -288,7 +289,7 @@ function RoomsPageContent() {
     setActionBedId(bed.id);
     try {
       await bedsApi.update(bed.id, { status: newStatus });
-      toast.success(`Bed ${bed.bedCode || bed.number} marked as ${newStatus === 'AVAILABLE' ? '🟢 Available' : '🟡 Maintenance'}`);
+      toast.success(`Bed ${formatBedNumber(bed.bedNumber || bed.number || bed.bedCode)} marked as ${newStatus === 'AVAILABLE' ? '🟢 Available' : '🟡 Maintenance'}`);
       await loadData();
       if (activeRoomForBeds) {
         await refreshActiveRoomBeds(activeRoomForBeds.id);
@@ -308,7 +309,7 @@ function RoomsPageContent() {
     setActionBedId(bed.id);
     try {
       await bedsApi.vacate(bed.id);
-      toast.success(`Bed ${bed.bedCode || bed.number} vacated successfully. Status changed to 🟢 Available.`);
+      toast.success(`Bed ${formatBedNumber(bed.bedNumber || bed.number || bed.bedCode)} vacated successfully. Status changed to 🟢 Available.`);
       await loadData();
       if (activeRoomForBeds) {
         await refreshActiveRoomBeds(activeRoomForBeds.id);
@@ -326,13 +327,13 @@ function RoomsPageContent() {
   // Delete Bed
   const handleDeleteBed = async (bed: Bed) => {
     if (bed.status === 'OCCUPIED' || bed.studentId) {
-      toast.error(`Cannot delete Bed ${bed.bedCode || bed.number}: It is currently assigned to a student.`);
+      toast.error(`Cannot delete Bed ${formatBedNumber(bed.bedNumber || bed.number || bed.bedCode)}: It is currently assigned to a student.`);
       return;
     }
     setActionBedId(bed.id);
     try {
       await bedsApi.remove(bed.id);
-      toast.success(`Bed ${bed.bedCode || bed.number} removed successfully.`);
+      toast.success(`Bed ${formatBedNumber(bed.bedNumber || bed.number || bed.bedCode)} removed successfully.`);
       if (activeRoomForBeds) {
         await refreshActiveRoomBeds(activeRoomForBeds.id);
       }
@@ -515,11 +516,11 @@ function RoomsPageContent() {
                             : 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200 cursor-pointer'
                         }`}
                       >
-                        B{String(b.bedNumber || idx + 1).padStart(2, '0')}
+                        B{String(formatBedNumber(b.bedNumber || b.bedCode || idx + 1)).padStart(2, '0')}
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs">
-                      <p className="font-bold">{b.bedCode || `Bed ${b.bedNumber || idx + 1}`}</p>
+                      <p className="font-bold">{formatRoomAndBed(r.roomNumber || r.number, b.bedNumber || b.number || b.bedCode || idx + 1)}</p>
                       <p className="text-muted-foreground">
                         Status:{' '}
                         <span className="font-bold text-foreground">
@@ -728,7 +729,7 @@ function RoomsPageContent() {
                         : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                     }`}
                   >
-                    B{String(b.bedNumber || idx + 1).padStart(2, '0')}
+                    B{String(formatBedNumber(b.bedNumber || b.bedCode || idx + 1)).padStart(2, '0')}
                     {isOccupied ? ` (🔴 ${b.studentName ? b.studentName.split(' ')[0] : 'Occupied'})` : isMaint ? ' (🟡)' : ' (🟢)'}
                   </span>
                 );
@@ -893,15 +894,14 @@ function RoomsPageContent() {
               )}
 
               {/* Search Bar */}
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search room, bed, student..."
-                  className="pl-8 h-8 text-xs w-48 sm:w-56 bg-white border-[#CBD5E1]"
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                onClear={() => setSearch('')}
+                placeholder="Search room, bed, student..."
+                containerClassName="w-48 sm:w-56"
+                className="h-8 text-xs bg-white border-[#CBD5E1]"
+              />
 
               <Button
                 variant="outline"
@@ -1630,18 +1630,13 @@ function RoomsPageContent() {
                             : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                         }`}
                       >
-                        B{String(bed.bedNumber || idx + 1).padStart(2, '0')}
+                        B{String(formatBedNumber(bed.bedNumber || bed.number || bed.bedCode || idx + 1)).padStart(2, '0')}
                       </div>
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-sm text-foreground">
-                            Bed {bed.bedNumber || idx + 1}
+                            {formatBedLabel(bed.bedNumber || bed.number || bed.bedCode || idx + 1)}
                           </p>
-                          {bed.bedCode && (
-                            <span className="text-[11px] font-mono text-slate-400">
-                              ({bed.bedCode})
-                            </span>
-                          )}
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                               isOccupied
@@ -1885,16 +1880,11 @@ function RoomsPageContent() {
                                   : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                               }`}
                             >
-                              B{String(bed.bedNumber || idx + 1).padStart(2, '0')}
+                              B{String(formatBedNumber(bed.bedNumber || bed.number || bed.bedCode || idx + 1)).padStart(2, '0')}
                             </div>
                             <div>
                               <p className="font-bold text-xs text-foreground">
-                                Bed {bed.bedNumber || idx + 1}
-                                {bed.bedCode && (
-                                  <span className="font-mono font-normal text-[10px] text-muted-foreground ml-1.5">
-                                    ({bed.bedCode})
-                                  </span>
-                                )}
+                                {formatBedLabel(bed.bedNumber || bed.number || bed.bedCode || idx + 1)}
                               </p>
                               {isOcc && (
                                 <p className="text-xs text-rose-700 font-semibold pt-0.5">

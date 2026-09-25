@@ -7,7 +7,7 @@ export interface TermsSection {
   title: string;
   summary: string;
   content: string;
-  applicableTo: 'ALL' | 'STUDENT' | 'OWNER';
+  applicableTo: 'ALL' | 'STUDENT' | 'OWNER' | 'WARDEN';
   order: number;
 }
 
@@ -343,6 +343,145 @@ Integrated Hostel Management System (IHMS)
 Email: ihmserp00@gmail.com`,
     applicableTo: 'STUDENT',
     order: 15,
+  },
+];
+
+/**
+ * 12 Contractual Terms & Conditions applicable exclusively to Hostel Wardens and Administrative Staff.
+ */
+export const WARDEN_TERMS_SECTIONS: TermsSection[] = [
+  {
+    id: 'warden-appointment-delegated-role',
+    title: '1. Owner Appointment & Delegated Role',
+    summary: 'Warden accounts are authorized and created directly by the Hostel Owner.',
+    content: `Your Warden account on the Integrated Hostel Management System ("IHMS") is created and invited by the registered Hostel Owner. You acknowledge that your operational authorization derives strictly from the delegation granted by the Hostel Owner.
+    
+As a Warden, you act as an authorized operational representative of the Hostel Owner for day-to-day lodging administration, student monitoring, and branch supervision. You do not hold independent ownership of the hostel entity or platform license.`,
+    applicableTo: 'WARDEN',
+    order: 1,
+  },
+  {
+    id: 'warden-access-permission-scope',
+    title: '2. Access & Permission Scope',
+    summary: 'Restricted access limited to assigned hostel branches and operational functions.',
+    content: `Your access to the IHMS platform is strictly restricted to the specific hostel properties, branches, and functional modules assigned to you by the Hostel Owner.
+
+You agree not to attempt to access unauthorized organizational branches, financial settlement accounts, platform-wide configuration settings, or records belonging to other establishments. Any operational action performed under your Warden account is recorded in the platform audit trail and attributed to your user session.`,
+    applicableTo: 'WARDEN',
+    order: 2,
+  },
+  {
+    id: 'warden-financial-kyc-restrictions',
+    title: '3. Financial & KYC Restrictions',
+    summary: 'Warden accounts cannot alter banking, KYC, sub-merchant, or payout settlement settings.',
+    content: `You explicitly acknowledge and agree that as a Warden, you do not own or possess administrative rights over the hostel's financial setup, banking details, PAN registrations, or Payment Gateway (Cashfree) sub-merchant KYC credentials.
+
+Wardens are strictly prohibited from attempting to alter payment routing configurations, bank account numbers, UPI merchant settings, or direct settlement parameters. All financial payout configurations remain under the exclusive jurisdiction of the Hostel Owner.`,
+    applicableTo: 'WARDEN',
+    order: 3,
+  },
+  {
+    id: 'warden-credential-otp-protection',
+    title: '4. Credential & OTP Protection',
+    summary: 'Obligation to safeguard login credentials, passwords, and OTP verification codes.',
+    content: `You are solely responsible for maintaining the confidentiality and security of your Warden account credentials, password, and activation OTPs.
+
+You agree never to share your login credentials, two-factor authentication codes, or session tokens with third parties, students, or unauthorized staff. You must immediately notify the Hostel Owner and IHMS support if you suspect any unauthorized access or security breach involving your account.`,
+    applicableTo: 'WARDEN',
+    order: 4,
+  },
+  {
+    id: 'warden-operational-duties',
+    title: '5. Operational Duties & Record Management',
+    summary: 'Responsibility for accurate recording of student attendance, complaints, gate passes, and bed allocations.',
+    content: `In executing your duties as a Warden, you agree to maintain prompt, accurate, and truthful records across all IHMS operational modules assigned to you. This includes:
+
+- Recording and verifying student biometric or manual daily attendance logs.
+- Approving or denying student gate pass and leave requests in accordance with hostel policy.
+- Reviewing and updating the status of student maintenance complaints and grievances within prescribed timeframes.
+- Assisting in verified room allocations, bed check-ins, and student checkout inspections.`,
+    applicableTo: 'WARDEN',
+    order: 5,
+  },
+  {
+    id: 'warden-student-data-confidentiality',
+    title: '6. Student Data Confidentiality',
+    summary: 'Strict confidentiality of student personal records, identity proofs, and emergency contacts.',
+    content: `In your role as Warden, you will have access to sensitive student personal information, including identity proofs (Aadhaar/Passport numbers), phone numbers, emergency contact details, guardian information, and room occupancy logs.
+
+You agree to treat all resident data with absolute confidentiality. You are expressly prohibited from downloading, exporting, sharing, selling, or disclosing student information to external commercial entities, unauthorized third parties, or unapproved individuals.`,
+    applicableTo: 'WARDEN',
+    order: 6,
+  },
+  {
+    id: 'warden-misuse-abuse-prohibition',
+    title: '7. Prohibited Misuse & Abuse of Privileges',
+    summary: 'Zero tolerance for falsifying records, unauthorized entry, or administrative abuse.',
+    content: `You agree not to abuse your administrative privileges on the IHMS platform. Prohibited actions include:
+
+- Falsifying attendance records, gate pass approvals, or complaint resolution statuses.
+- Generating unauthorized digital entries, receipts, or modifying fee statuses without Owner authorization.
+- Engaging in harassment, intimidation, or extortion of resident students.
+- Tampering with security logs, audit records, or system configuration parameters.`,
+    applicableTo: 'WARDEN',
+    order: 7,
+  },
+  {
+    id: 'warden-incident-security-reporting',
+    title: '8. Incident & Security Reporting',
+    summary: 'Duty to report safety incidents, unauthorized access attempts, or system glitches.',
+    content: `You agree to promptly report any serious hostel incidents—such as medical emergencies, ragging allegations, physical property damage, or security breaches—to the Hostel Owner through IHMS reporting channels.
+
+Additionally, if you observe any software bugs, authentication errors, or data anomalies within the IHMS portal, you agree to notify system administrators at ihmserp00@gmail.com without attempting to exploit the discrepancy.`,
+    applicableTo: 'WARDEN',
+    order: 8,
+  },
+  {
+    id: 'warden-suspension-deactivation-rights',
+    title: '9. Suspension & Account Deactivation Rights',
+    summary: 'Rights of the Hostel Owner and Platform to revoke Warden portal access.',
+    content: `Your Warden portal access may be revoked, suspended, or deactivated at any time by the Hostel Owner or IHMS system administrators upon:
+
+- Termination, resignation, or cessation of your employment at the hostel.
+- Breach of these Terms & Conditions or violation of hostel administrative policies.
+- Directive by statutory law enforcement agencies or formal legal orders.
+
+Upon account deactivation, your right to access administrative data and portal functions ceases immediately.`,
+    applicableTo: 'WARDEN',
+    order: 9,
+  },
+  {
+    id: 'warden-platform-rules-limitations',
+    title: '10. Platform Rules & Service Limitations',
+    summary: 'Adherence to general platform rules, cloud software availability, and liability boundaries.',
+    content: `You acknowledge that the IHMS software is provided on an "as is" and "as available" cloud enterprise basis. IHMS acts strictly as a SaaS technology service provider and is not a physical landlord, employer, or insurer of hostel premises.
+
+You agree to abide by all platform-wide security guidelines, service uptime maintenance notifications, and technological limitations.`,
+    applicableTo: 'WARDEN',
+    order: 10,
+  },
+  {
+    id: 'warden-dispute-resolution-governing-law',
+    title: '11. Dispute Resolution & Governing Law',
+    summary: 'Indian law governance and exclusive jurisdiction in Hyderabad, Telangana.',
+    content: `These Warden Terms & Conditions shall be governed by and construed in accordance with the substantive laws of the Republic of India.
+
+Any legal dispute or claim arising from your use of the IHMS platform or administrative duties hereunder shall be subject to the exclusive jurisdiction of the competent civil courts located in Hyderabad, State of Telangana, India.`,
+    applicableTo: 'WARDEN',
+    order: 11,
+  },
+  {
+    id: 'warden-modifications-legal-contact',
+    title: '12. Modifications to Terms & Legal Contact',
+    summary: 'Version updates notification and official legal contact channels.',
+    content: `IHMS reserves the right to update or modify these Terms & Conditions as required by software enhancements or legal mandates. Updated terms will be presented for review upon portal sign-in when material changes occur.
+
+For questions or legal inquiries concerning these Warden Terms, you may contact:
+
+Integrated Hostel Management System (IHMS)
+Email: ihmserp00@gmail.com`,
+    applicableTo: 'WARDEN',
+    order: 12,
   },
 ];
 

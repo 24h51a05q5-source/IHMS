@@ -260,6 +260,15 @@ html, body {
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
 
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Custom Animations */
 @keyframes slideInLeft {
   from { transform: translateX(-100%); }
