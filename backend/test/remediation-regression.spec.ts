@@ -11,6 +11,8 @@ import { UserRole, BedStatus } from '../src/config/constants';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import request from 'supertest';
+import { app } from '../src/main';
 
 describe('IHMS 20-Issue Full Remediation Regression Suite', () => {
   let orgId: string;
@@ -325,11 +327,56 @@ describe('IHMS 20-Issue Full Remediation Regression Suite', () => {
   });
 
   describe('ISSUE-011: Strict Dynamic Origin CORS Validation', () => {
+    let prevFrontendUrl: string | undefined;
+
+    beforeAll(() => {
+      prevFrontendUrl = process.env.FRONTEND_URL;
+      process.env.FRONTEND_URL = 'https://ihms-e107.onrender.com';
+    });
+
+    afterAll(() => {
+      if (prevFrontendUrl !== undefined) {
+        process.env.FRONTEND_URL = prevFrontendUrl;
+      } else {
+        delete process.env.FRONTEND_URL;
+      }
+    });
+
     it('should not use wildcard origin with credentials in main server setup', () => {
       const mainPath = path.resolve(__dirname, '../src/main.ts');
       const content = fs.readFileSync(mainPath, 'utf8');
       expect(content).not.toContain("origin: '*'");
       expect(content).toContain('ALLOWED_ORIGINS');
+    });
+
+    it('should allow production frontend origin https://ihms-e107.onrender.com without HTTP 500', async () => {
+      const res = await request(app)
+        .options('/auth/warden/send-otp')
+        .set('Origin', 'https://ihms-e107.onrender.com')
+        .set('Access-Control-Request-Method', 'POST');
+
+      expect(res.status).not.toBe(500);
+      expect(res.headers['access-control-allow-origin']).toBe('https://ihms-e107.onrender.com');
+    });
+
+    it('should allow localhost development origin without HTTP 500', async () => {
+      const res = await request(app)
+        .options('/auth/warden/send-otp')
+        .set('Origin', 'http://localhost:3000')
+        .set('Access-Control-Request-Method', 'POST');
+
+      expect(res.status).not.toBe(500);
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:3000');
+    });
+
+    it('should reject an unrelated origin without producing HTTP 500', async () => {
+      const res = await request(app)
+        .options('/auth/warden/send-otp')
+        .set('Origin', 'https://unrelated-attacker.com')
+        .set('Access-Control-Request-Method', 'POST');
+
+      expect(res.status).not.toBe(500);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
     });
   });
 

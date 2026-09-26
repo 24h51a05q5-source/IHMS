@@ -42,36 +42,69 @@ app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 }));
-const configuredOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
-  : [
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'http://localhost',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5000',
-      'http://10.0.2.2:5000',
-    ];
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'http://localhost',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5000',
+  'http://10.0.2.2:5000',
+];
+
+export function getConfiguredOrigins(): string[] {
+  const envAllowed = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  const frontendUrl = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.trim() : '';
+
+  return Array.from(
+    new Set([
+      ...defaultOrigins,
+      ...envAllowed,
+      ...(frontendUrl ? [frontendUrl] : []),
+    ])
+  );
+}
+
+export function isOriginAllowed(origin: string): boolean {
+  const origins = getConfiguredOrigins();
+  if (origins.includes('*')) return true;
+
+  let originUrl: URL | null = null;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    // Fallback if URL parsing fails
+  }
+
+  return origins.some((allowed) => {
+    if (allowed === '*') return true;
+    if (allowed === origin) return true;
+
+    try {
+      const allowedUrl = new URL(allowed);
+      if (originUrl) {
+        return allowedUrl.origin === originUrl.origin;
+      }
+      return false;
+    } catch {
+      const cleanedAllowed = allowed.replace(/\/+$/, '');
+      const cleanedOrigin = origin.replace(/\/+$/, '');
+      return cleanedAllowed === cleanedOrigin;
+    }
+  });
+}
 
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (such as mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
-    if (process.env.NODE_ENV !== 'production' || configuredOrigins.includes(origin) || configuredOrigins.includes('*')) {
+
+    if (isOriginAllowed(origin)) {
       return callback(null, true);
     }
-    const isAllowed = configuredOrigins.some((allowed) => {
-      if (allowed === origin) return true;
-      try {
-        const allowedUrl = new URL(allowed);
-        const originUrl = new URL(origin);
-        return allowedUrl.host === originUrl.host;
-      } catch {
-        return false;
-      }
-    });
-    if (isAllowed) return callback(null, true);
-    return callback(new Error(`CORS Error: Origin ${origin} not permitted`));
+
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
