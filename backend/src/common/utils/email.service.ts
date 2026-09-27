@@ -32,170 +32,134 @@ export interface SendNotificationEmailOptions {
   actionUrl?: string;
 }
 
+export interface MailDispatchPayload {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo?: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+}
+
+/**
+ * Clean helper to strip quotes and whitespace from environment variables.
+ */
+function cleanEnv(val?: string): string {
+  if (!val) return '';
+  let str = val.trim();
+  if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'"))) {
+    str = str.slice(1, -1).trim();
+  }
+  return str;
+}
+
 class EmailService {
-  private getResendClient(): { resend: Resend | null; apiKey: string; from: string } {
-    const apiKey = (
-      process.env.RESEND_API_KEY ||
-      process.env.RESEND_KEY ||
-      ''
-    ).trim();
+  /**
+   * Helper to get Brevo/Generic SMTP credentials from environment variables.
+   * Primary Provider: Brevo SMTP (smtp-relay.brevo.com:587)
+   */
+  public getSmtpConfig() {
+    const host = (
+      cleanEnv(process.env.SMTP_HOST) ||
+      cleanEnv(process.env.EMAIL_HOST) ||
+      cleanEnv(process.env.MAIL_HOST) ||
+      'smtp-relay.brevo.com'
+    );
 
-    const defaultFrom = 'IHMS Hostel Portal <onboarding@resend.dev>';
-    let from = (
-      process.env.EMAIL_FROM ||
-      process.env.SENDER_EMAIL ||
-      process.env.RESEND_FROM ||
-      ''
-    ).trim();
+    const port = Number(
+      cleanEnv(process.env.SMTP_PORT) ||
+      cleanEnv(process.env.EMAIL_PORT) ||
+      cleanEnv(process.env.MAIL_PORT) ||
+      587
+    );
 
-    if (!from || !from.includes('@')) {
-      from = defaultFrom;
+    const rawFromEmail = (
+      cleanEnv(process.env.SMTP_FROM_EMAIL) ||
+      cleanEnv(process.env.EMAIL_FROM) ||
+      cleanEnv(process.env.SENDER_EMAIL) ||
+      cleanEnv(process.env.SMTP_FROM) ||
+      cleanEnv(process.env.BREVO_FROM_EMAIL) ||
+      'ihmserp00@gmail.com'
+    );
+
+    const fromName = (
+      cleanEnv(process.env.SMTP_FROM_NAME) ||
+      cleanEnv(process.env.EMAIL_FROM_NAME) ||
+      cleanEnv(process.env.SENDER_NAME) ||
+      cleanEnv(process.env.BREVO_FROM_NAME) ||
+      'IHMS'
+    );
+
+    // Extract email address cleanly if enclosed in angle brackets or formatted
+    let fromEmail = rawFromEmail;
+    const match = rawFromEmail.match(/<([^>]+)>/);
+    if (match) {
+      fromEmail = match[1].trim();
+    } else {
+      fromEmail = rawFromEmail.replace(/^["']|["']$/g, '').trim();
     }
+
+    const user = (
+      cleanEnv(process.env.SMTP_USER) ||
+      cleanEnv(process.env.EMAIL_USER) ||
+      cleanEnv(process.env.EMAIL_USERNAME) ||
+      cleanEnv(process.env.MAIL_USER) ||
+      cleanEnv(process.env.BREVO_USER) ||
+      fromEmail
+    );
+
+    const pass = (
+      cleanEnv(process.env.SMTP_PASS) ||
+      cleanEnv(process.env.SMTP_KEY) ||
+      cleanEnv(process.env.SMTP_PASSWORD) ||
+      cleanEnv(process.env.EMAIL_PASS) ||
+      cleanEnv(process.env.EMAIL_PASSWORD) ||
+      cleanEnv(process.env.MAIL_PASS) ||
+      cleanEnv(process.env.BREVO_API_KEY) ||
+      cleanEnv(process.env.BREVO_SMTP_KEY) ||
+      ''
+    );
+
+    const from = `"${fromName}" <${fromEmail}>`;
+
+    return { host, port, user, pass, from, fromEmail, fromName };
+  }
+
+  /**
+   * Helper for Resend API fallback client.
+   */
+  public getResendClient(): { resend: Resend | null; apiKey: string; from: string } {
+    const apiKey = (
+      cleanEnv(process.env.RESEND_API_KEY) ||
+      cleanEnv(process.env.RESEND_KEY) ||
+      ''
+    );
+
+    const smtp = this.getSmtpConfig();
+    let from = `"${smtp.fromName}" <${smtp.fromEmail}>`;
 
     const resend = apiKey ? new Resend(apiKey) : null;
     return { resend, apiKey, from };
   }
 
-  private getSmtpConfig() {
-    const host = (
-      process.env.SMTP_HOST ||
-      process.env.EMAIL_HOST ||
-      process.env.MAIL_HOST ||
-      ''
-    ).trim();
+  /**
+   * Provider-Independent Email Dispatcher.
+   * Primary Transport: Brevo SMTP (via Nodemailer)
+   * Secondary Transport: Resend API (legacy fallback)
+   * Development Fallback: Safe Mock Log
+   */
+  public async dispatchMail(payload: MailDispatchPayload): Promise<{ success: boolean; messageId: string }> {
+    const { to, subject, text, html, replyTo, attachments } = payload;
+    const recipientEmail = cleanEnv(to).toLowerCase();
 
-    const port = Number(
-      process.env.SMTP_PORT ||
-      process.env.EMAIL_PORT ||
-      process.env.MAIL_PORT ||
-      587
-    );
-
-    const user = (
-      process.env.SMTP_USER ||
-      process.env.EMAIL_USER ||
-      process.env.EMAIL_USERNAME ||
-      process.env.MAIL_USER ||
-      ''
-    ).trim();
-
-    const rawPass = (
-      process.env.SMTP_PASS ||
-      process.env.SMTP_PASSWORD ||
-      process.env.EMAIL_PASS ||
-      process.env.EMAIL_PASSWORD ||
-      process.env.MAIL_PASS ||
-      ''
-    ).trim();
-
-    const isGmail = host.includes('gmail') || user.endsWith('@gmail.com');
-    const pass = isGmail ? rawPass.replace(/\s+/g, '') : rawPass;
-
-    const from = (
-      process.env.EMAIL_FROM ||
-      process.env.SENDER_EMAIL ||
-      process.env.SMTP_FROM ||
-      (user ? `"IHMS Hostel Portal" <${user}>` : 'IHMS Hostel Portal <onboarding@resend.dev>')
-    ).trim();
-
-    return { host, port, user, pass, from, isGmail };
-  }
-
-  async sendOtpEmail(options: SendOtpEmailOptions): Promise<{ success: boolean; messageId: string }> {
-    const { to, otpCode, studentName, purpose = 'ACTIVATION' } = options;
-    const recipientEmail = (to || '').trim().toLowerCase();
-
-    if (!recipientEmail) {
-      throw new AppError('Recipient email address is required to send verification code.', 400);
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      throw new AppError('A valid recipient email address is required.', 400);
     }
 
-    const isProduction = process.env.NODE_ENV === 'production';
-
-    // Log 1: OTP generated (omit raw OTP code in production logs)
-    if (isProduction) {
-      console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail}`);
-    } else {
-      console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail} [Dev Code: ${otpCode}]`);
-    }
-
-    const { resend, apiKey, from: resendFrom } = this.getResendClient();
-
-    const subject = purpose === 'PASSWORD_RESET'
-      ? `IHMS Hostel Portal — Password Reset Verification Code (${otpCode})`
-      : `IHMS Hostel Portal — Student Account Activation Code (${otpCode})`;
-
-    const nameDisplay = studentName || 'Student';
-
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
-        <div style="background-color: #111827; padding: 16px 20px; border-radius: 8px; text-align: center;">
-          <h2 style="color: #ffffff; margin: 0; font-size: 20px;">IHMS Hostel Portal</h2>
-          <p style="color: #e87545; margin: 4px 0 0 0; font-size: 13px; font-weight: bold;">Integrated Hostel Management System</p>
-        </div>
-        <div style="padding: 24px 10px; color: #1f2937;">
-          <h3 style="color: #111827; margin-top: 0;">Hello, ${nameDisplay}</h3>
-          <p style="font-size: 14px; line-height: 1.5; color: #4b5563;">
-            You requested a 6-digit verification code to ${purpose === 'PASSWORD_RESET' ? 'reset your student portal password' : 'activate your IHMS Student Portal account'}.
-          </p>
-          <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
-            <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: bold; display: block; margin-bottom: 8px;">Your 6-Digit Verification Code</span>
-            <span style="font-size: 32px; font-weight: 900; font-family: monospace; letter-spacing: 6px; color: #e87545;">${otpCode}</span>
-          </div>
-          <p style="font-size: 13px; color: #6b7280; margin-bottom: 8px;">
-            🔒 This verification code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.
-          </p>
-          <p style="font-size: 13px; color: #6b7280;">
-            If you did not request this verification code, please ignore this email or notify your hostel administration.
-          </p>
-        </div>
-        <div style="border-top: 1px solid #e5e7eb; padding-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
-          <p style="margin: 0;">IHMS ERP System &copy; 2026. All rights reserved.</p>
-        </div>
-      </div>
-    `;
-
-    const textContent = `Hello ${nameDisplay},\n\nYour 6-digit verification code for IHMS Student Portal is: ${otpCode}\n\nThis code is valid for 10 minutes. Please do not share it with anyone.\n\nIHMS Hostel Management System`;
-
-    // -------------------------------------------------------------
-    // PATH 1: RESEND API (Primary Email Transport)
-    // -------------------------------------------------------------
-    if (resend) {
-      console.log(`[EMAIL-SERVICE] 📧 Attempting to send ${purpose} OTP email to "${recipientEmail}" using Resend API (Sender: ${resendFrom})...`);
-
-      try {
-        const { data, error } = await resend.emails.send({
-          from: resendFrom,
-          to: [recipientEmail],
-          subject,
-          text: textContent,
-          html: htmlContent,
-        });
-
-        if (error) {
-          console.error(`[EMAIL-SERVICE] ❌ Resend API delivery error for ${recipientEmail}:`, error);
-          throw new AppError(`Resend email delivery failed: ${error.message}`, 500);
-        }
-
-        const messageId = data?.id || `resend-${Date.now()}`;
-        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Resend to ${recipientEmail}! Message ID: ${messageId}`);
-
-        return {
-          success: true,
-          messageId,
-        };
-      } catch (err: any) {
-        if (err instanceof AppError) throw err;
-        console.error(`[EMAIL-SERVICE] ❌ Unexpected Resend SDK error sending to ${recipientEmail}:`, err);
-        throw new AppError(`Failed to send verification email via Resend: ${err?.message || 'Network error'}`, 500);
-      }
-    }
-
-    // -------------------------------------------------------------
-    // PATH 2: NODEMAILER SMTP FALLBACK
-    // -------------------------------------------------------------
+    // 1. PRIMARY TRANSPORT: Brevo SMTP (Nodemailer)
     const smtp = this.getSmtpConfig();
-    if (smtp.user && smtp.pass && smtp.host) {
-      console.log(`[EMAIL-SERVICE] 📧 RESEND_API_KEY not found. Falling back to SMTP transport (${smtp.host}:${smtp.port}, User: ${smtp.user})...`);
+    if (smtp.host && smtp.user && smtp.pass) {
+      console.log(`[EMAIL-SERVICE] 📧 Dispatching email to "${recipientEmail}" via Brevo SMTP (${smtp.host}:${smtp.port}, Sender: ${smtp.from})...`);
 
       const secure = process.env.SMTP_SECURE === 'true' || smtp.port === 465;
       const transporter = nodemailer.createTransport({
@@ -215,46 +179,140 @@ class EmailService {
         const info = await transporter.sendMail({
           from: smtp.from,
           to: recipientEmail,
+          replyTo,
           subject,
-          text: textContent,
-          html: htmlContent,
+          text,
+          html,
+          attachments: attachments?.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            contentType: a.contentType,
+          })),
         });
 
-        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via SMTP to ${recipientEmail}! Message ID: ${info.messageId}`);
-        return {
-          success: true,
-          messageId: info.messageId,
-        };
+        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Brevo SMTP to ${recipientEmail}! Message ID: ${info.messageId}`);
+        return { success: true, messageId: info.messageId };
       } catch (err: any) {
-        console.error(`[EMAIL-SERVICE] ❌ Failed to send email via SMTP to ${recipientEmail}:`, err);
-        throw new AppError(`Failed to send verification email via SMTP: ${err?.message || 'SMTP delivery failed'}`, 500);
+        console.error(`[EMAIL-SERVICE] ❌ Brevo SMTP delivery error for ${recipientEmail}:`, err);
+        throw new AppError(`Brevo SMTP email delivery failed: ${err?.message || 'SMTP delivery error'}`, 500);
       }
     }
 
-    // -------------------------------------------------------------
-    // PATH 3: NO EMAIL PROVIDER CONFIGURED
-    // -------------------------------------------------------------
-    const missingMsg = 'Email service is not configured. Please set RESEND_API_KEY (or EMAIL_FROM & RESEND_API_KEY) in Render environment variables.';
-    console.error(`[EMAIL-SERVICE] ❌ ${missingMsg}`);
+    // 2. SECONDARY TRANSPORT: Resend API Fallback
+    const { resend, from: resendFrom } = this.getResendClient();
+    if (resend) {
+      console.log(`[EMAIL-SERVICE] 📧 Brevo SMTP credentials not found (SMTP_PASS missing). Falling back to Resend API (Sender: ${resendFrom})...`);
 
-    // Safe mock fallback when RESEND_API_KEY is missing or unconfigured
-    if (!process.env.RESEND_API_KEY) {
-      console.warn(`[EMAIL-SERVICE] ⚠️ RESEND_API_KEY not set. Mocking email delivery for ${recipientEmail}.`);
+      try {
+        const { data, error } = await resend.emails.send({
+          from: resendFrom,
+          to: [recipientEmail],
+          replyTo,
+          subject,
+          text,
+          html,
+          attachments: attachments?.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+          })),
+        });
+
+        if (error) {
+          console.error(`[EMAIL-SERVICE] ❌ Resend API delivery error for ${recipientEmail}:`, error);
+          throw new AppError(`Resend email delivery failed: ${error.message}`, 500);
+        }
+
+        const messageId = data?.id || `resend-${Date.now()}`;
+        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Resend to ${recipientEmail}! Message ID: ${messageId}`);
+        return { success: true, messageId };
+      } catch (err: any) {
+        if (err instanceof AppError) throw err;
+        console.error(`[EMAIL-SERVICE] ❌ Resend SDK error for ${recipientEmail}:`, err);
+        throw new AppError(`Failed to send email via Resend: ${err?.message || 'Network error'}`, 500);
+      }
+    }
+
+    // 3. DEVELOPMENT / UNCONFIGURED FALLBACK
+    const missingMsg = 'Email service is not configured. Please set SMTP_PASS (or BREVO_API_KEY) for Brevo SMTP in environment variables.';
+    console.warn(`[EMAIL-SERVICE] ⚠️ ${missingMsg}`);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[EMAIL-SERVICE] ⚠️ Mocking email delivery for ${recipientEmail} in non-production mode.`);
       return { success: true, messageId: `mock-msg-${Date.now()}` };
     }
 
     throw new AppError(missingMsg, 500);
   }
 
+  async sendOtpEmail(options: SendOtpEmailOptions): Promise<{ success: boolean; messageId: string }> {
+    const { to, otpCode, studentName, purpose = 'ACTIVATION' } = options;
+    const recipientEmail = cleanEnv(to).toLowerCase();
+
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      throw new AppError('Recipient email address is required to send verification code.', 400);
+    }
+
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // Omit raw OTP code in production logs
+    if (isProduction) {
+      console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail}`);
+    } else {
+      console.log(`[EMAIL-SERVICE] 🔑 OTP generated for recipient: ${recipientEmail} [Dev Code: ${otpCode}]`);
+    }
+
+    const subject = purpose === 'PASSWORD_RESET'
+      ? `IHMS Hostel Portal — Password Reset Verification Code (${otpCode})`
+      : `IHMS Hostel Portal — Student Account Activation Code (${otpCode})`;
+
+    const nameDisplay = studentName || 'User';
+
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
+        <div style="background-color: #111827; padding: 16px 20px; border-radius: 8px; text-align: center;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 20px;">IHMS Hostel Portal</h2>
+          <p style="color: #e87545; margin: 4px 0 0 0; font-size: 13px; font-weight: bold;">Integrated Hostel Management System</p>
+        </div>
+        <div style="padding: 24px 10px; color: #1f2937;">
+          <h3 style="color: #111827; margin-top: 0;">Hello, ${nameDisplay}</h3>
+          <p style="font-size: 14px; line-height: 1.5; color: #4b5563;">
+            You requested a 6-digit verification code to ${purpose === 'PASSWORD_RESET' ? 'reset your account password' : 'activate your IHMS Portal account'}.
+          </p>
+          <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+            <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: bold; display: block; margin-bottom: 8px;">Your 6-Digit Verification Code</span>
+            <span style="font-size: 32px; font-weight: 900; font-family: monospace; letter-spacing: 6px; color: #e87545;">${otpCode}</span>
+          </div>
+          <p style="font-size: 13px; color: #6b7280; margin-bottom: 8px;">
+            🔒 This verification code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.
+          </p>
+          <p style="font-size: 13px; color: #6b7280;">
+            If you did not request this verification code, please ignore this email or notify your hostel administration.
+          </p>
+        </div>
+        <div style="border-top: 1px solid #e5e7eb; padding-top: 16px; font-size: 12px; color: #9ca3af; text-align: center;">
+          <p style="margin: 0;">IHMS ERP System &copy; 2026. All rights reserved.</p>
+        </div>
+      </div>
+    `;
+
+    const textContent = `Hello ${nameDisplay},\n\nYour 6-digit verification code for IHMS Portal is: ${otpCode}\n\nThis code is valid for 10 minutes. Please do not share it with anyone.\n\nIHMS Hostel Management System`;
+
+    return this.dispatchMail({
+      to: recipientEmail,
+      subject,
+      text: textContent,
+      html: htmlContent,
+    });
+  }
+
   async sendSupportEmail(options: SendSupportEmailOptions): Promise<{ success: boolean; messageId: string }> {
     const supportRecipient = (process.env.SUPPORT_EMAIL || 'ihmserp00@gmail.com').trim();
-    const userEmail = (options.userEmail || '').trim().toLowerCase();
+    const userEmail = cleanEnv(options.userEmail).toLowerCase();
 
     if (!userEmail) {
       throw new AppError('User email address is required to process support request.', 400);
     }
 
-    // Explicit test failure simulation flag
     if (process.env.EMAIL_SIMULATE_FAILURE === 'true') {
       console.warn('[EMAIL-SERVICE] ⚠️ EMAIL_SIMULATE_FAILURE is active. Simulating support email dispatch failure.');
       throw new AppError('Your support request could not be sent. Please try again.', 500);
@@ -376,7 +434,6 @@ class EmailService {
       </div>
     `;
 
-    // Process attachments
     const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
     if (options.screenshotUrl && options.screenshotUrl.startsWith('data:image/')) {
       const match = options.screenshotUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
@@ -390,97 +447,22 @@ class EmailService {
       }
     }
 
-    // PATH 1: RESEND API
-    const { resend, from: resendFrom } = this.getResendClient();
-    if (resend) {
-      console.log(`[EMAIL-SERVICE] 📧 Dispatching support ticket email #${options.ticketNumber} to "${supportRecipient}" via Resend (Reply-To: ${userEmail})...`);
-      try {
-        const { data, error } = await resend.emails.send({
-          from: resendFrom,
-          to: [supportRecipient],
-          replyTo: userEmail,
-          subject,
-          text: textContent,
-          html: htmlContent,
-          attachments: attachments.map((a) => ({
-            filename: a.filename,
-            content: a.content,
-          })),
-        });
-
-        if (error) {
-          console.error(`[EMAIL-SERVICE] ❌ Resend support email error:`, error);
-          throw new AppError('Your support request could not be sent. Please try again.', 500);
-        }
-
-        const messageId = data?.id || `resend-support-${Date.now()}`;
-        console.log(`[EMAIL-SERVICE] ✅ Support ticket email dispatched successfully via Resend to ${supportRecipient}! Message ID: ${messageId}`);
-        return { success: true, messageId };
-      } catch (err: any) {
-        if (err instanceof AppError) throw err;
-        console.error(`[EMAIL-SERVICE] ❌ Unexpected Resend error sending support email:`, err);
-        throw new AppError('Your support request could not be sent. Please try again.', 500);
-      }
-    }
-
-    // PATH 2: SMTP
-    const smtp = this.getSmtpConfig();
-    if (smtp.user && smtp.pass && smtp.host) {
-      console.log(`[EMAIL-SERVICE] 📧 Dispatching support ticket email #${options.ticketNumber} to "${supportRecipient}" via SMTP (${smtp.host}:${smtp.port})...`);
-      const secure = process.env.SMTP_SECURE === 'true' || smtp.port === 465;
-      const transporter = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure,
-        auth: { user: smtp.user, pass: smtp.pass },
-        tls: {
-          rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'false' ? false : true,
-        },
-        connectionTimeout: 15000,
-        greetingTimeout: 10000,
-        socketTimeout: 20000,
-      });
-
-      try {
-        const info = await transporter.sendMail({
-          from: smtp.from,
-          to: supportRecipient,
-          replyTo: userEmail,
-          subject,
-          text: textContent,
-          html: htmlContent,
-          attachments: attachments.map((a) => ({
-            filename: a.filename,
-            content: a.content,
-            contentType: a.contentType,
-          })),
-        });
-
-        console.log(`[EMAIL-SERVICE] ✅ Support ticket email dispatched successfully via SMTP to ${supportRecipient}! Message ID: ${info.messageId}`);
-        return { success: true, messageId: info.messageId };
-      } catch (err: any) {
-        console.error(`[EMAIL-SERVICE] ❌ Failed to dispatch support email via SMTP:`, err);
-        throw new AppError('Your support request could not be sent. Please try again.', 500);
-      }
-    }
-
-    // PATH 3: DEV SIMULATION (When external mail provider keys are not yet configured in dev)
-    console.log(`[EMAIL-SERVICE] 📧 [DEV-SIMULATION] Support ticket email dispatched to: ${supportRecipient}`);
-    console.log(`[EMAIL-SERVICE] ↳ Ticket ID: ${options.ticketNumber} | Submitter: ${options.userName} <${options.userEmail}> | Reply-To: ${userEmail}`);
-    console.log(`[EMAIL-SERVICE] ↳ Subject: ${subject}`);
-    return {
-      success: true,
-      messageId: `dev-support-msg-${options.ticketNumber}`,
-    };
+    return this.dispatchMail({
+      to: supportRecipient,
+      replyTo: userEmail,
+      subject,
+      text: textContent,
+      html: htmlContent,
+      attachments,
+    });
   }
 
   async sendNotificationEmail(options: SendNotificationEmailOptions): Promise<{ success: boolean; messageId: string }> {
-    const recipientEmail = (options.to || '').trim().toLowerCase();
-    if (!recipientEmail) {
+    const recipientEmail = cleanEnv(options.to).toLowerCase();
+    if (!recipientEmail || !recipientEmail.includes('@')) {
       throw new AppError('Recipient email is required.', 400);
     }
 
-    const { resend, from: resendFrom } = this.getResendClient();
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
         <div style="background-color: #111827; padding: 16px 20px; border-radius: 8px; text-align: center;">
@@ -494,49 +476,13 @@ class EmailService {
       </div>
     `;
 
-    if (resend) {
-      try {
-        const { data, error } = await resend.emails.send({
-          from: resendFrom,
-          to: [recipientEmail],
-          subject: options.subject,
-          html: htmlContent,
-          text: `${options.title}\n\n${options.message}`,
-        });
-        if (!error && data) {
-          return { success: true, messageId: data.id };
-        }
-      } catch (err: any) {
-        console.warn(`[EMAIL-SERVICE] Resend notification failed: ${err.message}`);
-      }
-    }
-
-    const smtp = this.getSmtpConfig();
-    if (smtp.user && smtp.pass && smtp.host) {
-      try {
-        const transporter = nodemailer.createTransport({
-          host: smtp.host,
-          port: smtp.port,
-          secure: process.env.SMTP_SECURE === 'true' || smtp.port === 465,
-          auth: { user: smtp.user, pass: smtp.pass },
-        });
-        const info = await transporter.sendMail({
-          from: smtp.from,
-          to: recipientEmail,
-          subject: options.subject,
-          html: htmlContent,
-          text: `${options.title}\n\n${options.message}`,
-        });
-        return { success: true, messageId: info.messageId };
-      } catch (err: any) {
-        console.warn(`[EMAIL-SERVICE] SMTP notification failed: ${err.message}`);
-      }
-    }
-
-    console.log(`[EMAIL-SERVICE] 📧 Notification mock email sent to ${recipientEmail}`);
-    return { success: true, messageId: `mock-notif-${Date.now()}` };
+    return this.dispatchMail({
+      to: recipientEmail,
+      subject: options.subject,
+      text: `${options.title}\n\n${options.message}`,
+      html: htmlContent,
+    });
   }
 }
 
 export const emailService = new EmailService();
-
