@@ -1,5 +1,4 @@
 import { Resend } from 'resend';
-import nodemailer from 'nodemailer';
 import { AppError } from '../filters/http-exception.filter';
 
 export interface SendOtpEmailOptions {
@@ -55,23 +54,11 @@ function cleanEnv(val?: string): string {
 
 class EmailService {
   /**
-   * Helper to get Brevo/Generic SMTP credentials from environment variables.
-   * Primary Provider: Brevo SMTP (smtp-relay.brevo.com:587)
+   * Helper to get Brevo API key and sender config from environment variables.
+   * Primary Provider: Brevo Transactional Email API over HTTPS (https://api.brevo.com/v3/smtp/email)
    */
-  public getSmtpConfig() {
-    const host = (
-      cleanEnv(process.env.SMTP_HOST) ||
-      cleanEnv(process.env.EMAIL_HOST) ||
-      cleanEnv(process.env.MAIL_HOST) ||
-      'smtp-relay.brevo.com'
-    );
-
-    const port = Number(
-      cleanEnv(process.env.SMTP_PORT) ||
-      cleanEnv(process.env.EMAIL_PORT) ||
-      cleanEnv(process.env.MAIL_PORT) ||
-      587
-    );
+  public getBrevoConfig() {
+    const apiKey = cleanEnv(process.env.BREVO_API_KEY);
 
     const rawFromEmail = (
       cleanEnv(process.env.SMTP_FROM_EMAIL) ||
@@ -90,7 +77,7 @@ class EmailService {
       'IHMS'
     );
 
-    // Extract email address cleanly if enclosed in angle brackets or formatted
+    // Extract clean email address if enclosed in angle brackets or quotes
     let fromEmail = rawFromEmail;
     const match = rawFromEmail.match(/<([^>]+)>/);
     if (match) {
@@ -99,30 +86,7 @@ class EmailService {
       fromEmail = rawFromEmail.replace(/^["']|["']$/g, '').trim();
     }
 
-    const user = (
-      cleanEnv(process.env.SMTP_USER) ||
-      cleanEnv(process.env.EMAIL_USER) ||
-      cleanEnv(process.env.EMAIL_USERNAME) ||
-      cleanEnv(process.env.MAIL_USER) ||
-      cleanEnv(process.env.BREVO_USER) ||
-      fromEmail
-    );
-
-    const pass = (
-      cleanEnv(process.env.SMTP_PASS) ||
-      cleanEnv(process.env.SMTP_KEY) ||
-      cleanEnv(process.env.SMTP_PASSWORD) ||
-      cleanEnv(process.env.EMAIL_PASS) ||
-      cleanEnv(process.env.EMAIL_PASSWORD) ||
-      cleanEnv(process.env.MAIL_PASS) ||
-      cleanEnv(process.env.BREVO_API_KEY) ||
-      cleanEnv(process.env.BREVO_SMTP_KEY) ||
-      ''
-    );
-
-    const from = `"${fromName}" <${fromEmail}>`;
-
-    return { host, port, user, pass, from, fromEmail, fromName };
+    return { apiKey, fromEmail, fromName };
   }
 
   /**
@@ -135,8 +99,8 @@ class EmailService {
       ''
     );
 
-    const smtp = this.getSmtpConfig();
-    let from = `"${smtp.fromName}" <${smtp.fromEmail}>`;
+    const brevo = this.getBrevoConfig();
+    const from = `"${brevo.fromName}" <${brevo.fromEmail}>`;
 
     const resend = apiKey ? new Resend(apiKey) : null;
     return { resend, apiKey, from };
@@ -144,7 +108,7 @@ class EmailService {
 
   /**
    * Provider-Independent Email Dispatcher.
-   * Primary Transport: Brevo SMTP (via Nodemailer)
+   * Primary Transport: Brevo Transactional Email API over HTTPS (POST https://api.brevo.com/v3/smtp/email)
    * Secondary Transport: Resend API (legacy fallback)
    * Development Fallback: Safe Mock Log
    */
@@ -156,52 +120,70 @@ class EmailService {
       throw new AppError('A valid recipient email address is required.', 400);
     }
 
-    // 1. PRIMARY TRANSPORT: Brevo SMTP (Nodemailer)
-    const smtp = this.getSmtpConfig();
-    if (smtp.host && smtp.user && smtp.pass) {
-      console.log(`[EMAIL-SERVICE] 📧 Dispatching email to "${recipientEmail}" via Brevo SMTP (${smtp.host}:${smtp.port}, Sender: ${smtp.from})...`);
+    // 1. PRIMARY TRANSPORT: Brevo Transactional Email API over HTTPS
+    const brevo = this.getBrevoConfig();
+    if (brevo.apiKey) {
+      console.log(`[EMAIL-SERVICE] 📧 Dispatching email to "${recipientEmail}" via Brevo API (Sender: "${brevo.fromName}" <${brevo.fromEmail}>)...`);
 
-      const secure = process.env.SMTP_SECURE === 'true' || smtp.port === 465;
-      const transporter = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure,
-        auth: { user: smtp.user, pass: smtp.pass },
-        tls: {
-          rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'false' ? false : true,
+      const brevoBody: any = {
+        sender: {
+          name: brevo.fromName,
+          email: brevo.fromEmail,
         },
-        connectionTimeout: 15000,
-        greetingTimeout: 10000,
-        socketTimeout: 20000,
-      });
+        to: [
+          {
+            email: recipientEmail,
+          },
+        ],
+        subject,
+        htmlContent: html,
+        textContent: text,
+      };
+
+      if (replyTo && cleanEnv(replyTo).includes('@')) {
+        brevoBody.replyTo = { email: cleanEnv(replyTo).toLowerCase() };
+      }
+
+      if (attachments && attachments.length > 0) {
+        brevoBody.attachment = attachments.map((a) => ({
+          name: a.filename,
+          content: a.content.toString('base64'),
+        }));
+      }
 
       try {
-        const info = await transporter.sendMail({
-          from: smtp.from,
-          to: recipientEmail,
-          replyTo,
-          subject,
-          text,
-          html,
-          attachments: attachments?.map((a) => ({
-            filename: a.filename,
-            content: a.content,
-            contentType: a.contentType,
-          })),
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'api-key': brevo.apiKey,
+          },
+          body: JSON.stringify(brevoBody),
         });
 
-        console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Brevo SMTP to ${recipientEmail}! Message ID: ${info.messageId}`);
-        return { success: true, messageId: info.messageId };
+        if (response.ok) {
+          const responseData: any = await response.json().catch(() => ({}));
+          const messageId = responseData?.messageId || responseData?.id || `brevo-${Date.now()}`;
+          console.log(`[EMAIL-SERVICE] ✅ Email sent successfully via Brevo API to ${recipientEmail}! Message ID: ${messageId}`);
+          return { success: true, messageId };
+        } else {
+          const errorData: any = await response.json().catch(() => ({}));
+          const errMsg = errorData?.message || errorData?.code || `HTTP ${response.status}`;
+          console.error(`[EMAIL-SERVICE] ❌ Brevo API delivery error for ${recipientEmail}:`, errMsg);
+          throw new AppError(`Brevo API email delivery failed: ${errMsg}`, 500);
+        }
       } catch (err: any) {
-        console.error(`[EMAIL-SERVICE] ❌ Brevo SMTP delivery error for ${recipientEmail}:`, err);
-        throw new AppError(`Brevo SMTP email delivery failed: ${err?.message || 'SMTP delivery error'}`, 500);
+        if (err instanceof AppError) throw err;
+        console.error(`[EMAIL-SERVICE] ❌ Network error sending email via Brevo API to ${recipientEmail}:`, err?.message || err);
+        throw new AppError(`Brevo API email delivery failed: ${err?.message || 'Network error'}`, 500);
       }
     }
 
     // 2. SECONDARY TRANSPORT: Resend API Fallback
     const { resend, from: resendFrom } = this.getResendClient();
     if (resend) {
-      console.log(`[EMAIL-SERVICE] 📧 Brevo SMTP credentials not found (SMTP_PASS missing). Falling back to Resend API (Sender: ${resendFrom})...`);
+      console.log(`[EMAIL-SERVICE] 📧 BREVO_API_KEY missing. Falling back to Resend API (Sender: ${resendFrom})...`);
 
       try {
         const { data, error } = await resend.emails.send({
@@ -233,7 +215,7 @@ class EmailService {
     }
 
     // 3. DEVELOPMENT / UNCONFIGURED FALLBACK
-    const missingMsg = 'Email service is not configured. Please set SMTP_PASS (or BREVO_API_KEY) for Brevo SMTP in environment variables.';
+    const missingMsg = 'Email service is not configured. Please set BREVO_API_KEY in environment variables.';
     console.warn(`[EMAIL-SERVICE] ⚠️ ${missingMsg}`);
 
     if (process.env.NODE_ENV !== 'production') {
