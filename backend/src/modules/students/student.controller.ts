@@ -215,6 +215,17 @@ router.post('/', authorize(UserRole.OWNER, UserRole.SUPER_ADMIN, UserRole.WARDEN
       targetBranch = wardenHostelId || targetBranch;
     }
 
+    const { annualMaintenanceEnabled, annualMaintenanceAmount } = req.body;
+    if (annualMaintenanceEnabled) {
+      const amt = Number(annualMaintenanceAmount);
+      if (isNaN(amt) || amt <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Annual Maintenance Fee amount must be a valid positive monetary amount.',
+        });
+      }
+    }
+
     const payload = {
       ...req.body,
       hostelId: targetBranch,

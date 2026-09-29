@@ -52,10 +52,8 @@ function NewStudentPageContent() {
   const [paymentPlan, setPaymentPlan] = useState<'MONTHLY' | 'ONE_TIME'>('MONTHLY');
   const [monthlyDueDay, setMonthlyDueDay] = useState<number>(5);
   const [allowAdvancePayment, setAllowAdvancePayment] = useState<boolean>(false);
-  const [annualMaintPolicy, setAnnualMaintPolicy] = useState<{ enabled: boolean; amount: number }>({
-    enabled: false,
-    amount: 0,
-  });
+  const [annualMaintEnabled, setAnnualMaintEnabled] = useState<boolean>(false);
+  const [annualMaintAmount, setAnnualMaintAmount] = useState<number | string>('');
   const totalHostelFee = monthlyRent * stayDurationMonths;
 
   // Form details - Simplified to essential fields only
@@ -132,13 +130,14 @@ function NewStudentPageContent() {
       feesApi
         .getPolicies({ branchId: selectedHostelId })
         .then((res: any) => {
-          setAnnualMaintPolicy({
-            enabled: !!res?.annualMaintenanceEnabled,
-            amount: Number(res?.annualMaintenanceAmount || 0),
-          });
+          const isEnabled = !!res?.annualMaintenanceEnabled;
+          const amt = Number(res?.annualMaintenanceAmount || 0);
+          setAnnualMaintEnabled(isEnabled);
+          setAnnualMaintAmount(isEnabled && amt > 0 ? amt : (amt > 0 ? amt : ''));
         })
         .catch(() => {
-          setAnnualMaintPolicy({ enabled: false, amount: 0 });
+          setAnnualMaintEnabled(false);
+          setAnnualMaintAmount('');
         });
     }
   }, [selectedHostelId, loadHostelRooms]);
@@ -252,6 +251,13 @@ function NewStudentPageContent() {
       toast.error('Please select an available bed before admitting the student.');
       return;
     }
+    if (annualMaintEnabled) {
+      const amt = Number(annualMaintAmount);
+      if (isNaN(amt) || amt <= 0) {
+        toast.error('Please enter a valid positive amount for Annual Maintenance Fee.');
+        return;
+      }
+    }
 
     setLoading(true);
     try {
@@ -280,6 +286,8 @@ function NewStudentPageContent() {
         paymentPlan,
         monthlyDueDay,
         allowAdvancePayment,
+        annualMaintenanceEnabled: annualMaintEnabled,
+        annualMaintenanceAmount: annualMaintEnabled ? Number(annualMaintAmount) : 0,
       };
 
       const res = await studentsApi.create(payload);
@@ -731,36 +739,56 @@ function NewStudentPageContent() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="NO">Disabled (Current installment only)</SelectItem>
-                        <SelectItem value="YES">Enabled (Can pay future installments)</SelectItem>
+                        <SelectItem value="NO">Disabled (No advance collected)</SelectItem>
+                        <SelectItem value="YES">Enabled (1 Month Rent Advance for Final Month)</SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
                 </>
               )}
 
-              <Field label="Annual Maintenance Fee Policy">
-                <div className="h-9 px-3 rounded-md border border-input bg-secondary/40 flex items-center justify-between text-xs font-medium">
-                  {annualMaintPolicy.enabled ? (
-                    <>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        ₹{annualMaintPolicy.amount.toLocaleString('en-IN')}/yr
-                      </span>
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded font-semibold">
-                        Hostel Policy Enabled
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-muted-foreground font-medium">Disabled</span>
-                      <span className="text-[10px] bg-secondary text-muted-foreground px-1.5 py-0.5 rounded font-medium">
-                        Hostel Policy
-                      </span>
-                    </>
+              <div className="space-y-3 pt-2 border-t border-border/60 col-span-full">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Annual Maintenance Fee">
+                    <Select
+                      value={annualMaintEnabled ? 'ENABLED' : 'DISABLED'}
+                      onValueChange={(val) => {
+                        const isEnabled = val === 'ENABLED';
+                        setAnnualMaintEnabled(isEnabled);
+                        if (isEnabled && (!annualMaintAmount || Number(annualMaintAmount) <= 0)) {
+                          setAnnualMaintAmount(1000);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9 font-semibold text-xs">
+                        <SelectValue placeholder="Select Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="DISABLED">Disabled</SelectItem>
+                        <SelectItem value="ENABLED">Enabled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+
+                  {annualMaintEnabled && (
+                    <Field label="Annual Maintenance Fee Amount *" required>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-500">₹</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          step="any"
+                          placeholder="e.g. 1000"
+                          value={annualMaintAmount}
+                          onChange={(e) => setAnnualMaintAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="h-9 pl-7 font-mono font-bold text-xs"
+                          required
+                        />
+                      </div>
+                    </Field>
                   )}
                 </div>
-              </Field>
+              </div>
             </div>
           </div>
 
@@ -776,7 +804,7 @@ function NewStudentPageContent() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 pt-1">
                 <div className="space-y-0.5">
                   <span className="text-[11px] text-muted-foreground">Selected Bed</span>
                   <p className="font-mono font-bold text-sm text-foreground">
@@ -804,17 +832,29 @@ function NewStudentPageContent() {
                 </div>
 
                 <div className="space-y-0.5">
-                  <span className="text-[11px] text-muted-foreground">Annual Maintenance</span>
+                  <span className="text-[11px] text-muted-foreground">Advance Fee</span>
                   <p className="font-mono font-bold text-sm text-foreground">
-                    {annualMaintPolicy.enabled ? `₹${annualMaintPolicy.amount.toLocaleString('en-IN')}` : '₹0'}
+                    {allowAdvancePayment && monthlyRent > 0 ? `₹${monthlyRent.toLocaleString('en-IN')}` : 'Disabled'}
                   </p>
                   <p className="text-[11px] text-muted-foreground font-semibold">
-                    {annualMaintPolicy.enabled ? 'Hostel Policy Applied' : 'Disabled'}
+                    {allowAdvancePayment ? 'Final Month Reserved' : 'Status: Disabled'}
                   </p>
                 </div>
 
                 <div className="space-y-0.5">
-                  <span className="text-[11px] text-muted-foreground">Total Hostel Fee</span>
+                  <span className="text-[11px] text-muted-foreground">Annual Maintenance</span>
+                  <p className="font-mono font-bold text-sm text-foreground">
+                    {annualMaintEnabled && Number(annualMaintAmount) > 0
+                      ? `₹${Number(annualMaintAmount).toLocaleString('en-IN')}`
+                      : 'Disabled'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground font-semibold">
+                    {annualMaintEnabled ? 'Status: Enabled' : 'Status: Disabled'}
+                  </p>
+                </div>
+
+                <div className="space-y-0.5">
+                  <span className="text-[11px] text-muted-foreground">Hostel Fee</span>
                   <p className="font-mono font-black text-lg text-primary">
                     ₹{totalHostelFee.toLocaleString('en-IN')}
                   </p>

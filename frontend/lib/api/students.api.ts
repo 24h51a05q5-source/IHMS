@@ -41,6 +41,8 @@ export interface CreateStudentInput {
   allowAdvancePayment?: boolean;
   admissionFee?: number;
   securityDeposit?: number;
+  annualMaintenanceEnabled?: boolean;
+  annualMaintenanceAmount?: number;
   address?: string;
   emergencyContact?: string;
   parentName?: string;

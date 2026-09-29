@@ -328,6 +328,7 @@ export class FeeService {
 
     const rawDemands = await queryRows<any>(
       `SELECT id, id as "_id", demand_number as "demandNumber", demand_number as "invoiceNumber",
+              fee_structure_id as "feeStructureId", academic_period as "academicPeriod",
               term_name as "termName", hostel_rent as "hostelRent", admission_fee as "admissionFee",
               security_deposit as "securityDeposit", total_amount as "totalAmount",
               paid_amount as "paidAmount", balance_amount as "balanceAmount",
@@ -367,6 +368,7 @@ export class FeeService {
             : Math.max(0, amount - paidAmount)
         );
         let status = d.status;
+        if (status === 'UNPAID') status = 'PENDING';
         if (status === 'PARTIAL') status = 'PARTIALLY_PAID';
         return {
           id: d.id,
@@ -381,6 +383,82 @@ export class FeeService {
           status: status || (remainingAmount <= 0 ? 'PAID' : paidAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING'),
         };
       });
+    }
+
+    // Append separate Annual Maintenance Fee demands to installments list
+    const maintDemands = demands.filter(
+      (d: any) =>
+        (d.feeStructureId && String(d.feeStructureId).toUpperCase() === 'ANNUAL_MAINTENANCE') ||
+        (d.termName && String(d.termName).toUpperCase().includes('ANNUAL MAINTENANCE'))
+    );
+
+    for (const mDemand of maintDemands) {
+      const alreadyAdded = installments.some((inst: any) => inst.id === mDemand.id);
+      if (!alreadyAdded) {
+        const amount = Number(mDemand.totalAmount || 0);
+        const paidAmount = Number(mDemand.paidAmount || 0);
+        const balanceAmount = Number(
+          mDemand.balanceAmount !== undefined && mDemand.balanceAmount !== null
+            ? mDemand.balanceAmount
+            : Math.max(0, amount - paidAmount)
+        );
+        let status = mDemand.status;
+        if (status === 'UNPAID') status = 'PENDING';
+        if (status === 'PARTIAL') status = 'PARTIALLY_PAID';
+
+        installments.push({
+          id: mDemand.id,
+          _id: mDemand.id,
+          installmentNumber: 'MAINT',
+          month: mDemand.termName || 'Annual Maintenance Fee',
+          dueDate: mDemand.dueDate || mDemand.createdAt,
+          amount,
+          paidAmount,
+          remainingAmount: balanceAmount,
+          balanceAmount: balanceAmount,
+          status: status || (balanceAmount <= 0 ? 'PAID' : paidAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING'),
+          feeType: 'ANNUAL_MAINTENANCE',
+          isAnnualMaintenance: true,
+        });
+      }
+    }
+
+    // Append separate Advance Fee demands to installments list
+    const advanceDemands = demands.filter(
+      (d: any) =>
+        (d.feeStructureId && String(d.feeStructureId).toUpperCase() === 'ADVANCE') ||
+        (d.termName && String(d.termName).toUpperCase().includes('ADVANCE FEE'))
+    );
+
+    for (const aDemand of advanceDemands) {
+      const alreadyAdded = installments.some((inst: any) => inst.id === aDemand.id);
+      if (!alreadyAdded) {
+        const amount = Number(aDemand.totalAmount || 0);
+        const paidAmount = Number(aDemand.paidAmount || 0);
+        const balanceAmount = Number(
+          aDemand.balanceAmount !== undefined && aDemand.balanceAmount !== null
+            ? aDemand.balanceAmount
+            : Math.max(0, amount - paidAmount)
+        );
+        let status = aDemand.status;
+        if (status === 'UNPAID') status = 'PENDING';
+        if (status === 'PARTIAL') status = 'PARTIALLY_PAID';
+
+        installments.push({
+          id: aDemand.id,
+          _id: aDemand.id,
+          installmentNumber: 'ADV',
+          month: aDemand.termName || 'Advance Fee (Final Month Rent)',
+          dueDate: aDemand.dueDate || aDemand.createdAt,
+          amount,
+          paidAmount,
+          remainingAmount: balanceAmount,
+          balanceAmount: balanceAmount,
+          status: status || (balanceAmount <= 0 ? 'PAID' : paidAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING'),
+          feeType: 'ADVANCE',
+          isAdvanceFee: true,
+        });
+      }
     }
 
     const currentDueInstallment =
@@ -757,7 +835,23 @@ export class FeeService {
         payment = updateRes.rows[0];
       }
 
-      const rawFeeType = String(data.feeType || 'HOSTEL_RENT').trim();
+      const targetId = data.installmentId || data.demandId;
+      let rawFeeType = String(data.feeType || '').trim();
+
+      if (!rawFeeType && targetId) {
+        const maintCheck = await client.query(
+          `SELECT id FROM fee_demands WHERE id = $1 AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')`,
+          [targetId]
+        );
+        if (maintCheck.rows.length > 0) {
+          rawFeeType = 'ANNUAL_MAINTENANCE';
+        }
+      }
+
+      if (!rawFeeType) {
+        rawFeeType = 'HOSTEL_RENT';
+      }
+
       const normalizedFeeType = rawFeeType.toUpperCase();
       const isAdvancePayment = normalizedFeeType === 'ADVANCE' || normalizedFeeType === 'ADVANCE FEE';
       const isAnnualMaintenance = normalizedFeeType === 'ANNUAL_MAINTENANCE' || normalizedFeeType === 'ANNUAL MAINTENANCE';
@@ -769,8 +863,8 @@ export class FeeService {
           `SELECT * FROM fee_demands
            WHERE organization_id = $1 AND student_id = $2
              AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')
-             AND academic_period = $3`,
-          [orgId, sDbId, billingPeriod]
+             AND (id = $4 OR academic_period = $3)`,
+          [orgId, sDbId, billingPeriod, targetId || sDbId]
         );
         if (existingMaint.rows.length > 0) {
           const m = existingMaint.rows[0];
@@ -816,8 +910,8 @@ export class FeeService {
           `SELECT * FROM fee_demands
            WHERE organization_id = $1 AND student_id = $2
              AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')
-             AND academic_period = $3`,
-          [orgId, sDbId, billingPeriod]
+             AND (id = $4 OR academic_period = $3)`,
+          [orgId, sDbId, billingPeriod, targetId || sDbId]
         );
 
         let existingMaint = existingMaintRes.rows[0];
@@ -870,7 +964,30 @@ export class FeeService {
             ]
           );
         }
-      } else if (!isAdvancePayment) {
+      } else if (isAdvancePayment) {
+        let existingAdvRes = await client.query(
+          `SELECT * FROM fee_demands
+           WHERE organization_id = $1 AND student_id = $2
+             AND (UPPER(fee_structure_id) = 'ADVANCE' OR UPPER(term_name) LIKE '%ADVANCE FEE%')
+             AND (id = $4 OR academic_period = $3)`,
+          [orgId, sDbId, billingPeriod, targetId || sDbId]
+        );
+
+        if (existingAdvRes.rows.length > 0) {
+          const adv = existingAdvRes.rows[0];
+          const demandTotal = Number(adv.total_amount || amount);
+          const newPaid = roundCurrency(Number(adv.paid_amount || 0) + amount);
+          const newBal = roundCurrency(Math.max(0, demandTotal - newPaid));
+          const newStatus = newBal <= 0 ? 'PAID' : 'PARTIAL';
+
+          await client.query(
+            `UPDATE fee_demands
+             SET paid_amount = $1, balance_amount = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [newPaid, newBal, newStatus, adv.id]
+          );
+        }
+      } else {
         // 3. Allocate standard HOSTEL_RENT across fee installments (with currency rounding to eliminate float drift - ISSUE-019)
         let remainingToDistribute = roundCurrency(amount);
         const pendingInstallmentsRes = await client.query(

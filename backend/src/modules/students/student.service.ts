@@ -186,6 +186,14 @@ export class StudentService {
     const securityDeposit = Number(data.securityDeposit !== undefined ? data.securityDeposit : (data.securityDeposit === undefined && data.stayDurationMonths === undefined ? 5000 : 0));
     const totalHostelRent = monthlyRent * stayDurationMonths;
     const totalAdmissionAmount = totalHostelRent + admissionFee + securityDeposit;
+    const annualMaintEnabled = !!data.annualMaintenanceEnabled;
+    const annualMaintAmount = annualMaintEnabled && Number(data.annualMaintenanceAmount) > 0 ? Number(data.annualMaintenanceAmount) : 0;
+    const allowAdvance = !!data.allowAdvancePayment;
+    const advanceFeeAmount = allowAdvance && monthlyRent > 0 ? monthlyRent : 0;
+    const totalStudentDemanded = totalAdmissionAmount + annualMaintAmount + advanceFeeAmount;
+
+    let newlyCreatedMaint: { academicPeriod: string; amount: number } | null = null;
+    let newlyCreatedAdvance: { academicPeriod: string; amount: number } | null = null;
 
     const student = await transaction(async (client) => {
       // 0. Pessimistic row-lock on room to eliminate room capacity race condition (ISSUE-006)
@@ -249,7 +257,7 @@ export class StudentService {
           data.guardianAddress || data.guardian?.address || '',
           room.id,
           bed.id,
-          totalAdmissionAmount
+          totalStudentDemanded
         ]
       );
 
@@ -270,7 +278,7 @@ export class StudentService {
         [room.id]
       );
 
-      // 4. Create initial Fee Demand
+      // 4. Create initial Hostel Rent Fee Demand
       const demandNumber = 'DEM-' + Date.now();
       await client.query(
         `INSERT INTO fee_demands (
@@ -293,6 +301,88 @@ export class StudentService {
         ]
       );
 
+      // 5. Create separate Annual Maintenance Fee Demand if enabled
+      if (annualMaintEnabled && annualMaintAmount > 0) {
+        const academicPeriod = data.academicPeriod || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+        const maintDemandNumber = 'DEM-MAINT-' + Date.now();
+        const existingMaint = await client.query(
+          `SELECT id FROM fee_demands
+           WHERE organization_id = $1 AND student_id = $2
+             AND (UPPER(fee_structure_id) = 'ANNUAL_MAINTENANCE' OR UPPER(term_name) LIKE '%ANNUAL MAINTENANCE%')
+             AND academic_period = $3`,
+          [orgId, studentDbId, academicPeriod]
+        );
+
+        if (!existingMaint.rows || existingMaint.rows.length === 0) {
+          const insertRes = await client.query(
+            `INSERT INTO fee_demands (
+              id, demand_number, organization_id, hostel_id, student_id, customer_code,
+              fee_structure_id, academic_period, term_name, hostel_rent, admission_fee,
+              security_deposit, other_charges, total_amount, paid_amount, balance_amount,
+              due_date, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'ANNUAL_MAINTENANCE', $7, $8, 0, 0, 0, $9, $9, 0, $9, CURRENT_TIMESTAMP + INTERVAL '7 days', 'UNPAID')
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id`,
+            [
+              require('crypto').randomUUID(),
+              maintDemandNumber,
+              orgId,
+              branchId,
+              studentDbId,
+              customerCode,
+              academicPeriod,
+              `Annual Maintenance Fee (${academicPeriod})`,
+              annualMaintAmount
+            ]
+          );
+
+          if (insertRes.rows && insertRes.rows.length > 0) {
+            newlyCreatedMaint = { academicPeriod, amount: annualMaintAmount };
+          }
+        }
+      }
+
+      // 6. Create separate Advance Fee Demand (Final Month Rent) if enabled
+      if (allowAdvance && monthlyRent > 0) {
+        const academicPeriod = data.academicPeriod || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+        const advanceDemandNumber = 'DEM-ADV-' + Date.now();
+        const existingAdvance = await client.query(
+          `SELECT id FROM fee_demands
+           WHERE organization_id = $1 AND student_id = $2
+             AND (UPPER(fee_structure_id) = 'ADVANCE' OR UPPER(term_name) LIKE '%ADVANCE FEE%')
+             AND academic_period = $3`,
+          [orgId, studentDbId, academicPeriod]
+        );
+
+        if (!existingAdvance.rows || existingAdvance.rows.length === 0) {
+          const insertRes = await client.query(
+            `INSERT INTO fee_demands (
+              id, demand_number, organization_id, hostel_id, student_id, customer_code,
+              fee_structure_id, academic_period, term_name, hostel_rent, admission_fee,
+              security_deposit, other_charges, total_amount, paid_amount, balance_amount,
+              due_date, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'ADVANCE', $7, $8, 0, 0, 0, $9, $9, 0, $9, CURRENT_TIMESTAMP + INTERVAL '7 days', 'UNPAID')
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id`,
+            [
+              require('crypto').randomUUID(),
+              advanceDemandNumber,
+              orgId,
+              branchId,
+              studentDbId,
+              customerCode,
+              academicPeriod,
+              `Advance Fee (Final Month Rent)`,
+              monthlyRent
+            ]
+          );
+
+          if (insertRes.rows && insertRes.rows.length > 0) {
+            newlyCreatedAdvance = { academicPeriod, amount: monthlyRent };
+          }
+        }
+      }
+
       return studentRes.rows[0];
     });
 
@@ -313,6 +403,57 @@ export class StudentService {
         allowAdvancePayment: !!data.allowAdvancePayment,
       }
     );
+
+    // Dispatch fee demand notifications & emails for newly created demands ONLY (Duplicate & Retry Protected)
+    if (newlyCreatedMaint) {
+      const amountFormatted = `₹${newlyCreatedMaint.amount.toLocaleString('en-IN')}`;
+      const notifMsg = `Annual Maintenance Fee\nAmount: ${amountFormatted}\nAcademic Session: ${newlyCreatedMaint.academicPeriod}\nStatus: Pending`;
+
+      await notificationService.notifyStudent(studentDbId, {
+        organizationId: orgId,
+        branchId,
+        title: 'Annual Maintenance Fee Demand Created',
+        message: notifMsg,
+        type: 'INFO',
+        link: '/student/fees',
+        entityType: 'FEE_DEMAND',
+      }).catch(() => {});
+
+      if (finalEmail) {
+        await emailService.sendNotificationEmail({
+          to: finalEmail,
+          subject: 'Annual Maintenance Fee Demand Created',
+          title: 'Annual Maintenance Fee Demand Created',
+          message: notifMsg,
+          actionUrl: '/student/fees',
+        }).catch(() => {});
+      }
+    }
+
+    if (newlyCreatedAdvance) {
+      const amountFormatted = `₹${newlyCreatedAdvance.amount.toLocaleString('en-IN')}`;
+      const notifMsg = `Advance Fee\nAmount: ${amountFormatted}\nPurpose: Final Month Rent\nAcademic Session: ${newlyCreatedAdvance.academicPeriod}\nStatus: Pending`;
+
+      await notificationService.notifyStudent(studentDbId, {
+        organizationId: orgId,
+        branchId,
+        title: 'Advance Fee Demand Created',
+        message: notifMsg,
+        type: 'INFO',
+        link: '/student/fees',
+        entityType: 'FEE_DEMAND',
+      }).catch(() => {});
+
+      if (finalEmail) {
+        await emailService.sendNotificationEmail({
+          to: finalEmail,
+          subject: 'Advance Fee Demand Created',
+          title: 'Advance Fee Demand Created',
+          message: notifMsg,
+          actionUrl: '/student/fees',
+        }).catch(() => {});
+      }
+    }
 
     emitRealTimeEvent('bed.status_changed', { bedId: bed.id, bedCode: bed.bed_code, status: BedStatus.OCCUPIED, branchId }, { branchId });
     emitRealTimeEvent('student.admitted', { studentId: studentDbId, customerCode, name: fullName, branchId }, { branchId });
