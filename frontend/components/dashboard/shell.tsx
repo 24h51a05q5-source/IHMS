@@ -100,6 +100,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     };
   }, [mobileOpen]);
 
+  // Close mobile sidebar on Escape key press
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileOpen]);
+
   if (!user) return null;
   const nav = getNavForRole(user.role);
 
@@ -224,7 +236,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <SidebarBrand isStudent={user.role === 'STUDENT'} hostelName={actualHostelName} />
 
         {/* Scrollable Grouped Navigation */}
-        <nav className="sidebar-scroll relative z-10 flex-1 overflow-y-auto px-3.5 py-3">
+        <nav className="sidebar-scroll relative z-10 flex-1 min-h-0 overflow-y-auto px-3.5 py-3">
           <SidebarNav nav={nav} pathname={pathname} notifCount={notifCount} />
         </nav>
 
@@ -257,34 +269,41 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         aria-hidden={!mobileOpen}
       >
         {/* Top Brand Bar with Close Button */}
-        <div className="relative z-10 flex items-center justify-between p-3.5 border-b border-[#DDD8CC] bg-[#ECE9E1]">
+        <div className="relative z-10 flex shrink-0 items-center justify-between p-3.5 border-b border-[#DDD8CC] bg-[#ECE9E1]">
           <SidebarBrand compact isStudent={user.role === 'STUDENT'} hostelName={actualHostelName} onNavigate={() => setMobileOpen(false)} />
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close navigation menu"
-            className="flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-lg bg-white border border-[#CBD5E1] text-[#111827] hover:bg-[#FEE2E2] hover:text-[#C62828] hover:border-[#FECACA] transition-colors"
+            className="flex h-10 w-10 min-h-[40px] min-w-[40px] items-center justify-center rounded-lg bg-white border border-[#CBD5E1] text-[#111827] hover:bg-[#FEE2E2] hover:text-[#C62828] hover:border-[#FECACA] transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" strokeWidth={2.4} />
           </button>
         </div>
 
-        {/* Scrollable Navigation links */}
-        <nav className="sidebar-scroll relative z-10 flex-1 overflow-y-auto px-3.5 py-3">
-          <SidebarNav nav={nav} pathname={pathname} notifCount={notifCount} onNavigate={() => setMobileOpen(false)} />
-        </nav>
+        {/* Scrollable Navigation links and Account / Sign Out */}
+        <div className="sidebar-scroll relative z-10 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div className="flex flex-col min-h-full">
+            <nav className="flex-1 px-3.5 py-3">
+              <SidebarNav nav={nav} pathname={pathname} notifCount={notifCount} onNavigate={() => setMobileOpen(false)} />
+            </nav>
 
-        {/* Bottom Profile Footer */}
-        <SidebarFooter
-          user={user}
-          initials={initials}
-          onLogout={logout}
-          onNavigate={() => setMobileOpen(false)}
-          onOpenSupport={() => {
-            setMobileOpen(false);
-            setSupportOpen(true);
-          }}
-        />
+            {/* Bottom Profile Footer (Account & Sign Out) */}
+            <div className="mt-auto shrink-0 border-t border-[#DDD8CC] bg-[#ECE9E1] p-3 sidebar-mobile-footer">
+              <SidebarFooter
+                isMobile
+                user={user}
+                initials={initials}
+                onLogout={logout}
+                onNavigate={() => setMobileOpen(false)}
+                onOpenSupport={() => {
+                  setMobileOpen(false);
+                  setSupportOpen(true);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </aside>
 
       {/* ========================================================================= */}
@@ -555,15 +574,90 @@ function SidebarFooter({
   onLogout,
   onNavigate,
   onOpenSupport,
+  isMobile,
 }: {
   user: { name: string; email: string; role: string };
   initials: string;
   onLogout: () => void;
   onNavigate?: () => void;
   onOpenSupport?: () => void;
+  isMobile?: boolean;
 }) {
+  if (isMobile) {
+    return (
+      <div className="space-y-2">
+        {/* Account Section Title */}
+        <div className="menu-heading section-title px-1 text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
+          Account
+        </div>
+
+        {/* 2D Flat Profile Card */}
+        <div className="flex items-center gap-2.5 rounded-lg bg-white border border-[#CBD5E1] p-2.5">
+          {/* Avatar */}
+          <Avatar className="h-9 w-9 border border-[#CBD5E1] shrink-0">
+            <AvatarFallback className="bg-[#E87545] text-xs font-bold text-white">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+
+          {/* User Info */}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-bold text-[#111827] leading-snug">
+              {user.name}
+            </p>
+            <p className="truncate text-[10.5px] font-semibold uppercase tracking-wider text-[#E87545]">
+              {user.role.replace(/_/g, ' ')}
+            </p>
+          </div>
+
+          {/* Terms & Conditions Link */}
+          <Link
+            href="/terms"
+            onClick={() => onNavigate?.()}
+            title="Terms & Conditions"
+            aria-label="Terms and Conditions"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#64748B] transition-colors duration-150 hover:bg-[#F1F5F9] hover:text-[#18233A] hover:border-[#94A3B8]"
+          >
+            <FileText className="h-4 w-4" />
+          </Link>
+
+          {/* Help & Support Trigger Button */}
+          {onOpenSupport && (
+            <button
+              type="button"
+              onClick={() => {
+                onNavigate?.();
+                onOpenSupport();
+              }}
+              title="Contact Us / Support"
+              aria-label="Contact Support"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#2563EB] transition-colors duration-150 hover:bg-[#EFF6FF] hover:text-[#1D4ED8] hover:border-[#BFDBFE]"
+            >
+              <LifeBuoy className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Dedicated Touch-Friendly Sign Out Button */}
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.();
+            onLogout();
+          }}
+          title="Sign out"
+          aria-label="Sign out"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-white border border-[#CBD5E1] py-2.5 px-3 text-xs sm:text-[13px] font-bold text-[#C62828] hover:bg-[#FEE2E2] hover:border-[#FECACA] active:bg-[#FEE2E2] transition-colors min-h-[42px] cursor-pointer"
+        >
+          <LogOut className="h-4 w-4 text-[#C62828] shrink-0" />
+          <span>Sign Out</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative z-10 border-t border-[#DDD8CC] bg-[#ECE9E1] p-3">
+    <div className="relative z-10 border-t border-[#DDD8CC] bg-[#ECE9E1] p-3 shrink-0">
       {/* 2D Flat Profile Card */}
       <div className="flex items-center gap-2.5 rounded-lg bg-white border border-[#CBD5E1] p-2.5">
         {/* Avatar */}
@@ -597,6 +691,7 @@ function SidebarFooter({
         {/* Help & Support Trigger Button */}
         {onOpenSupport && (
           <button
+            type="button"
             onClick={() => {
               onNavigate?.();
               onOpenSupport();
@@ -611,6 +706,7 @@ function SidebarFooter({
 
         {/* Logout Action Button */}
         <button
+          type="button"
           onClick={() => {
             onNavigate?.();
             onLogout();
